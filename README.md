@@ -26,7 +26,11 @@ Always obtain permission from metadata sources before using them.
 
 ## Download and install
 
-The ready-to-install artifact is **Calibre-Metadata-Engine.zip** in this repository.\n\n**Direct download:** [Calibre-Metadata-Engine.zip](https://github.com/jfroebe/calibre-plugin-metadata-engine/raw/refs/heads/main/Calibre-Metadata-Engine.zip)\n\nDownload that ZIP and keep it zipped.
+The ready-to-install artifact is **Calibre-Metadata-Engine.zip** in this repository.
+
+**Direct download:** [Calibre-Metadata-Engine.zip](https://github.com/jfroebe/calibre-plugin-metadata-engine/raw/refs/heads/main/Calibre-Metadata-Engine.zip)
+
+Download that ZIP and keep it zipped.
 
 Calibre's documented plugin installer accepts a local ZIP path; it does not document installation directly from an arbitrary GitHub URL. The supported GitHub flow is therefore: **download the plugin ZIP from GitHub, then load that ZIP into Calibre**.
 
@@ -124,3 +128,18 @@ calibre-customize -b .
 ```
 
 The GitHub Actions workflow rebuilds `Calibre-Metadata-Engine.zip` whenever the plugin source changes. The installable ZIP contains `__init__.py` and `config.py` at its root.
+
+
+## Documentation and code quality
+
+Repository documentation and source code are kept sanitized and validated before generating the installable plugin ZIP.
+
+The build process checks for:
+
+- Python syntax errors in plugin source files
+- accidental literal escape sequences such as `\\n` in Markdown
+- unresolved merge-conflict markers
+- common trailing-whitespace issues
+- missing required plugin files
+
+The generated `Calibre-Metadata-Engine.zip` always includes the current `README.md`, so the documentation distributed with the plugin matches the repository documentation.
