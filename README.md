@@ -134,7 +134,7 @@ To build and install a development checkout:
 calibre-customize -b .
 ```
 
-The GitHub Actions workflow rebuilds `Calibre-Metadata-Engine.zip` whenever the plugin source changes. The installable ZIP contains `__init__.py` and `config.py` at its root.
+The GitHub Actions workflow rebuilds `Calibre-Metadata-Engine.zip` whenever the plugin source changes. The installable ZIP contains `__init__.py`, `config.py`, `plugin-import-name-metadata_engine.txt`, and `README.md` at its root.
 
 
 ## Documentation and code quality
@@ -150,3 +150,33 @@ The build process checks for:
 - missing required plugin files
 
 The generated `Calibre-Metadata-Engine.zip` always includes the current `README.md`, so the documentation distributed with the plugin matches the repository documentation.
+
+
+## Troubleshooting Calibre configuration
+
+### `ModuleNotFoundError: No module named 'calibre_plugins.metadata_engine'`
+
+This plugin uses more than one Python file, so Calibre requires the empty import marker:
+
+```text
+plugin-import-name-metadata_engine.txt
+```
+
+That marker tells Calibre to load the plugin under the stable namespace:
+
+```text
+calibre_plugins.metadata_engine
+```
+
+Without the marker, Calibre may assign a temporary name such as `calibre_plugins.dummy3`, which prevents the configuration module from being imported.
+
+Version 1.1.1 and later include this marker in the generated plugin ZIP.
+
+If you installed an earlier ZIP, remove it and install the current one:
+
+```bash
+calibre-customize -r "Metadata Engine"
+calibre-customize -a Calibre-Metadata-Engine.zip
+```
+
+Then restart Calibre before opening **Preferences → Metadata download → Metadata Engine → Configure selected source**.
