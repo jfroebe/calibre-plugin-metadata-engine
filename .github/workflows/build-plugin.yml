@@ -1,0 +1,53 @@
+name: Build Calibre plugin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "__init__.py"
+      - "config.py"
+      - ".github/workflows/build-plugin.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Syntax check
+        run: python -m py_compile __init__.py config.py
+
+      - name: Build plugin ZIP
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          output = Path("Calibre-Metadata-Engine.zip")
+          with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
+              zf.write("__init__.py", "__init__.py")
+              zf.write("config.py", "config.py")
+          print(output, output.stat().st_size)
+          PY
+
+      - name: Commit installable ZIP
+        run: |
+          if git diff --quiet -- Calibre-Metadata-Engine.zip && git ls-files --error-unmatch Calibre-Metadata-Engine.zip >/dev/null 2>&1; then
+            echo "Plugin ZIP is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Calibre-Metadata-Engine.zip
+          git commit -m "Build Calibre plugin ZIP"
+          git push
