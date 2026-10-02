@@ -6,6 +6,7 @@ on:
     paths:
       - "__init__.py"
       - "config.py"
+      - "plugin-import-name-metadata_engine.txt"
       - "README.md"
       - ".github/workflows/build-plugin.yml"
   workflow_dispatch:
@@ -32,7 +33,7 @@ jobs:
           import re
           import py_compile
 
-          required = [Path("__init__.py"), Path("config.py"), Path("README.md")]
+          required = [Path("__init__.py"), Path("config.py"), Path("plugin-import-name-metadata_engine.txt"), Path("README.md")]
           missing = [str(p) for p in required if not p.is_file()]
           if missing:
               raise SystemExit(f"Missing required files: {missing}")
@@ -65,6 +66,7 @@ jobs:
           with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
               zf.write("__init__.py", "__init__.py")
               zf.write("config.py", "config.py")
+              zf.write("plugin-import-name-metadata_engine.txt", "plugin-import-name-metadata_engine.txt")
               zf.write("README.md", "README.md")
           print(output, output.stat().st_size)
           PY
