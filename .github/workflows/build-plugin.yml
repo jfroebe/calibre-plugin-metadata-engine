@@ -25,8 +25,35 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Syntax check
-        run: python -m py_compile __init__.py config.py
+      - name: Validate source and documentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import py_compile
+
+          required = [Path("__init__.py"), Path("config.py"), Path("README.md")]
+          missing = [str(p) for p in required if not p.is_file()]
+          if missing:
+              raise SystemExit(f"Missing required files: {missing}")
+
+          for path in (Path("__init__.py"), Path("config.py")):
+              py_compile.compile(str(path), doraise=True)
+
+          conflict_markers = ("<<<<<<<", "=======", ">>>>>>>")
+          for path in required:
+              text = path.read_text(encoding="utf-8")
+              if any(marker in text for marker in conflict_markers):
+                  raise SystemExit(f"Merge-conflict marker found in {path}")
+              if re.search(r"[ \t]+$", text, re.MULTILINE):
+                  raise SystemExit(f"Trailing whitespace found in {path}")
+
+          readme = Path("README.md").read_text(encoding="utf-8")
+          if "\\n" in readme:
+              raise SystemExit("README.md contains a literal \\n escape sequence")
+
+          print("Source and documentation validation passed")
+          PY
 
       - name: Build plugin ZIP
         run: |
