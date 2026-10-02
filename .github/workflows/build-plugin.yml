@@ -6,6 +6,7 @@ on:
     paths:
       - "__init__.py"
       - "config.py"
+      - "README.md"
       - ".github/workflows/build-plugin.yml"
   workflow_dispatch:
 
@@ -37,6 +38,7 @@ jobs:
           with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
               zf.write("__init__.py", "__init__.py")
               zf.write("config.py", "config.py")
+              zf.write("README.md", "README.md")
           print(output, output.stat().st_size)
           PY
 
