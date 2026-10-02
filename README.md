@@ -28,15 +28,22 @@ Always obtain permission from metadata sources before using them.
 
 The ready-to-install artifact is **Calibre-Metadata-Engine.zip** in this repository.
 
-**Direct download:** [Calibre-Metadata-Engine.zip](https://github.com/jfroebe/calibre-plugin-metadata-engine/raw/refs/heads/main/Calibre-Metadata-Engine.zip)
+**Direct download:** [Calibre-Metadata-Engine.zip](https://raw.githubusercontent.com/jfroebe/calibre-plugin-metadata-engine/main/Calibre-Metadata-Engine.zip)
 
 Download that ZIP and keep it zipped.
+
+If the direct link does not download correctly in your browser:
+
+1. Open [Calibre-Metadata-Engine.zip in the repository](https://github.com/jfroebe/calibre-plugin-metadata-engine/blob/main/Calibre-Metadata-Engine.zip).
+2. Use GitHub's **Download raw file** button.
+3. Save the file as `Calibre-Metadata-Engine.zip`.
+4. Do not extract it before loading it into Calibre.
 
 Calibre's documented plugin installer accepts a local ZIP path; it does not document installation directly from an arbitrary GitHub URL. The supported GitHub flow is therefore: **download the plugin ZIP from GitHub, then load that ZIP into Calibre**.
 
 ### Calibre GUI
 
-1. Download [`Calibre-Metadata-Engine.zip`](https://github.com/jfroebe/calibre-plugin-metadata-engine/raw/refs/heads/main/Calibre-Metadata-Engine.zip).
+1. Download [`Calibre-Metadata-Engine.zip`](https://raw.githubusercontent.com/jfroebe/calibre-plugin-metadata-engine/main/Calibre-Metadata-Engine.zip).
 2. Open **Calibre → Preferences → Plugins**.
 3. Click **Load plugin from file**.
 4. Select the downloaded ZIP.
