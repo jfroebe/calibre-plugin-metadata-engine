@@ -2,6 +2,28 @@
 
 A **Calibre metadata-source plugin** that connects Calibre to [metadata-engine](https://github.com/jfroebe/metadata-engine). This repository contains the Calibre plugin; it is not a metadata-engine plugin.
 
+## Author and assistance
+
+**Author:** Jason Froebe
+
+Development assistance was provided by ChatGPT because there simply is not enough time in a 24-hour day to do it all.
+
+## About metadata-engine
+
+**metadata-engine will be released to the public soon.**
+
+metadata-engine is a generic, adapter- and plugin-based system designed to simplify the use of public metadata sources. It provides a common integration layer for applications while handling concerns such as built-in rate limiting and scaling.
+
+## Warranty and responsible use
+
+**There is NO warranty, explicit, implicit, or otherwise. Use this software entirely at your own risk.**
+
+Always obtain permission from metadata sources before using them.
+
+- In many cases, permission is granted by agreeing to the provider's Terms of Service and obtaining an API key.
+- In other cases, permission may simply require asking the provider directly.
+- If a metadata provider says no, respect that decision and do not use their service.
+
 ## Download and install
 
 The ready-to-install artifact is **Calibre-Metadata-Engine.zip** in this repository.\n\n**Direct download:** [Calibre-Metadata-Engine.zip](https://github.com/jfroebe/calibre-plugin-metadata-engine/raw/refs/heads/main/Calibre-Metadata-Engine.zip)\n\nDownload that ZIP and keep it zipped.
