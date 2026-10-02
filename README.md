@@ -137,7 +137,7 @@ Repository documentation and source code are kept sanitized and validated before
 The build process checks for:
 
 - Python syntax errors in plugin source files
-- accidental literal escape sequences such as `\\n` in Markdown
+- accidental literal escape sequences in Markdown
 - unresolved merge-conflict markers
 - common trailing-whitespace issues
 - missing required plugin files
