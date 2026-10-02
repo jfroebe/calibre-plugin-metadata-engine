@@ -221,7 +221,7 @@ class ConfigWidget(QWidget):
         base = self.base_url.text().strip().rstrip("/")
         if not base:
             raise RuntimeError("Server URL is empty")
-        headers = {"Accept": "application/json", "User-Agent": "Calibre-Metadata-Engine-Config/1.1.0"}
+        headers = {"Accept": "application/json", "User-Agent": "Calibre-Metadata-Engine-Config/1.1.1"}
         token = self.api_token.text().strip()
         if token:
             headers["Authorization"] = "Bearer " + token
