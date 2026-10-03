@@ -180,3 +180,10 @@ calibre-customize -a Calibre-Metadata-Engine.zip
 ```
 
 Then restart Calibre before opening **Preferences → Metadata download → Metadata Engine → Configure selected source**.
+
+
+## Cover lookup resilience
+
+Version 1.1.2 improves aggregate cover lookup. A failure from one metadata-engine provider no longer aborts cover discovery for all providers. The Calibre plugin continues querying the remaining enabled providers, ranks cover candidates with exact ISBN/ASIN matches ahead of generic confidence, validates downloaded image signatures, and falls through to the next candidate if a cover URL returns invalid content.
+
+For example, a failure from `new_york_times_books` will no longer prevent a valid Open Library, Google Books, Hardcover, Internet Archive, or other provider cover from being returned.
