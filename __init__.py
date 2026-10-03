@@ -16,7 +16,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 1)
+    version = (1, 1, 2)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -98,33 +98,93 @@ class MetadataEngineSource(Source):
     def download_cover(self, log, result_queue, abort, title=None, authors=None,
                        identifiers=None, timeout=30, get_best_cover=False):
         identifiers = identifiers or {}
-        url = self._cached_cover(identifiers)
+        candidates = []
 
-        if not url:
-            query = self._make_query(title, authors, identifiers)
-            if not query:
-                return None
+        cached = self._cached_cover(identifiers)
+        if cached:
+            candidates.append({
+                "cover_url": cached,
+                "confidence": 1.0,
+                "source": "cache",
+            })
+
+        query = self._make_query(title, authors, identifiers)
+        if query:
             try:
                 provider_ids = self._configured_provider_ids() or self._discover(timeout, abort)
-                rows = []
-                for provider_id in provider_ids:
-                    if abort.is_set():
-                        return None
-                    rows.extend(self._search(provider_id, query, authors, identifiers, timeout))
-                rows = [r for r in self._dedupe(rows) if r.get("cover_url")]
-                rows.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
-                if rows:
-                    url = rows[0]["cover_url"]
-                    self._remember_cover(rows[0])
             except Exception as exc:
-                log.error("Metadata Engine cover lookup failed: %s", exc)
-                return None
+                log.error("Metadata Engine provider discovery failed: %s", exc)
+                provider_ids = []
 
-        if url and not abort.is_set():
+            rows = []
+            for provider_id in provider_ids:
+                if abort.is_set():
+                    return None
+                try:
+                    provider_rows = self._search(
+                        provider_id, query, authors, identifiers, timeout
+                    )
+                    rows.extend(provider_rows)
+                    cover_count = sum(1 for row in provider_rows if row.get("cover_url"))
+                    if cover_count:
+                        log.info(
+                            "Metadata Engine provider %r returned %d cover candidate(s)",
+                            provider_id,
+                            cover_count,
+                        )
+                except Exception as exc:
+                    # A cover lookup is an aggregate provider operation. One provider
+                    # failing (for example NYT returning 502) must not suppress covers
+                    # returned by Open Library, Google Books, Hardcover, etc.
+                    log.error(
+                        "Metadata Engine cover provider %r failed: %s",
+                        provider_id,
+                        exc,
+                    )
+
+            rows = [r for r in self._dedupe(rows) if r.get("cover_url")]
+            rows.sort(
+                key=lambda x: (
+                    self._cover_identifier_score(x, identifiers),
+                    float(x.get("confidence") or 0),
+                ),
+                reverse=True,
+            )
+            candidates.extend(rows)
+
+        seen_urls = set()
+        for row in candidates:
+            if abort.is_set():
+                return None
+            url = self._text(row.get("cover_url"))
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+
             try:
-                result_queue.put((self, self._http_bytes(url, timeout)))
+                data = self._http_bytes(url, timeout)
+                if not self._looks_like_image(data):
+                    raise ValueError("downloaded content is not a recognized image")
+                result_queue.put((self, data))
+                self._remember_cover(row)
+                log.info(
+                    "Metadata Engine cover selected from %s: %s",
+                    self._text(row.get("source")) or "unknown",
+                    url,
+                )
+                return None
             except Exception as exc:
-                log.error("Metadata Engine cover download failed: %s", exc)
+                log.error(
+                    "Metadata Engine cover candidate failed source=%r url=%s error=%s",
+                    row.get("source"),
+                    url,
+                    exc,
+                )
+
+        if candidates:
+            log.error("Metadata Engine exhausted %d cover candidate(s)", len(candidates))
+        else:
+            log.error("Metadata Engine returned no cover candidates")
         return None
 
     def _discover(self, timeout, abort):
@@ -265,7 +325,7 @@ class MetadataEngineSource(Source):
 
     def _http_bytes(self, url, timeout):
         headers = {"Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-                   "User-Agent": "Calibre-Metadata-Engine/1.1.1",
+                   "User-Agent": "Calibre-Metadata-Engine/1.1.2",
                    "Accept-Encoding": "identity"}
         token = str(self.prefs.get("api_token", "") or "").strip()
         if token:
@@ -288,6 +348,36 @@ class MetadataEngineSource(Source):
 
     def _configured_provider_ids(self):
         return [x.strip() for x in str(self.prefs.get("plugin_ids", "") or "").split(",") if x.strip()]
+
+    @classmethod
+    def _cover_identifier_score(cls, row, identifiers):
+        """Prefer an exact edition identifier before generic confidence ranking."""
+        wanted_isbn = cls._identifier(identifiers, "isbn", "isbn13", "isbn10")
+        row_isbn = cls._text(row.get("isbn"))
+        if wanted_isbn and row_isbn:
+            normalize = lambda value: "".join(
+                ch for ch in str(value).upper() if ch.isdigit() or ch == "X"
+            )
+            if normalize(wanted_isbn) == normalize(row_isbn):
+                return 3
+
+        wanted_asin = cls._identifier(identifiers, "asin")
+        row_asin = cls._text(row.get("asin"))
+        if wanted_asin and row_asin and wanted_asin.upper() == row_asin.upper():
+            return 2
+
+        return 1
+
+    @staticmethod
+    def _looks_like_image(data):
+        if not data or len(data) < 12:
+            return False
+        return (
+            data.startswith(b"\xff\xd8\xff")
+            or data.startswith(b"\x89PNG\r\n\x1a\n")
+            or data.startswith((b"GIF87a", b"GIF89a"))
+            or (data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+        )
 
     @staticmethod
     def _identifier(identifiers, *keys):
