@@ -1,0 +1,45 @@
+name: META Controller Validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meta-controller-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  meta-validate:
+    runs-on: [self-hosted, linux, x64, meta-controller]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Calibre plugin package sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import ast
+          import zipfile
+          from pathlib import Path
+          required = ['__init__.py','config.py','plugin-import-name-metadata_engine.txt','README.md']
+          for name in required:
+              if not Path(name).is_file():
+                  raise SystemExit(f'missing {name}')
+          for name in ('__init__.py','config.py'):
+              ast.parse(Path(name).read_text(encoding='utf-8'),filename=name)
+          output = Path('/tmp/meta-calibre-validation.zip')
+          with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as z:
+              for name in required:
+                  z.write(name,name)
+          with zipfile.ZipFile(output) as z:
+              assert z.testzip() is None
+          output.unlink()
+          print('PASS: Calibre plugin source and temporary ZIP validation')
+          PY
+      - name: Preserve existing distribution build
+        run: echo 'Published Calibre ZIP continues to be built by the existing build-plugin workflow.'
