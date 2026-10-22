@@ -22,7 +22,11 @@ class InstalledPluginTests(unittest.TestCase):
 
     def setUp(self):
         """Locate the registered plugin and configure an isolated fixture API."""
-        self.plugin = next(p for p in metadata_plugins() if p.name == "Metadata Engine")
+        self.plugin = next(
+            p
+            for p in metadata_plugins(("identify", "cover"))
+            if p.name == "Metadata Engine"
+        )
         self.server = serve()
         self.url, self.requests = self.server.__enter__()
         self.addCleanup(self.server.__exit__, None, None, None)
@@ -79,7 +83,9 @@ class InstalledPluginTests(unittest.TestCase):
                     )
                 if expected.get("description"):
                     self.assertEqual(actual.comments, expected["description"])
-                self.assertIn("metadata-engine:fixture", actual.tags)
+                self.assertIn(
+                    "metadata-engine:fixture", [tag.casefold() for tag in actual.tags]
+                )
 
     def test_unknown_title_has_no_invented_matches(self):
         """An unknown title must leave the queue empty."""

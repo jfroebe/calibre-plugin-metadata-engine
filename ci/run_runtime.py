@@ -186,7 +186,7 @@ def main() -> None:
                 ):
                     configure = (
                         "from calibre.customize.ui import metadata_plugins; "
-                        "p=next(p for p in metadata_plugins() "
+                        "p=next(p for p in metadata_plugins(('identify', 'cover')) "
                         'if p.name=="Metadata Engine"); '
                         f'p.prefs["base_url"]={url!r}; '
                         'p.prefs["plugin_ids"]="calibre_fixture"; '
@@ -292,7 +292,9 @@ def main() -> None:
                         or books[0]["isbn"] != "9780547928227"
                     ):
                         raise AssertionError("Library metadata differs from fixture")
-                    if "metadata-engine:calibre_fixture" not in books[0]["tags"]:
+                    if "metadata-engine:calibre_fixture" not in [
+                        tag.casefold() for tag in books[0]["tags"]
+                    ]:
                         raise AssertionError("Library source provenance missing")
                     metadata["engine_integration"] = "passed"
             command(

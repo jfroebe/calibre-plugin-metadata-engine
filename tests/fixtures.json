@@ -1,9 +1,68 @@
 [
-  {"title":"The Hobbit","authors":["J. R. R. Tolkien"],"isbn":"9780547928227","publisher":"Mariner Books","published_year":"2012","language":"eng","series":[{"name":"Middle-earth","position":1}],"description":"A deterministic test edition."},
-  {"title":"Dune","authors":["Frank Herbert"],"isbn":"9780441172719","publisher":"Ace","published_year":"1990","language":"eng"},
-  {"title":"Dune","authors":["Frank Herbert"],"isbn":"9780441013593","publisher":"Ace","published_year":"2005","language":"eng"},
-  {"title":"The Martian","authors":["Andy Weir"],"isbn":"9780553418026","published_year":"2014","metadata_type":"book"},
-  {"title":"Interstellar: The Official Movie Novelization","authors":["Greg Keyes"],"isbn":"9781783293698","published_year":"2014","metadata_type":"book"},
-  {"title":"Étoiles à São Paulo","authors":["Zoë García"],"asin":"B000TEST01","language":"fra"},
-  {"title":"Minimal record"}
+  {
+    "title": "The Hobbit",
+    "authors": [
+      "J. R. R. Tolkien"
+    ],
+    "isbn": "9780547928227",
+    "publisher": "Mariner Books",
+    "published_year": "2012",
+    "language": "eng",
+    "series": [
+      {
+        "name": "Middle-earth",
+        "position": 1
+      }
+    ],
+    "description": "A deterministic test edition."
+  },
+  {
+    "title": "Dune",
+    "authors": [
+      "Frank Herbert"
+    ],
+    "isbn": "9780441172719",
+    "publisher": "Ace",
+    "published_year": "1990",
+    "language": "eng"
+  },
+  {
+    "title": "Dune",
+    "authors": [
+      "Frank Herbert"
+    ],
+    "isbn": "9780441013593",
+    "publisher": "Ace",
+    "published_year": "2005",
+    "language": "eng"
+  },
+  {
+    "title": "The Martian",
+    "authors": [
+      "Andy Weir"
+    ],
+    "isbn": "9780553418026",
+    "published_year": "2014",
+    "metadata_type": "book"
+  },
+  {
+    "title": "Interstellar: The Official Movie Novelization",
+    "authors": [
+      "Greg Keyes"
+    ],
+    "isbn": "9781783293698",
+    "published_year": "2014",
+    "metadata_type": "book"
+  },
+  {
+    "title": "Étoiles à São Paulo",
+    "authors": [
+      "Zoë García"
+    ],
+    "asin": "B000TEST01",
+    "language": "fra"
+  },
+  {
+    "title": "Minimal Record"
+  }
 ]
