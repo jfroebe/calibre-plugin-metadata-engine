@@ -192,3 +192,71 @@ QT_QPA_PLATFORM=offscreen. Missing XCB is separate from the observed early
 launcher error.
 
 Official reference: https://calibre-ebook.com/download_linux
+
+## Pinned LinuxServer container runtime
+
+The default Linux runtime now uses
+`ghcr.io/linuxserver/calibre@sha256:12013dbe3328eb1b1d72fcbab5ce6d321df68272dfd775082b996d8f54a37e0c`
+(linux/amd64, LinuxServer `v9.16.0-ls428`, Calibre 9.16.0). The digest was resolved
+from the registry's platform manifest, and version labels checked. This adds
+current-version coverage; it does not retroactively qualify the 9.15.0 regression.
+
+`ci/container_runtime.py` builds a cached local test image from that immutable
+base plus the exact engine dependency input. Only the build uses the configured
+web proxy. The actual test container has `--network none`, a private loopback
+engine, no capabilities, no host GUI/Docker socket, temporary configuration,
+and read-only test inputs. It mounts only the reports directory writable.
+
+```bash
+python ci/package.py
+python ci/container_runtime.py \
+  --engine-root /path/to/pinned-engine \
+  --previous-zip /path/to/previous/Calibre-Metadata-Engine.zip \
+  --report reports/linux
+```
+
+## Controlling the Linux GUI on both existing workers
+
+Use container desktops on `chatgpt-dev` and `chatgpt-build-02`, rather than
+installing permanent host desktop services. The existing control Actions runner
+runs on `chatgpt-dev`; it can use the controller's existing restricted SSH key
+to execute the same commands on `chatgpt-build-02`. No Docker TCP socket or new VM
+is needed. A runner registered to the Docker repository is not available to
+jobs in the Calibre repository; runtime orchestration must respect that boundary.
+
+```bash
+python ci/gui_control.py start --engine-root /path/to/pinned-engine \
+  --report /path/to/private/gui-session --port 18181
+python ci/gui_control.py windows --name <reported-container>
+python ci/gui_control.py click --name <reported-container> --x 400 --y 300
+python ci/gui_control.py type --name <reported-container> --text 'test query'
+python ci/gui_control.py key --name <reported-container> --key Return
+python ci/gui_control.py screenshot --name <reported-container>
+python ci/gui_control.py stop --name <reported-container>
+```
+
+The GUI is a real X11 desktop (`PIXELFLUX_WAYLAND=false`) with xdotool and scrot.
+The tool refuses to control containers lacking its ownership label. Browser
+access uses Selkies HTTPS, bound **only to worker loopback**, with a generated
+password outside artifact directories. `session.json` records the container,
+port and password-file location but not the password. Do not upload that
+password file. Remove it after ending a session.
+
+From a machine with existing SSH access to the controller, forward its desktop:
+
+```bash
+ssh -N -L 18181:127.0.0.1:18181 agent@192.168.0.13
+```
+
+Then open `https://localhost:18181`. For the build worker, first forward its
+loopback desktop to another controller loopback port using the existing pinned
+host-key file and restricted management identity; forward that controller port
+to the browser machine. The management key only accepts connections originating
+from the controller. Keep the GUI private; do not introduce public tunnels.
+
+Automated interaction does not require a browser connection: the existing
+Actions-to-controller-to-SSH path can call the bounded GUI commands and collect
+screenshots. Direct interactive browser control from this ChatGPT environment
+still requires a reachable authenticated browser endpoint; private LAN addresses
+are not reachable from this execution environment. The scripted screenshot and
+input path works independently of that limitation once validated on the workers.

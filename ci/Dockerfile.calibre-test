@@ -1,0 +1,11 @@
+# Calibre 9.16.0, LinuxServer v9.16.0-ls428, linux/amd64 manifest.
+FROM ghcr.io/linuxserver/calibre@sha256:12013dbe3328eb1b1d72fcbab5ce6d321df68272dfd775082b996d8f54a37e0c
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3-venv xdotool scrot \
+    && rm -rf /var/lib/apt/lists/*
+COPY engine-requirements.txt /tmp/engine-requirements.txt
+RUN /usr/bin/python3 -m venv /opt/calibre-test-python \
+    && /opt/calibre-test-python/bin/python -m pip install --no-cache-dir \
+       -r /tmp/engine-requirements.txt \
+    && rm /tmp/engine-requirements.txt

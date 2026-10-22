@@ -27,6 +27,13 @@
   "calibre": {
     "version": "9.15.0",
     "linux_url": "https://download.calibre-ebook.com/9.15.0/calibre-9.15.0-x86_64.txz",
-    "linux_sha256": "3f5301c0aa51e5fb2d5f6dcd04024ba4e86501ab328ce5d9d6760efccb887990"
+    "linux_sha256": "3f5301c0aa51e5fb2d5f6dcd04024ba4e86501ab328ce5d9d6760efccb887990",
+    "container": {
+      "image": "ghcr.io/linuxserver/calibre@sha256:12013dbe3328eb1b1d72fcbab5ce6d321df68272dfd775082b996d8f54a37e0c",
+      "platform": "linux/amd64",
+      "calibre_version": "9.16.0",
+      "linuxserver_version": "v9.16.0-ls428",
+      "source_revision": "bad6ca7f52a13a3f750d4888927ac2cf0951cbec"
+    }
   }
 }
