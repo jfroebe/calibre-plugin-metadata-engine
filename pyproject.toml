@@ -1,0 +1,12 @@
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+include = ["ci/**/*.py", "tests/**/*.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "D", "UP"]
+ignore = ["D203", "D213"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

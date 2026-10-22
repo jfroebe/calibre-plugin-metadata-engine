@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "qualification_status": "candidate-unqualified",
+  "snapshot_origin": "jfroebe/metadata-engine-docker@2c61e895be519a32b3e1e5028eaca6355663a4bb:release/components.json",
+  "components": {
+    "engine": {
+      "repository": "jfroebe/metadata-engine",
+      "sha": "22cc84260a479461ad90a11d5485d0591f65779d"
+    },
+    "plugins": {
+      "repository": "jfroebe/metadata-engine-plugins",
+      "sha": "e4a88e99bdc5b3bab0819eec2806ef28a8495944"
+    },
+    "adapters": {
+      "repository": "jfroebe/metadata-engine-adapters",
+      "sha": "7414f5461641d7973b1accf99731c6b64fd96d2f"
+    },
+    "docker": {
+      "repository": "jfroebe/metadata-engine-docker",
+      "sha": "2c61e895be519a32b3e1e5028eaca6355663a4bb"
+    },
+    "calibre_previous": {
+      "repository": "jfroebe/calibre-plugin-metadata-engine",
+      "sha": "5ebab70ed31aa677381aeab9c178c9684d0ce6ee"
+    }
+  },
+  "calibre": {
+    "version": "9.15.0",
+    "linux_url": "https://download.calibre-ebook.com/9.15.0/calibre-9.15.0-x86_64.txz",
+    "linux_sha256": "3f5301c0aa51e5fb2d5f6dcd04024ba4e86501ab328ce5d9d6760efccb887990"
+  }
+}
