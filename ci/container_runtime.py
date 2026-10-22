@@ -66,6 +66,9 @@ def main() -> None:
     report.mkdir(parents=True, exist_ok=True)
     image = build_image(engine)
     name = "calibre-test-" + uuid.uuid4().hex[:12]
+    source_sha = os.environ.get(
+        "CALIBRE_SOURCE_SHA", os.environ.get("GITHUB_SHA", "local")
+    )
     command = [
         "docker",
         "run",
@@ -101,7 +104,7 @@ def main() -> None:
         "--env",
         f"RUNNER_NAME={platform.node()}",
         "--env",
-        f"GITHUB_SHA={os.environ.get('GITHUB_SHA', 'local')}",
+        f"GITHUB_SHA={source_sha}",
         "--entrypoint",
         "/opt/calibre-test-python/bin/python",
         image,

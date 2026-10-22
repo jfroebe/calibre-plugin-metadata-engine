@@ -247,11 +247,14 @@ From a machine with existing SSH access to the controller, forward its desktop:
 ssh -N -L 18181:127.0.0.1:18181 agent@192.168.0.13
 ```
 
-Then open `https://localhost:18181`. For the build worker, first forward its
-loopback desktop to another controller loopback port using the existing pinned
-host-key file and restricted management identity; forward that controller port
-to the browser machine. The management key only accepts connections originating
-from the controller. Keep the GUI private; do not introduce public tunnels.
+Then open `https://localhost:18181`. This requires an existing user SSH identity
+that permits forwarding. The build-worker management key is explicitly restricted
+and does **not** permit port forwarding; do not relax that restriction. Automated
+control on the build worker uses ordinary SSH command execution through the
+controller, which was verified. Browser access to a build-worker loopback GUI
+would require an independently authorized forwarding identity or the VM console;
+that interactive browser path has not been configured. Keep the GUI private;
+do not introduce public tunnels.
 
 Automated interaction does not require a browser connection: the existing
 Actions-to-controller-to-SSH path can call the bounded GUI commands and collect
@@ -259,3 +262,22 @@ screenshots. Direct interactive browser control from this ChatGPT environment
 still requires a reachable authenticated browser endpoint; private LAN addresses
 are not reachable from this execution environment. The scripted screenshot and
 input path works independently of that limitation once validated on the workers.
+
+## Worker acceptance evidence (October 22, 2026)
+
+- Both existing workers successfully launched the pinned LinuxServer Calibre
+  image and reported Calibre 9.16 with bundled Python 3.14.8.
+- [GUI acceptance run](https://github.com/jfroebe/chatgpt-dev-control/actions/runs/39849014743)
+  passed on both workers. Each typed a unique marker, clicked a real Qt button,
+  verified the resulting value, sent a key and saved a valid PNG screenshot.
+  The screenshots and receipts are retained as Actions artifacts. Both desktops
+  and their temporary password files were removed after the test.
+- The active runner on `chatgpt-build-02` is repository-scoped to
+  `metadata-engine-docker`. Companion Docker PR 56 adds the targeted runtime
+  workflow there, using the existing repository token for the exact private
+  engine checkout. It requires no additional runner registration.
+
+The earlier host-native launcher limitation no longer blocks container testing.
+The older matrix rows describe the initial assessment; container and GUI
+acceptance above supersede their unverified state for those specific checks.
+Full release qualification remains distinct from container/GUI acceptance.
