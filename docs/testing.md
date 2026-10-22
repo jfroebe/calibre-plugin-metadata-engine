@@ -48,7 +48,7 @@ Fixtures include The Hobbit, two Dune editions, The Martian book, Interstellar
 novelization, Unicode, an unknown title and a minimal record. Metadata mapping,
 provider selection, disabled discovery, outage isolation, invalid JSON, 401/404,
 timeout/abort, cover fallback, image signatures and confidence/provenance have
-assertions. These runtime tests are **written but not yet executed successfully**.
+assertions. These runtime tests passed against the pinned LinuxServer Calibre 9.16 image.
 
 ## Running locally
 
@@ -96,14 +96,20 @@ work. Obtain inventory from GitHub Actions settings or its authenticated runner
 API; do not guess labels. The GitHub connector available during implementation
 rejected the runner-inventory endpoint.
 
+The existing Docker-repository token and runner were successfully used by the
+companion targeted runtime workflow. The worker-label variables above apply to
+the still-provisional Calibre-repository workflow, not to the tested Docker
+workflow, which uses its established placement labels directly.
+
 Required existing/secure credentials:
 
 - `METADATA_ENGINE_REPO_TOKEN`, with Contents read access to the pinned component
   repositories. Git checkouts disable credential persistence. A missing token
   fails preflight immediately rather than leaving jobs queued.
 - `CALIBRE_TEST_SOCKS_PASSWORD`, supplied securely for the existing authenticated
-  relay. The implementation environment had no accessible value. Never commit
-  it or put it in a workflow dispatch input.
+  relay. The cloud implementation environment had no accessible value. Existing local
+  protected credentials may be used by a separate proxy gate; never commit the
+  value or put it in a workflow dispatch input.
 
 Local worker downloads use HTTP/HTTPS `192.168.0.59:8118`; loopback engine
 requests bypass proxies. `ci/proxy_gate.py` tests engine Runtime HTTP forwarding,
@@ -133,9 +139,9 @@ artifacts for 14 days. Distinct runs never share a test database or library.
 |---|---|
 | Host Python 3.12, Linux x86-64 | Packaging, actual-engine API/cache and deterministic routing tests passed locally |
 | Calibre 9.15.0 official Linux x86-64 | Archive downloaded and ELF architecture verified; launcher fails before Python starts in the implementation environment |
-| Calibre-bundled Python | Runtime version recording implemented; execution unverified |
-| chatgpt-build-02 | Harness and workflow prepared; runner inventory/access still needed |
-| chatgpt-dev | Actual engine tests prepared for worker; runner inventory/access still needed |
+| Calibre 9.16.0 / bundled Python 3.14.8 | Ten regressions and actual-engine/library integration passed in the pinned container |
+| chatgpt-build-02 | Container launch, ten regressions, engine/cache/library integration and GUI control passed |
+| chatgpt-dev | Container launch, ten real-Calibre regressions and GUI control passed |
 | Windows 11/current Calibre, Python 3.14-era regression | Not yet implemented or qualified; required before release |
 | Calibre 6.0 declared plugin minimum | Existing declaration retained; not verified by these tests |
 | macOS | Future extension; no support claim added |
@@ -150,9 +156,11 @@ not proof the plugin fails under a normal Linux Calibre installation.
 
 - Retrieve successful historical cross-repository runs and select the last
   mutually compatible baseline; the candidate manifest alone is insufficient.
-- Verify current worker inventory and credential availability, then run and
-  troubleshoot the actual Calibre harness. Do not mark its unexecuted assertions
-  as passing or weaken them to obtain a green build.
+- Finish the Calibre repository's PR/release orchestration using the companion
+  Docker-repository runtime workflow and the same tested ZIP artifact. The
+  existing build-worker runner is scoped to the Docker repository; do not guess
+  that it can accept Calibre-repository jobs. The actual runtime harness has
+  passed; the draft Calibre-repository qualification job remains provisional.
 - Implement and pass Windows qualification with pinned installer digest and the
   relevant bundled Python runtime. No permanent Windows VM is required.
 - Extend lifecycle assertions to verify prior-version preference preservation
@@ -281,3 +289,28 @@ The earlier host-native launcher limitation no longer blocks container testing.
 The older matrix rows describe the initial assessment; container and GUI
 acceptance above supersede their unverified state for those specific checks.
 Full release qualification remains distinct from container/GUI acceptance.
+
+## Passed actual-engine and library run
+
+[Build-worker run 39850526224](https://github.com/jfroebe/metadata-engine-docker/actions/runs/39850526224)
+passed the complete implemented Linux container harness. It installed the prior
+ZIP and candidate, registered and loaded the plugin, passed ten regressions,
+retrieved The Hobbit metadata and cover through the actual pinned engine,
+verified repeat queries skipped provider execution, wrote metadata and cover to
+a synthetic disposable Calibre library, queried the expected ISBN/title/source,
+removed the plugin, and reinstalled it. No production or personal library was
+mounted. The test container was removed.
+
+The tested client revision is
+`1696c3b33ded48d8634fa36ed27902fc4bb312dd`; the exact ZIP SHA-256 is
+`9e4c1a449f429cd9bd85ccecbeed9d16269631411c936127d5b862510516141f`.
+The actual engine is pinned to
+`22cc84260a479461ad90a11d5485d0591f65779d`.
+
+- [Sanitized runtime reports](https://github.com/jfroebe/metadata-engine-docker/actions/runs/39850526224/artifacts/12457217094)
+- [Exact tested ZIP artifact](https://github.com/jfroebe/metadata-engine-docker/actions/runs/39850526224/artifacts/12456343713)
+- [GUI screenshots and input receipts](https://github.com/jfroebe/chatgpt-dev-control/actions/runs/39849014743/artifacts/12455528749)
+
+Container/GUI implementation is verified. Full release qualification remains a
+draft because the other explicitly listed release blockers are still open.
+Nothing was merged, published or deployed.
