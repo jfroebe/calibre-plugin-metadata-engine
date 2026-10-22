@@ -103,11 +103,9 @@ def main() -> None:
     for key in list(env):
         if key.lower().endswith("_proxy") or key.startswith("ME_"):
             env.pop(key)
-    env.update(
-        QT_QPA_PLATFORM="offscreen",
-        NO_PROXY="127.0.0.1,localhost",
-        no_proxy="127.0.0.1,localhost",
-    )
+    # All proxy settings were removed above. A remaining NO_PROXY entry makes
+    # Calibre print proxy diagnostics into otherwise machine-readable OPF/JSON.
+    env.update(QT_QPA_PLATFORM="offscreen")
     metadata = {
         "os": platform.platform(),
         "host_python": platform.python_version(),
