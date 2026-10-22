@@ -225,8 +225,7 @@ is needed. A runner registered to the Docker repository is not available to
 jobs in the Calibre repository; runtime orchestration must respect that boundary.
 
 ```bash
-python ci/gui_control.py start --engine-root /path/to/pinned-engine \
-  --report /path/to/private/gui-session --port 18181
+python ci/gui_control.py start --report /path/to/private/gui-session --port 18181
 python ci/gui_control.py windows --name <reported-container>
 python ci/gui_control.py click --name <reported-container> --x 400 --y 300
 python ci/gui_control.py type --name <reported-container> --text 'test query'
@@ -235,7 +234,7 @@ python ci/gui_control.py screenshot --name <reported-container>
 python ci/gui_control.py stop --name <reported-container>
 ```
 
-The GUI is a real X11 desktop (`PIXELFLUX_WAYLAND=false`) with xdotool and scrot.
+The GUI is a real X11 desktop (`PIXELFLUX_WAYLAND=false`) with xdotool and Qt screen capture.
 The tool refuses to control containers lacking its ownership label. Browser
 access uses Selkies HTTPS, bound **only to worker loopback**, with a generated
 password outside artifact directories. `session.json` records the container,

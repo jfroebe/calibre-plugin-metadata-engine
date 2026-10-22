@@ -9,10 +9,11 @@ from pathlib import Path
 import platform
 import secrets
 import subprocess
+import tempfile
 import time
 import uuid
 
-from container_runtime import build_image
+from container_runtime import BASE
 
 LABEL = "io.metadata-engine.calibre-gui"
 
@@ -40,7 +41,6 @@ def main() -> None:
         choices=("start", "windows", "click", "type", "key", "screenshot", "stop"),
     )
     parser.add_argument("--name")
-    parser.add_argument("--engine-root", type=Path)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--port", type=int, default=18181)
     parser.add_argument("--x", type=int)
@@ -52,8 +52,8 @@ def main() -> None:
     if host not in {"chatgpt-dev", "chatgpt-build-02"}:
         raise SystemExit("Run on an existing authorized development worker")
     if args.action == "start":
-        if not args.engine_root or not args.report:
-            parser.error("start requires --engine-root and --report")
+        if not args.report:
+            parser.error("start requires --report")
         if not 1024 <= args.port <= 65535:
             parser.error("Use an unprivileged TCP port")
         report = args.report.resolve()
@@ -61,11 +61,11 @@ def main() -> None:
         report.chmod(0o700)
         # The password is deliberately outside report artifacts. SSH loopback
         # forwarding is still required; no LAN or Internet listener is opened.
-        password = report.parent / (report.name + "-gui-password")
-        descriptor = os.open(password, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        descriptor, password_name = tempfile.mkstemp(prefix="calibre-gui-password-")
+        password = Path(password_name)
         with os.fdopen(descriptor, "w") as output:
             output.write(secrets.token_urlsafe(32))
-        image = build_image(args.engine_root.resolve())
+        image = BASE
         name = "calibre-gui-" + uuid.uuid4().hex[:10]
         docker(
             "run",
@@ -163,7 +163,14 @@ def main() -> None:
             parser.error("key requires an X11 key combination")
         docker(*prefix, "xdotool", "key", "--clearmodifiers", args.key)
     elif args.action == "screenshot":
-        docker(*prefix, "scrot", "--overwrite", "/artifacts/screenshot.png")
+        docker(
+            *prefix,
+            "/opt/calibre/calibre-debug",
+            "-c",
+            "from qt.core import QApplication; a=QApplication([]); "
+            "s=a.primaryScreen(); assert s is not None; "
+            "assert s.grabWindow(0).save('/artifacts/screenshot.png')",
+        )
 
 
 if __name__ == "__main__":
