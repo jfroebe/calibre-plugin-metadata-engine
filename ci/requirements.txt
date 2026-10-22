@@ -1,0 +1,4 @@
+# Test tools, separate from the Calibre-bundled Python runtime.
+pytest==8.4.2
+ruff==0.14.1
+httpx[socks]==0.28.1

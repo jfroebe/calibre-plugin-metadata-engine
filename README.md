@@ -187,3 +187,9 @@ Then restart Calibre before opening **Preferences → Metadata download → Meta
 Version 1.1.2 improves aggregate cover lookup. A failure from one metadata-engine provider no longer aborts cover discovery for all providers. The Calibre plugin continues querying the remaining enabled providers, ranks cover candidates with exact ISBN/ASIN matches ahead of generic confidence, validates downloaded image signatures, and falls through to the next candidate if a cover URL returns invalid content.
 
 For example, a failure from `new_york_times_books` will no longer prevent a valid Open Library, Google Books, Hardcover, Internet Archive, or other provider cover from being returned.
+
+## Automated testing
+
+See [testing and qualification status](docs/testing.md) for isolated test commands,
+exact component pins, worker requirements and the current release blockers.
+The new framework is a draft and does not yet qualify a Calibre release.
