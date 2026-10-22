@@ -95,11 +95,11 @@ jobs:
     env:
       http_proxy: http://192.168.0.59:8118
       https_proxy: http://192.168.0.59:8118
-      HTTP_PROXY: http://192.168.0.59:8118
-      HTTPS_PROXY: http://192.168.0.59:8118
       no_proxy: localhost,127.0.0.1,::1,.localhost
-      NO_PROXY: localhost,127.0.0.1,::1,.localhost
     steps:
+      - name: Configure case-sensitive Linux proxy aliases
+        run: |
+          printf '%s\n' "HTTP_PROXY=$http_proxy" "HTTPS_PROXY=$https_proxy" "NO_PROXY=$no_proxy" >> "$GITHUB_ENV"
       - run: test "$(hostname -s)" = chatgpt-dev
       - uses: actions/checkout@v4
         with:
@@ -148,11 +148,11 @@ jobs:
     env:
       http_proxy: http://192.168.0.59:8118
       https_proxy: http://192.168.0.59:8118
-      HTTP_PROXY: http://192.168.0.59:8118
-      HTTPS_PROXY: http://192.168.0.59:8118
       no_proxy: localhost,127.0.0.1,::1,.localhost
-      NO_PROXY: localhost,127.0.0.1,::1,.localhost
     steps:
+      - name: Configure case-sensitive Linux proxy aliases
+        run: |
+          printf '%s\n' "HTTP_PROXY=$http_proxy" "HTTPS_PROXY=$https_proxy" "NO_PROXY=$no_proxy" >> "$GITHUB_ENV"
       - run: test "$(hostname -s)" = chatgpt-build-02
       - uses: actions/checkout@v4
         with:

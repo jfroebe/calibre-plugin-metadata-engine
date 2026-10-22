@@ -168,8 +168,9 @@ def main() -> None:
             "/opt/calibre/calibre-debug",
             "-c",
             "from qt.core import QApplication; a=QApplication([]); "
-            "s=a.primaryScreen(); assert s is not None; "
-            "assert s.grabWindow(0).save('/artifacts/screenshot.png')",
+            "import sys; s=a.primaryScreen(); "
+            "saved=bool(s and s.grabWindow(0).save('/artifacts/screenshot.png')); "
+            "sys.exit(0 if saved else 1)",
         )
 
 

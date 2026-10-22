@@ -126,6 +126,14 @@ def main() -> None:
         subprocess.run(
             [*control, "key", "--name", name, "--key", "Tab"], check=True, timeout=20
         )
+        subprocess.run([*control, "screenshot", "--name", name], check=True, timeout=30)
+        screenshot = report / "screenshot.png"
+        if (
+            not screenshot.is_file()
+            or screenshot.stat().st_size < 100
+            or not screenshot.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        ):
+            raise AssertionError("GUI screenshot is missing or invalid")
         print("GUI_CONTROL_PASS")
     finally:
         if name:
