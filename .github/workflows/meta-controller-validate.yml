@@ -12,11 +12,23 @@ concurrency:
   group: meta-controller-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Local GitHub test workers, including future VMs, use the web relay.
+  http_proxy: http://192.168.0.59:8118
+  https_proxy: http://192.168.0.59:8118
+  all_proxy: http://192.168.0.59:8118
+  no_proxy: localhost,127.0.0.1,::1,.localhost,meta-postgres
+
 jobs:
   meta-validate:
     runs-on: [self-hosted, linux, x64, meta-controller]
     timeout-minutes: 10
     steps:
+      - name: Configure local proxy aliases
+        shell: bash
+        run: |
+          printf '%s\n' "HTTP_PROXY=$http_proxy" "HTTPS_PROXY=$https_proxy" \
+            "ALL_PROXY=$all_proxy" "NO_PROXY=$no_proxy" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - name: Verify Calibre plugin package sources
         shell: bash
