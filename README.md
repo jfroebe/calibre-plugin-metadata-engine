@@ -193,3 +193,7 @@ For example, a failure from `new_york_times_books` will no longer prevent a vali
 See [testing and qualification status](docs/testing.md) for isolated test commands,
 exact component pins, worker requirements and the current release blockers.
 The new framework is a draft and does not yet qualify a Calibre release.
+
+## Client integration validation (1.1.3)
+
+Explicit movie/TV results are excluded from book metadata and covers. Structurally incompatible API responses report the offending field while other providers can continue. A cover with a known conflicting ISBN or ASIN is excluded rather than used as fallback artwork. Existing preference schema and declared platform support are retained.

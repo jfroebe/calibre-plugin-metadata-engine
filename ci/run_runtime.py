@@ -132,6 +132,7 @@ def main() -> None:
             "calibredb",
         )
     }
+    env["CALIBRE_TEST_DEBUG"] = tools["calibre-debug"]
     try:
         with tempfile.TemporaryDirectory(prefix="calibre-validation-") as tmp:
             work = Path(tmp)

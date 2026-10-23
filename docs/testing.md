@@ -143,9 +143,9 @@ artifacts for 14 days. Distinct runs never share a test database or library.
 | chatgpt-build-02 | Container launch, ten regressions, engine/cache/library integration and GUI control passed |
 | chatgpt-dev | Container launch, ten real-Calibre regressions and GUI control passed |
 | Windows Server 2025 / pinned Calibre 9.15.0 | Ten regressions and preference-preserving upgrade passed; bundled Python 3.14.7 |
-| Windows 11 desktop/current Calibre | Remains outside hosted Server regression coverage |
+| Windows 11 desktop | Independently validated; accepted by the owner October 23, 2026; no desktop runner required |
 | Calibre 6.0 declared plugin minimum | Existing declaration retained; not verified by these tests |
-| macOS | Future extension; no support claim added |
+| macOS desktop | Independently validated; accepted by the owner October 23, 2026; no desktop runner required |
 
 The downloaded archive is `calibre-9.15.0-x86_64.txz`. Both extracted launchers
 are Linux ELF x86-64 binaries. The environment allows `/proc/self/exe` but denies
@@ -162,8 +162,6 @@ not proof the plugin fails under a normal Linux Calibre installation.
   existing build-worker runner is scoped to the Docker repository; do not guess
   that it can accept Calibre-repository jobs. The actual runtime harness has
   passed; the draft Calibre-repository qualification job remains provisional.
-- Complete Windows 11 desktop/current-version qualification beyond the pinned
-  native Windows regression job added here. No permanent Windows VM is required.
 - Verify future preference schema migrations when such migrations are introduced;
   current-schema preference preservation is now asserted across ZIP upgrades.
 - Verify mixed book/movie responses and wrong-edition/full-resolution covers;

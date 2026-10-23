@@ -1,23 +1,23 @@
 {
   "schema_version": 1,
   "qualification_status": "candidate-unqualified",
-  "snapshot_origin": "jfroebe/metadata-engine-docker@2c61e895be519a32b3e1e5028eaca6355663a4bb:release/components.json",
+  "snapshot_origin": "jfroebe/metadata-engine-docker@c4f3453f72091c10af0f9168525c9e8af0b05e30:release/components.json",
   "components": {
     "engine": {
       "repository": "jfroebe/metadata-engine",
-      "sha": "22cc84260a479461ad90a11d5485d0591f65779d"
+      "sha": "6d8d759428cf8049f5b8f4c4894022b897fd3229"
     },
     "plugins": {
       "repository": "jfroebe/metadata-engine-plugins",
-      "sha": "e4a88e99bdc5b3bab0819eec2806ef28a8495944"
+      "sha": "81b3f71febc79491c1cb0b59487bb551b255c14d"
     },
     "adapters": {
       "repository": "jfroebe/metadata-engine-adapters",
-      "sha": "7414f5461641d7973b1accf99731c6b64fd96d2f"
+      "sha": "9f7732138c72723f10a5a5aafaaa3d1a4e6282d1"
     },
     "docker": {
       "repository": "jfroebe/metadata-engine-docker",
-      "sha": "2c61e895be519a32b3e1e5028eaca6355663a4bb"
+      "sha": "c4f3453f72091c10af0f9168525c9e8af0b05e30"
     },
     "calibre_previous": {
       "repository": "jfroebe/calibre-plugin-metadata-engine",
@@ -37,5 +37,26 @@
     },
     "windows_url": "https://download.calibre-ebook.com/9.15.0/calibre-64bit-9.15.0.msi",
     "windows_sha256": "0f96ae06165c2419607c1c66726c091a78e89e08ea69f077cf3e2c884e800853"
+  },
+  "snapshot_evidence": {
+    "repository": "jfroebe/metadata-engine-docker",
+    "run_id": 39944551219,
+    "head_sha": "c4f3453f72091c10af0f9168525c9e8af0b05e30",
+    "workflow_path": ".github/workflows/validate-snapshot.yml",
+    "postgresql": true
+  },
+  "desktop_validation": {
+    "windows11": {
+      "status": "independently-validated",
+      "accepted_by": "repository owner",
+      "accepted_on": "2026-10-23",
+      "required_in_test_environment": false
+    },
+    "macos": {
+      "status": "independently-validated",
+      "accepted_by": "repository owner",
+      "accepted_on": "2026-10-23",
+      "required_in_test_environment": false
+    }
   }
 }

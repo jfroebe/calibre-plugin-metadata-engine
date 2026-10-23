@@ -15,7 +15,7 @@ import zlib
 ROWS = json.loads(Path(__file__).with_name("fixtures.json").read_text("utf-8"))
 
 
-def png() -> bytes:
+def png(width: int = 120, height: int = 180) -> bytes:
     """Return a synthetic, decodable RGB cover with no external licensing."""
 
     def chunk(kind, data):
@@ -26,7 +26,6 @@ def png() -> bytes:
             + struct.pack("!I", zlib.crc32(kind + data))
         )
 
-    width, height = 120, 180
     raw = (b"\0" + b"\x30\x70\xa0" * width) * height
     return (
         b"\x89PNG\r\n\x1a\n"
@@ -65,6 +64,12 @@ def serve():
             content_type = "application/json"
             if path.path == "/cover.png":
                 payload, content_type = png(), "image/png"
+            elif path.path == "/full.png":
+                payload, content_type = png(600, 900), "image/png"
+            elif path.path == "/cached.png":
+                payload, content_type = png(), "image/png"
+            elif path.path == "/thumbnail.png":
+                payload, content_type = png(20, 30), "image/png"
             elif path.path == "/invalid.png":
                 payload = b"<html>not an image</html>"
             elif path.path == "/health":
@@ -83,6 +88,45 @@ def serve():
                 status, payload = 401, {"detail": "unauthorized"}
             elif path.path == "/plugins/malformed/search":
                 payload = b"{broken json"
+            elif path.path == "/bad-discovery/plugins":
+                payload = {"plugins": "incompatible"}
+            elif path.path.startswith("/plugins/schema-"):
+                payload = {
+                    "array": [],
+                    "missing": {"items": []},
+                    "mapping": {"results": {}},
+                    "row": {"results": ["incompatible"]},
+                    "title": {"results": [{"title": ["incompatible"]}]},
+                }[path.path.split("/")[2].removeprefix("schema-")]
+            elif path.path in {
+                "/plugins/mixed/search",
+                "/plugins/editions/search",
+                "/plugins/wrong-edition/search",
+            }:
+                row = dict(
+                    ROWS[0],
+                    metadata_type="book",
+                    confidence=0.5,
+                    cover_url=self.server.base_url + "/full.png",
+                    thumbnail_url=self.server.base_url + "/thumbnail.png",
+                )
+                wrong = dict(
+                    row,
+                    isbn="9780441172719",
+                    confidence=1.0,
+                    cover_url=self.server.base_url + "/thumbnail.png",
+                )
+                movie = dict(
+                    row,
+                    title="The Hobbit movie",
+                    metadata_type="movie",
+                    confidence=1.0,
+                    cover_url=self.server.base_url + "/invalid.png",
+                )
+                rows = [row, movie] if "mixed" in path.path else [wrong, row]
+                if "wrong-edition" in path.path:
+                    rows = [wrong]
+                payload = {"results": rows}
             elif path.path == "/plugins/slow/search":
                 time.sleep(2)
                 payload = {"results": []}
@@ -113,7 +157,7 @@ def serve():
             self.end_headers()
             try:
                 self.wfile.write(body)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
