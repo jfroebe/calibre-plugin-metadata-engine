@@ -1,0 +1,20 @@
+# Python style tooling; keep this version identical in CI and developer installs.
+required-version = "==0.14.1"
+target-version = "py311"
+line-length = 88
+extend-exclude = [".ci"]
+
+[lint]
+select = ["E4", "E7", "E9", "W", "I", "N", "F", "D", "UP"]
+ignore = ["D203", "D213"]
+
+[lint.per-file-ignores]
+# Preserve the previous ci/tests-only scope of pre-existing D and UP checks.
+"__init__.py" = ["D", "UP", "N999"]
+"config.py" = ["D", "UP"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = false
