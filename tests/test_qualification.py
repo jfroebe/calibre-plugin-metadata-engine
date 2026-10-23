@@ -1,4 +1,4 @@
-"""Ensure the aggregation gate cannot turn missing validation into approval."""
+"""Ensure missing qualification outcomes cannot be converted into approval."""
 
 import importlib.util
 from pathlib import Path
@@ -12,53 +12,50 @@ spec.loader.exec_module(gate)
 
 
 class QualificationTests(unittest.TestCase):
-    """Exercise required failures, cancellations, skipped jobs and release scope."""
+    """Exercise missing outcomes and the separation of native CI and distribution."""
 
     def setUp(self):
-        """Use successful native tests with explicitly unrequested local jobs."""
+        """Represent native success without recorded integration approval."""
         self.jobs = {
-            name: {"result": result}
-            for name, result in (
-                ("package", "success"),
-                ("native-runtime", "success"),
-                ("worker-configuration", "skipped"),
-                ("engine", "skipped"),
-                ("linux-runtime", "skipped"),
-            )
+            "package": {"result": "success"},
+            "native-runtime": {"result": "success"},
+            "integration-evidence": {"result": "skipped"},
         }
         self.manifest = {"qualification_status": "candidate-unqualified"}
 
-    def test_ci_success_is_not_release_qualification(self):
-        """Native checks can pass while full release remains rejected."""
-        gate.qualify(self.jobs, "ci", self.manifest)
-        with self.assertRaises(ValueError):
-            gate.qualify(self.jobs, "release", self.manifest)
+    def test_native_success_without_integration_is_not_qualification(self):
+        """Native checks can pass while exact-artifact approval remains absent."""
+        for mode in ("ci", "release"):
+            with self.assertRaises(ValueError):
+                gate.qualify(self.jobs, mode, self.manifest)
 
     def test_every_required_result_must_be_success(self):
-        """A skipped, cancelled, missing or failing native suite blocks CI."""
+        """Skipped, cancelled, missing and failing native suites block CI."""
         for name in ("package", "native-runtime"):
             for result in ("skipped", "cancelled", "failure", None):
-                with self.subTest(name=name, result=result):
-                    jobs = {**self.jobs, name: {"result": result}}
-                    with self.assertRaises(ValueError):
-                        gate.qualify(jobs, "ci", self.manifest)
+                with (
+                    self.subTest(name=name, result=result),
+                    self.assertRaises(ValueError),
+                ):
+                    gate.qualify(
+                        {**self.jobs, name: {"result": result}}, "ci", self.manifest
+                    )
         with self.assertRaises(ValueError):
             gate.qualify({}, "ci", self.manifest)
 
-    def test_local_mode_requires_actual_integration(self):
-        """Missing local setup cannot satisfy requested local validation."""
-        with self.assertRaises(ValueError):
-            gate.qualify(self.jobs, "local", self.manifest)
-        for name in self.jobs:
-            self.jobs[name] = {"result": "success"}
-        gate.qualify(self.jobs, "local", self.manifest)
+    def test_release_requires_successful_evidence_and_qualified_manifest(self):
+        """Both artifact verification and reviewed integration status are required."""
+        self.jobs["integration-evidence"] = {"result": "success"}
         with self.assertRaises(ValueError):
             gate.qualify(self.jobs, "release", self.manifest)
+        self.manifest["qualification_status"] = "qualified"
+        gate.qualify(self.jobs, "release", self.manifest)
+        gate.qualify(self.jobs, "ci", self.manifest)
 
-    def test_optional_failures_and_unknown_modes_are_rejected(self):
-        """Bad optional execution or a misspelled mode cannot silently pass."""
-        self.jobs["engine"] = {"result": "failure"}
+    def test_failures_and_unknown_modes_are_rejected(self):
+        """An unexpected evidence failure or misspelled mode cannot silently pass."""
+        self.jobs["integration-evidence"] = {"result": "failure"}
         with self.assertRaises(ValueError):
             gate.qualify(self.jobs, "ci", self.manifest)
         with self.assertRaises(ValueError):
-            gate.qualify(self.jobs, "relese", self.manifest)
+            gate.qualify(self.jobs, "local", self.manifest)

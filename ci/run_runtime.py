@@ -65,17 +65,26 @@ def engine(root: Path, work: Path, report: Path):
                 str(work),
                 "--port",
                 str(port),
+                *(
+                    ["--pg-dsn", os.environ["CALIBRE_TEST_PG_DSN"]]
+                    if os.environ.get("CALIBRE_TEST_PG_DSN")
+                    else []
+                ),
             ],
             stdout=log,
             stderr=subprocess.STDOUT,
         )
         try:
-            for _ in range(100):
+            for _ in range(300):
                 if process.poll() is not None:
                     raise RuntimeError("Disposable engine failed; see engine.log")
                 try:
                     with opener.open(url + "/health", timeout=1) as response:
-                        if json.load(response)["ok"]:
+                        health = json.load(response)
+                        if (
+                            health["ok"]
+                            and health.get("cache", {}).get("ready") is True
+                        ):
                             break
                 except (OSError, ValueError):
                     time.sleep(0.1)
@@ -132,6 +141,7 @@ def main() -> None:
             "calibredb",
         )
     }
+    env["CALIBRE_TEST_DEBUG"] = tools["calibre-debug"]
     try:
         with tempfile.TemporaryDirectory(prefix="calibre-validation-") as tmp:
             work = Path(tmp)

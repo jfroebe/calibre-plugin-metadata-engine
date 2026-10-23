@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
+from unittest.mock import patch
 from pathlib import Path
 import sys
 from urllib.parse import quote
@@ -19,15 +21,16 @@ async def main() -> None:
 
     results = []
     password = quote(os.environ["CALIBRE_SOCKS_PASSWORD"], safe="")
+    username = quote(os.environ.get("CALIBRE_SOCKS_USERNAME", "socks5"), safe="")
     modes = {
         "http-forward": ("http://192.168.0.59:8118", "http://example.com"),
         "https-connect": ("http://192.168.0.59:8118", "https://example.com"),
         "socks5-auth": (
-            f"socks5://socks5:{password}@192.168.0.59:9118",
+            f"socks5://{username}:{password}@192.168.0.59:9118",
             "https://example.com",
         ),
         "socks5h-remote-dns": (
-            f"socks5h://socks5:{password}@192.168.0.59:9118",
+            f"socks5h://{username}:{password}@192.168.0.59:9118",
             "https://example.com",
         ),
         "socks5-auth-rejected": (
@@ -46,8 +49,24 @@ async def main() -> None:
         )
         expected_failure = name in {"socks5-auth-rejected", "connection-failure"}
         failed = False
+        lookups = []
+        original_resolver = socket.getaddrinfo
+
+        def guarded_resolver(host, *args, **kwargs):
+            name = host.decode("ascii") if isinstance(host, bytes) else str(host)
+            if name.rstrip(".").lower() == "example.com":
+                lookups.append("target")
+                raise OSError("Target resolution forbidden during remote-DNS test")
+            return original_resolver(host, *args, **kwargs)
+
         try:
-            response = await runtime.request("GET", target)
+            if name == "socks5h-remote-dns":
+                with patch("socket.getaddrinfo", guarded_resolver):
+                    response = await runtime.request("GET", target)
+                if lookups:
+                    raise RuntimeError("SOCKS performed local target DNS")
+            else:
+                response = await runtime.request("GET", target)
             response.raise_for_status()
             passed = not expected_failure
         except Exception:
@@ -57,7 +76,14 @@ async def main() -> None:
             passed = expected_failure
         finally:
             await runtime.close()
-        results.append({"test": name, "passed": passed, "transport_failed": failed})
+        results.append(
+            {
+                "test": name,
+                "passed": passed,
+                "transport_failed": failed,
+                "local_target_dns_calls": len(lookups),
+            }
+        )
     report = Path(os.environ.get("CALIBRE_PROXY_REPORT", "proxy-report.json"))
     report.write_text(json.dumps(results, indent=2), encoding="utf-8")
     if not all(row["passed"] for row in results):

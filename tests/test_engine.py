@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from urllib.error import HTTPError
+from urllib.request import Request
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("runtime", ROOT / "ci/run_runtime.py")
@@ -26,7 +27,12 @@ class ActualEngineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             reports, work = root / "reports", root / "engine"
-            reports.mkdir()
+            if os.environ.get("CALIBRE_ENGINE_DIAGNOSTICS"):
+                reports = (
+                    Path(os.environ["CALIBRE_ENGINE_DIAGNOSTICS"])
+                    / self._testMethodName
+                )
+            reports.mkdir(parents=True, exist_ok=True)
             work.mkdir()
             with runtime.engine(
                 Path(os.environ["CALIBRE_ENGINE_ROOT"]), work, reports
@@ -60,3 +66,38 @@ class ActualEngineTests(unittest.TestCase):
                 with self.assertRaises(HTTPError) as caught:
                     get("/plugins/missing/search?query=x")
                 self.assertEqual(caught.exception.code, 404)
+
+    def test_cache_survives_restart_and_provider_outage(self):
+        """Persisted cache survives restart, failures and another failed lookup."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports, work = root / "reports", root / "engine"
+            if os.environ.get("CALIBRE_ENGINE_DIAGNOSTICS"):
+                reports = (
+                    Path(os.environ["CALIBRE_ENGINE_DIAGNOSTICS"])
+                    / self._testMethodName
+                )
+            reports.mkdir(parents=True, exist_ok=True)
+            work.mkdir()
+            engine_root = Path(os.environ["CALIBRE_ENGINE_ROOT"])
+            route = (
+                "/plugins/calibre_fixture/search?query=The%20Hobbit&isbn=9780547928227"
+            )
+            with runtime.engine(engine_root, work, reports) as (url, opener):
+                with opener.open(url + route, timeout=5) as response:
+                    expected = json.load(response)
+            with runtime.engine(engine_root, work, reports) as (url, opener):
+                with opener.open(
+                    Request(url + "/test-provider-down", method="POST"), timeout=5
+                ) as response:
+                    self.assertTrue(json.load(response)["ok"])
+                with self.assertRaises(HTTPError) as failed:
+                    opener.open(
+                        url + "/plugins/calibre_fixture/search?query=uncached-outage",
+                        timeout=5,
+                    )
+                self.assertEqual(failed.exception.code, 502)
+                with opener.open(url + route, timeout=5) as response:
+                    self.assertEqual(json.load(response), expected)
+                with opener.open(url + "/test-provider-calls", timeout=5) as response:
+                    self.assertEqual(json.load(response)["calls"], 1)
