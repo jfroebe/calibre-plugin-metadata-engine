@@ -5,7 +5,17 @@ on:
   push:
     branches: [main, 'test/calibre-*']
   workflow_dispatch:
+    inputs:
+      mode:
+        description: CI, local integration, or full release qualification
+        type: choice
+        options: [ci, local, release]
+        default: ci
   workflow_call:
+    inputs:
+      mode:
+        type: string
+        default: release
 
 permissions:
   contents: read
@@ -13,13 +23,6 @@ permissions:
 concurrency:
   group: calibre-validation-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  # Local GitHub test workers, including future VMs, use the web relay.
-  http_proxy: http://192.168.0.59:8118
-  https_proxy: http://192.168.0.59:8118
-  all_proxy: http://192.168.0.59:8118
-  no_proxy: localhost,127.0.0.1,::1,.localhost,meta-postgres
 
 jobs:
   package:
@@ -29,11 +32,6 @@ jobs:
       engine: ${{ steps.pins.outputs.engine }}
       previous: ${{ steps.pins.outputs.previous }}
     steps:
-      - name: Configure local proxy aliases
-        shell: bash
-        run: |
-          printf '%s\n' "HTTP_PROXY=$http_proxy" "HTTPS_PROXY=$https_proxy" \
-            "ALL_PROXY=$all_proxy" "NO_PROXY=$no_proxy" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -44,6 +42,8 @@ jobs:
       - run: python -m ruff check ci tests
       - run: python -m ruff format --check ci tests
       - run: python ci/unit_report.py --pattern test_package.py --report reports/package.xml
+      - run: python ci/unit_report.py --pattern test_qualification.py --report reports/qualification.xml
+      - run: python ci/unit_report.py --pattern test_runtime_harness.py --report reports/harness.xml
       - id: pins
         run: |
           python - <<'PY'
@@ -73,7 +73,7 @@ jobs:
   worker-configuration:
     needs: package
     # Never execute untrusted fork code on a persistent local worker.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: (inputs.mode == 'local' || inputs.mode == 'release') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -208,22 +208,69 @@ jobs:
         if: always()
         run: rm -rf "$RUNNER_TEMP/calibre-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 
+  native-runtime:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.package.outputs.previous }}
+          path: previous
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: calibre-candidate-${{ github.sha }}
+      - name: Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxcb-cursor0 libxkbcommon0 libxinerama1
+      - name: Verify and extract pinned official Calibre
+        run: |
+          python ci/install_calibre.py "$RUNNER_TEMP/calibre" > calibre-bin.txt
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          binary = Path('calibre-bin.txt').read_text().strip()
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as output:
+              print('CALIBRE_TEST_BIN=' + binary, file=output)
+          PY
+      - name: Installed plugin, upgrade preferences and lifecycle
+        run: |
+          python ci/run_runtime.py --calibre-bin "$CALIBRE_TEST_BIN" \
+            --zip Calibre-Metadata-Engine.zip \
+            --previous-zip previous/Calibre-Metadata-Engine.zip \
+            --report reports/native
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: calibre-native-${{ matrix.os }}
+          path: reports
+          retention-days: 14
+
   qualification:
-    needs: [package, engine, linux-runtime]
+    needs: [package, native-runtime, worker-configuration, engine, linux-runtime]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - name: Require every gate and complete qualification
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require actual validation results
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: |
-          python - <<'PY'
-          import json, os
-          jobs = json.loads(os.environ['RESULTS'])
-          if any(job['result'] != 'success' for job in jobs.values()):
-              raise SystemExit('Calibre validation incomplete or failed')
-          # Deliberately fail closed until Windows, complete proxy assertions,
-          # upgrade preservation and cross-repository evidence are qualified.
-          raise SystemExit('Candidate only: remaining qualification is documented in docs/testing.md')
-          PY
+          QUALIFICATION_MODE: ${{ inputs.mode || 'ci' }}
+        run: python3 ci/qualification.py
