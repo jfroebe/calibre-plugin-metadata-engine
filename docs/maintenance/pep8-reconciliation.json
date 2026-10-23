@@ -13,5 +13,8 @@
     "reason": "E731; identical ISBN normalization expression"
   },
   "observational_E501_remaining": 1,
-  "qualification_status": "awaiting new exact-ZIP evidence"
+  "qualification_status": "qualified",
+  "qualification_run_id": 40006214502,
+  "qualified_zip_sha256": "6cfd7b1681afa099943dc00edef30a205d8fcb5d10014613625bea954e843a43",
+  "integration_status": "Refreshed exact-ZIP qualification passed; current PR-head Actions checks are authoritative"
 }

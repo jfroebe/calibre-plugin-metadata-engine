@@ -17,6 +17,9 @@
     "calibre_native": "Requires existing container CI",
     "docker": "compileall passed; requires independent packaging/runtime CI"
   },
-  "integration_status": "Reconciled with integrated Calibre 1.1.3; refreshed exact-ZIP worker qualification pending",
-  "reconciliation_baseline": "80c23f429592cdc69ad40b3e32543e4177852fb5"
+  "integration_status": "Refreshed exact-ZIP qualification passed; current PR-head Actions checks are authoritative",
+  "reconciliation_baseline": "80c23f429592cdc69ad40b3e32543e4177852fb5",
+  "qualification_status": "qualified",
+  "qualification_run_id": 40006214502,
+  "qualified_zip_sha256": "6cfd7b1681afa099943dc00edef30a205d8fcb5d10014613625bea954e843a43"
 }
