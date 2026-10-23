@@ -89,10 +89,10 @@ pin; the full historical suite is not needlessly repeated.
 
 ## Qualification and distribution
 
-Normal Calibre PR/push CI requires packaging and both native runtime jobs.
-Reusable calls default to `mode=release`; release mode additionally requires
-`ci/release_gate.py` to verify reviewed integration evidence. Native success
-alone does not approve distribution.
+Normal Calibre PR/push CI requires packaging, both native runtime jobs and
+`ci/release_gate.py` verification of reviewed exact-artifact integration evidence.
+Reusable calls retain `mode=release` by default. Native success alone does not
+approve distribution; a new ZIP or component/runtime pin needs fresh evidence.
 
 The Docker integration workflow rejects failed, cancelled or skipped mandatory
 jobs. On success it retains the exact tested ZIP with `qualification.json` as a
@@ -164,5 +164,18 @@ authorized forwarding identity or VM console. No public tunnel is configured.
 - [Client run 40001131363](https://github.com/jfroebe/calibre-plugin-metadata-engine/actions/runs/40001131363): expanded seventeen-test client contract suite passed on both native platforms.
 - [Integration attempt 40002102066](https://github.com/jfroebe/metadata-engine-docker/actions/runs/40002102066): exact baseline, native Linux, offline container/actual-engine/library integration, SQLite persistence and deterministic engine proxy routing passed. Windows byte comparison exposed CRLF checkout conversion, now fixed with LF checkout rules. PostgreSQL restart testing exposed the harness's premature API-only readiness check, now fixed by waiting for cache readiness. This attempt does not count as full qualification.
 
-Final successful integration evidence is recorded separately in
-`ci/release-evidence.json` once all required jobs pass.
+[Full integration run 40002828814](https://github.com/jfroebe/metadata-engine-docker/actions/runs/40002828814)
+passed every mandatory job, including both native platforms, the offline
+Calibre/actual-engine/library run, SQLite and PostgreSQL restart/outage tests,
+deterministic engine routing, and all six live relay outcomes. The SOCKS remote
+DNS check recorded zero local target DNS calls. The owned PostgreSQL test
+container and virtual environment were removed successfully.
+
+The original successful qualification record is retained in
+`ci/release-evidence.json`. The tested ZIP SHA-256 is
+`5aa95aac51d3a4536a04c11b551bb7f5e1b6ffda835f1ccc0ea4cb697915aa5e`.
+The tested source was `6d10d4e8f0e03b6a4e6f44d3edb0478d0be7d1df`;
+subsequent readiness formatting, documentation and qualification-record updates
+do not change those distribution bytes. Exact member/digest verification passed
+again after importing the evidence. All integration requirements above are now
+qualified for this candidate. Formal release/publication remains separate.

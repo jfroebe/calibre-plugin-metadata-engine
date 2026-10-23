@@ -15,16 +15,14 @@ def qualify(jobs: dict, mode: str, manifest: dict) -> None:
         raise ValueError(
             f"Unknown qualification mode: {mode}; run local integration in Docker repo"
         )
-    required = {"package", "native-runtime"}
-    if mode == "release":
-        required.add("integration-evidence")
+    required = {"package", "native-runtime", "integration-evidence"}
     for name in required:
         if jobs.get(name, {}).get("result") != "success":
             raise ValueError(f"Required validation did not pass: {name}")
     for name, job in jobs.items():
         if job["result"] not in {"success", "skipped"}:
             raise ValueError(f"Validation failed: {name}")
-    if mode == "release" and manifest.get("qualification_status") != "qualified":
+    if manifest.get("qualification_status") != "qualified":
         raise ValueError("Release integration evidence has not been qualified")
 
 
@@ -38,7 +36,7 @@ def main() -> None:
     )
     print(f"Calibre {mode} validation passed")
     if mode != "release":
-        print("Distribution also requires exact-artifact integration evidence.")
+        print("Exact-artifact integration evidence verified; publication is separate.")
 
 
 if __name__ == "__main__":

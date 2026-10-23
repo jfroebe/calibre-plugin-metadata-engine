@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "qualification_status": "candidate-unqualified",
+  "qualification_status": "qualified",
   "snapshot_origin": "jfroebe/metadata-engine-docker@c4f3453f72091c10af0f9168525c9e8af0b05e30:release/components.json",
   "components": {
     "engine": {

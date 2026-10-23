@@ -23,11 +23,11 @@ class QualificationTests(unittest.TestCase):
         }
         self.manifest = {"qualification_status": "candidate-unqualified"}
 
-    def test_ci_success_is_not_distribution_qualification(self):
+    def test_native_success_without_integration_is_not_qualification(self):
         """Native checks can pass while exact-artifact approval remains absent."""
-        gate.qualify(self.jobs, "ci", self.manifest)
-        with self.assertRaises(ValueError):
-            gate.qualify(self.jobs, "release", self.manifest)
+        for mode in ("ci", "release"):
+            with self.assertRaises(ValueError):
+                gate.qualify(self.jobs, mode, self.manifest)
 
     def test_every_required_result_must_be_success(self):
         """Skipped, cancelled, missing and failing native suites block CI."""
@@ -50,6 +50,7 @@ class QualificationTests(unittest.TestCase):
             gate.qualify(self.jobs, "release", self.manifest)
         self.manifest["qualification_status"] = "qualified"
         gate.qualify(self.jobs, "release", self.manifest)
+        gate.qualify(self.jobs, "ci", self.manifest)
 
     def test_failures_and_unknown_modes_are_rejected(self):
         """An unexpected evidence failure or misspelled mode cannot silently pass."""
