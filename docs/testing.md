@@ -179,3 +179,7 @@ subsequent readiness formatting, documentation and qualification-record updates
 do not change those distribution bytes. Exact member/digest verification passed
 again after importing the evidence. All integration requirements above are now
 qualified for this candidate. Formal release/publication remains separate.
+
+## Refreshed qualification after style reconciliation
+
+[Run 40006214502](https://github.com/jfroebe/metadata-engine-docker/actions/runs/40006214502) requalified the formatted integrated 1.1.3 client at `f8d9a1043b44905c15ec67dd5664d1f209d3c5b3`. All mandatory native, container, database and proxy jobs passed. The current exact ZIP digest is `6cfd7b1681afa099943dc00edef30a205d8fcb5d10014613625bea954e843a43`. Earlier run/digest entries above remain historical; they do not approve changed bytes. Current recorded approval is `ci/release-evidence.json`. Windows 11 and macOS independent validation is unchanged.

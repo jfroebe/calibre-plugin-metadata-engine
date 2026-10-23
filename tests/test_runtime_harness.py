@@ -2,10 +2,10 @@
 
 import importlib.util
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
     "run_runtime", Path(__file__).resolve().parents[1] / "ci/run_runtime.py"

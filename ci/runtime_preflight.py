@@ -6,9 +6,9 @@ import argparse
 import ctypes
 import json
 import os
-from pathlib import Path
 import platform
 import subprocess
+from pathlib import Path
 
 
 def inspect(binary: Path) -> dict:

@@ -6,12 +6,12 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import platform
 import shutil
 import subprocess
 import tempfile
 import uuid
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = (

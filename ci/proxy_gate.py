@@ -6,9 +6,9 @@ import asyncio
 import json
 import os
 import socket
-from unittest.mock import patch
-from pathlib import Path
 import sys
+from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import quote
 
 

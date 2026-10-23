@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import importlib.util
 import json
-import hashlib
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import uvicorn
 from fastapi import Response
-
 from fixture_api import png
 
 

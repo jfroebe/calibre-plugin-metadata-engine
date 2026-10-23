@@ -1,0 +1,25 @@
+{
+  "repository": "calibre-plugin-metadata-engine",
+  "audited_python_files": 26,
+  "ruff_version": "0.14.1",
+  "selected_lint_violations": 0,
+  "formatter_result": "26 files already formatted",
+  "observational_E501_remaining": 1,
+  "negative_lint_probe_exit": 1,
+  "negative_formatter_probe_exit": 1,
+  "mechanical_formatting_ast_changes": 0,
+  "import_stage_non_import_ast_changes": 0,
+  "local_tests": {
+    "engine": "266 passed, 3 environment skips",
+    "plugins": "423 passed, 26 subtests",
+    "adapters": "244 passed, 34 subtests, 2 baseline warnings",
+    "calibre_host": "3 packaging and 5 proxy tests passed",
+    "calibre_native": "Requires existing container CI",
+    "docker": "compileall passed; requires independent packaging/runtime CI"
+  },
+  "integration_status": "Refreshed exact-ZIP qualification passed; current PR-head Actions checks are authoritative",
+  "reconciliation_baseline": "80c23f429592cdc69ad40b3e32543e4177852fb5",
+  "qualification_status": "qualified",
+  "qualification_run_id": 40006214502,
+  "qualified_zip_sha256": "6cfd7b1681afa099943dc00edef30a205d8fcb5d10014613625bea954e843a43"
+}

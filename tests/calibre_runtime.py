@@ -3,24 +3,23 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import os
-import json
 import struct
 import subprocess
+import sys
+import unittest
+import urllib.request
 from pathlib import Path
 from queue import Queue
-import sys
 from threading import Event
-import unittest
 from urllib.request import ProxyHandler, build_opener, install_opener
-import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fixture_api import ROWS, png, serve
-
 from calibre.customize.ui import metadata_plugins
 from calibre.ebooks.metadata.sources.base import Source
+from fixture_api import ROWS, png, serve
 
 
 class InstalledPluginTests(unittest.TestCase):

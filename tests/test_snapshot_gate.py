@@ -1,9 +1,9 @@
 """Reject successful but unrelated cross-repository qualification evidence."""
 
-from copy import deepcopy
 import importlib.util
-from pathlib import Path
 import unittest
+from copy import deepcopy
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
     "snapshot_gate", Path(__file__).resolve().parents[1] / "ci/snapshot_gate.py"

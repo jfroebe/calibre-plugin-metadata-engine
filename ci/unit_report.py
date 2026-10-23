@@ -3,32 +3,32 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
 class Result(unittest.TextTestResult):
     """Record per-test results in a portable JUnit artifact."""
 
-    def startTest(self, test):
+    def startTest(self, test):  # noqa: N802 - unittest callback contract
         """Create one XML case for each real test invocation."""
         super().startTest(test)
         self.current = ET.SubElement(self.xml, "testcase", name=test.id())
 
-    def addFailure(self, test, err):
+    def addFailure(self, test, err):  # noqa: N802 - unittest callback contract
         """Preserve assertion failures without converting them into success."""
         super().addFailure(test, err)
         ET.SubElement(self.current, "failure").text = self._exc_info_to_string(
             err, test
         )
 
-    def addError(self, test, err):
+    def addError(self, test, err):  # noqa: N802 - unittest callback contract
         """Preserve unexpected exceptions for CI diagnosis."""
         super().addError(test, err)
         ET.SubElement(self.current, "error").text = self._exc_info_to_string(err, test)
 
-    def addSkip(self, test, reason):
+    def addSkip(self, test, reason):  # noqa: N802 - unittest callback contract
         """Report missing optional environment requirements as skipped."""
         super().addSkip(test, reason)
         ET.SubElement(self.current, "skipped", message=reason)

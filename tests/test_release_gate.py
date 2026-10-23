@@ -1,10 +1,10 @@
 """Prevent a green unrelated run from approving changed distribution bytes."""
 
-from copy import deepcopy
 import importlib.util
 import json
-from pathlib import Path
 import unittest
+from copy import deepcopy
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(

@@ -1,8 +1,8 @@
 """Ensure missing qualification outcomes cannot be converted into approval."""
 
 import importlib.util
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
     "qualification", Path(__file__).resolve().parents[1] / "ci/qualification.py"

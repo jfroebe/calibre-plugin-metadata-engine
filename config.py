@@ -7,9 +7,21 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from qt.core import (
-    QCheckBox, QComboBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSpinBox,
-    QVBoxLayout, QWidget, Qt,
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QSpinBox,
+    Qt,
+    QVBoxLayout,
+    QWidget,
 )
 
 try:
@@ -37,7 +49,9 @@ class ConfigWidget(QWidget):
         h = QVBoxLayout(header)
         h.setContentsMargins(18, 14, 18, 14)
         h.addWidget(QLabel("<b style='font-size:16pt'>Metadata Engine</b>"))
-        subtitle = QLabel("Use your metadata-engine server as a Calibre metadata and cover source.")
+        subtitle = QLabel(
+            "Use your metadata-engine server as a Calibre metadata and cover source."
+        )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: palette(mid);")
         h.addWidget(subtitle)
@@ -127,7 +141,9 @@ class ConfigWidget(QWidget):
         self.per_plugin_limit.setSuffix(" per provider")
         behavior_form.addRow("Provider request limit:", self.per_plugin_limit)
 
-        self.include_source_tag = QCheckBox("Add metadata-engine source name to Calibre tags")
+        self.include_source_tag = QCheckBox(
+            "Add metadata-engine source name to Calibre tags"
+        )
         behavior_form.addRow("", self.include_source_tag)
         outer.addWidget(behavior)
 
@@ -161,7 +177,11 @@ class ConfigWidget(QWidget):
         self.per_plugin_limit.setValue(int(p.get("per_plugin_limit", 10) or 10))
         self.include_source_tag.setChecked(bool(p.get("include_source_tag", False)))
 
-        selected = [x.strip() for x in str(p.get("plugin_ids", "") or "").split(",") if x.strip()]
+        selected = [
+            x.strip()
+            for x in str(p.get("plugin_ids", "") or "").split(",")
+            if x.strip()
+        ]
         self._populate(selected, None)
         self.provider_mode.setCurrentIndex(
             self.provider_mode.findData("selected" if selected else "auto")
@@ -177,7 +197,11 @@ class ConfigWidget(QWidget):
         p["max_results"] = self.max_results.value()
         p["per_plugin_limit"] = self.per_plugin_limit.value()
         p["include_source_tag"] = self.include_source_tag.isChecked()
-        p["plugin_ids"] = ",".join(self._checked()) if self.provider_mode.currentData() == "selected" else ""
+        p["plugin_ids"] = (
+            ",".join(self._checked())
+            if self.provider_mode.currentData() == "selected"
+            else ""
+        )
 
     def validate(self):
         url = self.base_url.text().strip()
@@ -188,7 +212,9 @@ class ConfigWidget(QWidget):
             self._error("Metadata Engine URL must begin with http:// or https://.")
             return False
         if self.provider_mode.currentData() == "selected" and not self._checked():
-            self._error("Select at least one provider or switch back to automatic mode.")
+            self._error(
+                "Select at least one provider or switch back to automatic mode."
+            )
             return False
         return True
 
@@ -199,9 +225,10 @@ class ConfigWidget(QWidget):
             health = self._json("/health")
             plugins = self._json("/plugins").get("plugins") or []
             if health.get("ok"):
-                self.status.setText("✓ Connected · %d provider%s" % (
-                    len(plugins), "" if len(plugins) == 1 else "s"
-                ))
+                self.status.setText(
+                    "✓ Connected · %d provider%s"
+                    % (len(plugins), "" if len(plugins) == 1 else "s")
+                )
                 self._populate(self._checked(), plugins)
             else:
                 self.status.setText("Connection returned an unhealthy status.")
@@ -221,7 +248,10 @@ class ConfigWidget(QWidget):
         base = self.base_url.text().strip().rstrip("/")
         if not base:
             raise RuntimeError("Server URL is empty")
-        headers = {"Accept": "application/json", "User-Agent": "Calibre-Metadata-Engine-Config/1.1.3"}
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Calibre-Metadata-Engine-Config/1.1.3",
+        }
         token = self.api_token.text().strip()
         if token:
             headers["Authorization"] = "Bearer " + token
@@ -229,12 +259,15 @@ class ConfigWidget(QWidget):
         if base.startswith("https://") and not self.verify_ssl.isChecked():
             context = ssl._create_unverified_context()
         try:
-            with urlopen(Request(base + path, headers=headers), timeout=8, context=context) as response:
+            with urlopen(
+                Request(base + path, headers=headers), timeout=8, context=context
+            ) as response:
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            raise RuntimeError("HTTP %s: %s" % (
-                exc.code, exc.read().decode("utf-8", "replace") or exc.reason
-            ))
+            raise RuntimeError(
+                "HTTP %s: %s"
+                % (exc.code, exc.read().decode("utf-8", "replace") or exc.reason)
+            )
         except URLError as exc:
             raise RuntimeError(str(exc.reason))
 
@@ -271,7 +304,9 @@ class ConfigWidget(QWidget):
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, pid)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked if pid in selected else Qt.CheckState.Unchecked)
+            item.setCheckState(
+                Qt.CheckState.Checked if pid in selected else Qt.CheckState.Unchecked
+            )
             self.provider_list.addItem(item)
 
         if not entries:
@@ -283,6 +318,8 @@ class ConfigWidget(QWidget):
 
     def _error(self, message, details=None):
         if error_dialog is not None:
-            error_dialog(self, "Metadata Engine", message, det_msg=details or "", show=True)
+            error_dialog(
+                self, "Metadata Engine", message, det_msg=details or "", show=True
+            )
         else:
             self.status.setText(message + ((": " + details) if details else ""))

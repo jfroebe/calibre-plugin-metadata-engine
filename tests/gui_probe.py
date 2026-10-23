@@ -4,8 +4,16 @@ import json
 import os
 from pathlib import Path
 
-from qt.core import QApplication, QLabel, QLineEdit, QPushButton, QTimer, QPoint
-from qt.core import QVBoxLayout, QWidget
+from qt.core import (
+    QApplication,
+    QLabel,
+    QLineEdit,
+    QPoint,
+    QPushButton,
+    QTimer,
+    QVBoxLayout,
+    QWidget,
+)
 
 app = QApplication([])
 window = QWidget()

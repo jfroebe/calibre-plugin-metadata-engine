@@ -1,0 +1,43 @@
+name: Python style
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'release/**', 'maintenance/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-style-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pep8:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned style tools
+        run: python -m pip install --disable-pip-version-check -r requirements-style.txt
+      - name: Check Python style
+        shell: bash
+        run: |
+          mkdir -p reports/style
+          status=0
+          python -m ruff check . --output-format json > reports/style/ruff.json || status=$?
+          cat reports/style/ruff.json
+          exit "$status"
+      - name: Check Python formatting
+        run: python -m ruff format --check .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-style-${{ github.sha }}
+          path: reports/style
+          if-no-files-found: error

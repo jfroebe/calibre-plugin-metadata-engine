@@ -1,10 +1,10 @@
 """Regression checks for the distributable rather than just a checkout."""
 
 import importlib.util
-from pathlib import Path
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 
 SPEC = importlib.util.spec_from_file_location(
     "package", Path(__file__).resolve().parents[1] / "ci/package.py"

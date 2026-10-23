@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import struct
+import time
+import zlib
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 from pathlib import Path
-import struct
 from threading import Thread
-import time
 from urllib.parse import parse_qs, urlsplit
-import zlib
 
 ROWS = json.loads(Path(__file__).with_name("fixtures.json").read_text("utf-8"))
 
