@@ -180,7 +180,7 @@ not proof the plugin fails under a normal Linux Calibre installation.
 
 ### CI aggregation and full release qualification
 
-Normal PR, push and reusable-workflow runs require packaging plus native Linux
+Normal PR and push runs require packaging plus native Linux
 and Windows Calibre 9.15.0 tests. Both operating systems consume the same ZIP
 artifact from the packaging job. The Windows MSI and Linux archive are pinned
 by version and SHA-256 and extracted into temporary directories. Windows uses a
@@ -206,6 +206,10 @@ container jobs and their worker-configuration preflight. Those runner variables
 and credentials are still unavailable in this repository; the Docker-repository
 integration workflow remains the working route to the build worker. Normal CI
 does not pretend that another repository's runner can accept its jobs.
+
+Reusable calls default to `release` so an existing release caller cannot silently
+receive narrower CI approval. A caller may explicitly request `mode=ci` for
+packaging and native regression validation.
 
 Dispatch with `mode=release` requires all local and native jobs plus a
 `qualification_status` of `qualified` in the exact compatibility manifest. That

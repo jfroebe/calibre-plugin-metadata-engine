@@ -23,7 +23,13 @@ ROOT = Path(__file__).resolve().parents[1]
 def command(args: list[str], env: dict, report: Path, name: str) -> str:
     """Run a bounded command and retain its isolated, sanitized diagnostics."""
     result = subprocess.run(
-        args, env=env, capture_output=True, text=True, timeout=180, check=False
+        args,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+        check=False,
     )
     output = result.stdout + result.stderr
     report.joinpath(name + ".log").write_text(output, encoding="utf-8")

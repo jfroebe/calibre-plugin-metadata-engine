@@ -15,7 +15,7 @@ on:
     inputs:
       mode:
         type: string
-        default: ci
+        default: release
 
 permissions:
   contents: read
@@ -43,6 +43,7 @@ jobs:
       - run: python -m ruff format --check ci tests
       - run: python ci/unit_report.py --pattern test_package.py --report reports/package.xml
       - run: python ci/unit_report.py --pattern test_qualification.py --report reports/qualification.xml
+      - run: python ci/unit_report.py --pattern test_runtime_harness.py --report reports/harness.xml
       - id: pins
         run: |
           python - <<'PY'
