@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
 import hashlib
 import json
 import os
-from pathlib import Path
 import platform
 import socket
 import subprocess
 import sys
 import tempfile
 import time
-from urllib.request import ProxyHandler, build_opener
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
+from pathlib import Path
+from urllib.request import ProxyHandler, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
 

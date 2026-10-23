@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
 class Result(unittest.TextTestResult):

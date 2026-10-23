@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import importlib
 import logging
+import sys
+import unittest
 from pathlib import Path
 from queue import Queue
-import sys
 from threading import Event
-import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fixture_api import ROWS, png, serve
-
 from calibre.customize.ui import metadata_plugins
 from calibre.ebooks.metadata.sources.base import Source
+from fixture_api import ROWS, png, serve
 
 
 class InstalledPluginTests(unittest.TestCase):

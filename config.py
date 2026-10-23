@@ -19,9 +19,9 @@ from qt.core import (
     QListWidgetItem,
     QPushButton,
     QSpinBox,
+    Qt,
     QVBoxLayout,
     QWidget,
-    Qt,
 )
 
 try:

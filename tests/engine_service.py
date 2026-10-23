@@ -6,12 +6,11 @@ import argparse
 import asyncio
 import importlib.util
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import uvicorn
 from fastapi import Response
-
 from fixture_api import png
 
 
