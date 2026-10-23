@@ -178,11 +178,40 @@ not proof the plugin fails under a normal Linux Calibre installation.
   validation; current lint covers new test/harness files only. PEP 249 applies
   to the engine implementation; this harness issues no direct SQL.
 
-The `qualification` job deliberately rejects this unqualified draft. Do not
-merge it as a finished release gate. Existing distribution workflow remains
-unchanged in this draft to avoid replacing successful distribution with an
-unverified harness. Wiring it to consume the same tested ZIP is required before
-qualification, and must be completed before a new release is published.
+### CI aggregation and full release qualification
+
+Normal PR, push and reusable-workflow runs require packaging plus native Linux
+and Windows Calibre 9.15.0 tests. Both operating systems consume the same ZIP
+artifact from the packaging job. The Windows MSI and Linux archive are pinned
+by version and SHA-256 and extracted into temporary directories. Windows uses a
+GitHub-hosted Windows Server 2025 runner, not a Windows 11 desktop qualification.
+The Windows installer digest was measured from the official download, not an
+independent publisher signature. Test reports retain Calibre and bundled Python
+versions; no current-version claim follows from a moving installer.
+
+The lifecycle harness seeds every existing option through the prior installed
+plugin, upgrades to the candidate and reads the persisted options in a fresh
+Calibre process. Any changed or lost value fails the suite. This qualifies
+preservation of the current preference schema; no nonexistent schema migration
+is inferred. Existing installed-plugin regressions and removal/reinstallation
+still run after that assertion.
+
+The final `qualification` job aggregates actual results. Missing, failed,
+cancelled or skipped mandatory jobs fail it. It no longer contains an
+unconditional failure after successful tests. Hosted jobs do not inherit private
+LAN proxy settings. Local jobs retain their relay settings.
+
+Dispatch with `mode=local` additionally requires the existing engine, proxy and
+container jobs and their worker-configuration preflight. Those runner variables
+and credentials are still unavailable in this repository; the Docker-repository
+integration workflow remains the working route to the build worker. Normal CI
+does not pretend that another repository's runner can accept its jobs.
+
+Dispatch with `mode=release` requires all local and native jobs plus a
+`qualification_status` of `qualified` in the exact compatibility manifest. That
+status remains `candidate-unqualified`. Change it only after the remaining
+release evidence listed above has been completed and reviewed. A green normal
+CI run is not full release approval. No release publication is added here.
 
 ## Verified runtime prerequisites
 
