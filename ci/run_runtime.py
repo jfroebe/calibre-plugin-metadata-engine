@@ -23,7 +23,13 @@ ROOT = Path(__file__).resolve().parents[1]
 def command(args: list[str], env: dict, report: Path, name: str) -> str:
     """Run a bounded command and retain its isolated, sanitized diagnostics."""
     result = subprocess.run(
-        args, env=env, capture_output=True, text=True, timeout=180, check=False
+        args,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+        check=False,
     )
     output = result.stdout + result.stderr
     report.joinpath(name + ".log").write_text(output, encoding="utf-8")
@@ -59,17 +65,26 @@ def engine(root: Path, work: Path, report: Path):
                 str(work),
                 "--port",
                 str(port),
+                *(
+                    ["--pg-dsn", os.environ["CALIBRE_TEST_PG_DSN"]]
+                    if os.environ.get("CALIBRE_TEST_PG_DSN")
+                    else []
+                ),
             ],
             stdout=log,
             stderr=subprocess.STDOUT,
         )
         try:
-            for _ in range(100):
+            for _ in range(300):
                 if process.poll() is not None:
                     raise RuntimeError("Disposable engine failed; see engine.log")
                 try:
                     with opener.open(url + "/health", timeout=1) as response:
-                        if json.load(response)["ok"]:
+                        health = json.load(response)
+                        if (
+                            health["ok"]
+                            and health.get("cache", {}).get("ready") is True
+                        ):
                             break
                 except (OSError, ValueError):
                     time.sleep(0.1)
@@ -110,7 +125,9 @@ def main() -> None:
         "os": platform.platform(),
         "host_python": platform.python_version(),
         "worker": os.environ.get("RUNNER_NAME", platform.node()),
-        "plugin_commit": os.environ.get("GITHUB_SHA"),
+        "plugin_commit": os.environ.get(
+            "CALIBRE_SOURCE_SHA", os.environ.get("GITHUB_SHA")
+        ),
         "zip_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
         "proxy_mode": "local loopback bypass; external providers disabled",
         "status": "failed",
@@ -124,6 +141,7 @@ def main() -> None:
             "calibredb",
         )
     }
+    env["CALIBRE_TEST_DEBUG"] = tools["calibre-debug"]
     try:
         with tempfile.TemporaryDirectory(prefix="calibre-validation-") as tmp:
             work = Path(tmp)
@@ -150,6 +168,20 @@ def main() -> None:
                 report,
                 "python-version",
             )
+            preferences = {
+                "base_url": "http://127.0.0.1:18790",
+                "plugin_ids": "fixture,other",
+                "max_results": 7,
+                "per_plugin_limit": 3,
+                "api_token": "synthetic-upgrade-token",
+                "verify_ssl": False,
+                "include_source_tag": True,
+            }
+            select_plugin = (
+                "from calibre.customize.ui import metadata_plugins; "
+                "p=next(p for p in metadata_plugins(('identify', 'cover')) "
+                'if p.name=="Metadata Engine"); '
+            )
             if args.previous_zip:
                 command(
                     [
@@ -161,9 +193,39 @@ def main() -> None:
                     report,
                     "install-previous",
                 )
+                command(
+                    [
+                        tools["calibre-debug"],
+                        "-c",
+                        select_plugin
+                        + f"values={preferences!r}; "
+                        + "[p.prefs.__setitem__(k, v) for k, v in values.items()]",
+                    ],
+                    env,
+                    report,
+                    "seed-previous-preferences",
+                )
             command(
                 [tools["calibre-customize"], "-a", str(archive)], env, report, "install"
             )
+            if args.previous_zip:
+                actual = command(
+                    [
+                        tools["calibre-debug"],
+                        "-c",
+                        select_plugin
+                        + "import json; "
+                        + f"keys={list(preferences)!r}; "
+                        + "print(json.dumps({k:p.prefs[k] for k in keys}))",
+                    ],
+                    env,
+                    report,
+                    "upgraded-preferences",
+                )
+                if json.loads(actual) != preferences:
+                    raise AssertionError("Upgrade lost or changed prior preferences")
+                metadata["upgrade_preferences"] = "passed"
+
             listing = command(
                 [tools["calibre-customize"], "-l"], env, report, "registration"
             )

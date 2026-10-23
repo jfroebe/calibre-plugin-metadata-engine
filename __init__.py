@@ -16,7 +16,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 2)
+    version = (1, 1, 3)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -216,7 +216,11 @@ class MetadataEngineSource(Source):
                         exc,
                     )
 
-            rows = [r for r in self._dedupe(rows) if r.get("cover_url")]
+            rows = [
+                r
+                for r in self._dedupe(rows)
+                if r.get("cover_url") and self._cover_identifier_score(r, identifiers)
+            ]
             rows.sort(
                 key=lambda x: (
                     self._cover_identifier_score(x, identifiers),
@@ -267,14 +271,18 @@ class MetadataEngineSource(Source):
         if abort.is_set():
             return []
         payload = self._http_json(self._base_url() + "/plugins", timeout)
+        if not isinstance(payload.get("plugins"), list):
+            raise ValueError("Metadata Engine API schema: plugins must be an array")
         found = []
-        for item in payload.get("plugins") or []:
+        for item in payload["plugins"]:
             if isinstance(item, str):
                 found.append(item)
             elif isinstance(item, dict) and item.get("enabled", True):
                 pid = item.get("plugin_id") or item.get("id") or item.get("name")
                 if pid:
                     found.append(str(pid))
+            elif not isinstance(item, dict):
+                raise ValueError("Metadata Engine API schema: invalid plugin entry")
         return found
 
     def _search(self, provider_id, query, authors, identifiers, timeout):
@@ -302,15 +310,24 @@ class MetadataEngineSource(Source):
             urlencode(params),
         )
         data = self._http_json(url, timeout)
+        if not isinstance(data.get("results"), list):
+            raise ValueError("Metadata Engine API schema: results must be an array")
         out = []
-        for row in data.get("results") or []:
-            if isinstance(row, dict):
-                row = dict(row)
-                row.setdefault("source", provider_id)
-                out.append(row)
+        for row in data["results"]:
+            if not isinstance(row, dict) or not isinstance(row.get("title"), str):
+                raise ValueError(
+                    "Metadata Engine API schema: each result needs a string title"
+                )
+            if not self._book_media(row):
+                continue
+            row = dict(row)
+            row.setdefault("source", provider_id)
+            out.append(row)
         return out
 
     def _to_metadata(self, row, relevance):
+        if not self._book_media(row):
+            return None
         title = self._text(row.get("title"))
         if not title:
             return None
@@ -405,12 +422,39 @@ class MetadataEngineSource(Source):
         return None
 
     def _http_json(self, url, timeout):
-        return json.loads(self._http_bytes(url, timeout).decode("utf-8"))
+        payload = json.loads(self._http_bytes(url, timeout).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Metadata Engine API schema: response must be an object")
+        return payload
+
+    @staticmethod
+    def _book_media(row):
+        """Ignore explicit non-book media while accepting legacy untyped books."""
+        value = row.get("metadata_type")
+        if value is None or value == "":
+            return True
+        if not isinstance(value, str):
+            raise ValueError(
+                "Metadata Engine API schema: metadata_type must be a string"
+            )
+        return value.strip().lower().replace("_", " ").replace("-", " ") in {
+            "book",
+            "books",
+            "ebook",
+            "ebooks",
+            "audiobook",
+            "audiobooks",
+            "comic",
+            "comics",
+            "manga",
+            "graphic novel",
+            "graphic novels",
+        }
 
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.2",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.3",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -457,11 +501,14 @@ class MetadataEngineSource(Source):
 
             if normalize(wanted_isbn) == normalize(row_isbn):
                 return 3
+            return 0
 
         wanted_asin = cls._identifier(identifiers, "asin")
         row_asin = cls._text(row.get("asin"))
         if wanted_asin and row_asin and wanted_asin.upper() == row_asin.upper():
             return 2
+        if wanted_asin and row_asin:
+            return 0
 
         return 1
 

@@ -250,7 +250,7 @@ class ConfigWidget(QWidget):
             raise RuntimeError("Server URL is empty")
         headers = {
             "Accept": "application/json",
-            "User-Agent": "Calibre-Metadata-Engine-Config/1.1.1",
+            "User-Agent": "Calibre-Metadata-Engine-Config/1.1.3",
         }
         token = self.api_token.text().strip()
         if token:

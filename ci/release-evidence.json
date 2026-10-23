@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "qualification_status": "qualified",
+  "scope": "calibre-integration",
+  "repository": "jfroebe/metadata-engine-docker",
+  "run_id": 40002828814,
+  "workflow_sha": "0790730609fedc4c728af03845a841e7b5d03cb8",
+  "source_sha": "6d10d4e8f0e03b6a4e6f44d3edb0478d0be7d1df",
+  "zip_sha256": "5aa95aac51d3a4536a04c11b551bb7f5e1b6ffda835f1ccc0ea4cb697915aa5e",
+  "components": {
+    "engine": {
+      "repository": "jfroebe/metadata-engine",
+      "sha": "6d8d759428cf8049f5b8f4c4894022b897fd3229"
+    },
+    "plugins": {
+      "repository": "jfroebe/metadata-engine-plugins",
+      "sha": "81b3f71febc79491c1cb0b59487bb551b255c14d"
+    },
+    "adapters": {
+      "repository": "jfroebe/metadata-engine-adapters",
+      "sha": "9f7732138c72723f10a5a5aafaaa3d1a4e6282d1"
+    },
+    "docker": {
+      "repository": "jfroebe/metadata-engine-docker",
+      "sha": "c4f3453f72091c10af0f9168525c9e8af0b05e30"
+    },
+    "calibre_previous": {
+      "repository": "jfroebe/calibre-plugin-metadata-engine",
+      "sha": "5ebab70ed31aa677381aeab9c178c9684d0ce6ee"
+    }
+  },
+  "snapshot_evidence": {
+    "repository": "jfroebe/metadata-engine-docker",
+    "run_id": 39944551219,
+    "head_sha": "c4f3453f72091c10af0f9168525c9e8af0b05e30",
+    "workflow_path": ".github/workflows/validate-snapshot.yml",
+    "postgresql": true
+  },
+  "calibre": {
+    "version": "9.15.0",
+    "linux_url": "https://download.calibre-ebook.com/9.15.0/calibre-9.15.0-x86_64.txz",
+    "linux_sha256": "3f5301c0aa51e5fb2d5f6dcd04024ba4e86501ab328ce5d9d6760efccb887990",
+    "container": {
+      "image": "ghcr.io/linuxserver/calibre@sha256:12013dbe3328eb1b1d72fcbab5ce6d321df68272dfd775082b996d8f54a37e0c",
+      "platform": "linux/amd64",
+      "calibre_version": "9.16.0",
+      "linuxserver_version": "v9.16.0-ls428",
+      "source_revision": "bad6ca7f52a13a3f750d4888927ac2cf0951cbec"
+    },
+    "windows_url": "https://download.calibre-ebook.com/9.15.0/calibre-64bit-9.15.0.msi",
+    "windows_sha256": "0f96ae06165c2419607c1c66726c091a78e89e08ea69f077cf3e2c884e800853"
+  },
+  "desktop_validation": {
+    "windows11": {
+      "status": "independently-validated",
+      "accepted_by": "repository owner",
+      "accepted_on": "2026-10-23",
+      "required_in_test_environment": false
+    },
+    "macos": {
+      "status": "independently-validated",
+      "accepted_by": "repository owner",
+      "accepted_on": "2026-10-23",
+      "required_in_test_environment": false
+    }
+  },
+  "jobs": {
+    "package": "success",
+    "native-runtime": "success",
+    "engine-proxy": "success",
+    "linux-runtime": "success"
+  }
+}

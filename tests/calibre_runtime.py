@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
+import os
+import struct
+import subprocess
 import sys
 import unittest
+import urllib.request
 from pathlib import Path
 from queue import Queue
 from threading import Event
+from urllib.request import ProxyHandler, build_opener, install_opener
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from calibre.customize.ui import metadata_plugins
@@ -174,10 +180,138 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["source"], "high")
 
+    def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
+        """A movie sharing the book ISBN must not replace its metadata or art."""
+        self.plugin.prefs["plugin_ids"] = "mixed"
+        results = self.identify(
+            title="The Hobbit", identifiers={"isbn": "9780547928227"}
+        )
+        self.assertEqual([row.title for row in results], ["The Hobbit"])
+        queue = Queue()
+        self.plugin.download_cover(
+            self.log, queue, self.abort, identifiers={"isbn": "9780547928227"}
+        )
+        self.assertEqual(struct.unpack("!II", queue.get_nowait()[1][16:24]), (600, 900))
+        self.assertNotIn("/invalid.png", [path for path, _ in self.requests])
+
+    def test_structural_schema_failures_are_actionable_and_provider_isolated(self):
+        """Valid JSON with a wrong shape must fail explicitly, not look empty."""
+        for provider in ("array", "missing", "mapping", "row", "title"):
+            with self.subTest(schema=provider):
+                with self.assertRaisesRegex(ValueError, "API schema"):
+                    self.plugin._search("schema-" + provider, "The Hobbit", None, {}, 2)
+                self.plugin.prefs["plugin_ids"] = "schema-" + provider + ",fixture"
+                with self.assertLogs(self.log, level="ERROR") as captured:
+                    self.assertEqual(len(self.identify(title="The Hobbit")), 1)
+                self.assertIn("API schema", " ".join(captured.output))
+
+    def test_discovery_schema_failure_is_actionable(self):
+        """Discovery with a non-array inventory reports the incompatible field."""
+        self.plugin.prefs["base_url"] = self.url + "/bad-discovery"
+        with self.assertRaisesRegex(ValueError, "plugins must be an array"):
+            self.plugin._discover(2, self.abort)
+
+    def test_download_selects_exact_edition_full_resolution(self):
+        """Download the exact edition's full cover, not a higher-ranked thumbnail."""
+        self.plugin.prefs["plugin_ids"] = "editions"
+        queue = Queue()
+        self.plugin.download_cover(
+            self.log,
+            queue,
+            self.abort,
+            title="The Hobbit",
+            identifiers={"isbn": "9780547928227"},
+        )
+        self.assertEqual(queue.get_nowait()[1], png(600, 900))
+        self.assertIn("/full.png", [path for path, _ in self.requests])
+        self.assertNotIn("/thumbnail.png", [path for path, _ in self.requests])
+
+    def test_known_wrong_edition_cover_is_not_used(self):
+        """A supplied ISBN mismatch cannot become a fallback cover."""
+        self.plugin.prefs["plugin_ids"] = "wrong-edition"
+        queue = Queue()
+        self.plugin.download_cover(
+            self.log,
+            queue,
+            self.abort,
+            title="The Hobbit",
+            identifiers={"isbn": "9780547928227"},
+        )
+        self.assertTrue(queue.empty())
+        self.assertNotIn("/thumbnail.png", [path for path, _ in self.requests])
+
+    def test_client_proxy_inheritance_and_loopback_bypass(self):
+        """Fresh Calibre clients inherit HTTP forwarding and respect NO_PROXY."""
+        env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
+        select = (
+            "from calibre.customize.ui import metadata_plugins; "
+            "p=next(p for p in metadata_plugins(('identify','cover')) "
+            "if p.name=='Metadata Engine'); "
+        )
+        for mode, proxy, bypass, url in (
+            ("forward", self.url, "", "http://calibre-fixture.invalid/health"),
+            ("bypass", "http://127.0.0.1:9", "127.0.0.1", self.url + "/health"),
+        ):
+            with self.subTest(mode=mode):
+                child = dict(
+                    env,
+                    http_proxy=proxy,
+                    HTTP_PROXY=proxy,
+                    no_proxy=bypass,
+                    NO_PROXY=bypass,
+                )
+                result = subprocess.run(
+                    [
+                        os.environ["CALIBRE_TEST_DEBUG"],
+                        "-c",
+                        select
+                        + f"import json; print(json.dumps(p._http_json({url!r}, 2)))",
+                    ],
+                    env=child,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=15,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                # Calibre can print its proxy banner before the JSON response.
+                self.assertTrue(json.loads(result.stdout.splitlines()[-1])["ok"])
+        self.assertEqual(sum(path == "/health" for path, _ in self.requests), 2)
+
+    def test_proxy_outage_retains_cached_cover_and_recovery_uses_it(self):
+        """A real failed proxy connection must leave the cover cache intact."""
+        cached_url = "http://calibre-cover.invalid/cached.png"
+        self.plugin._cover_urls[("isbn", "9780547928227")] = cached_url
+        self.plugin.prefs["plugin_ids"] = "missing"
+        original = urllib.request._opener
+        self.addCleanup(install_opener, original)
+        install_opener(build_opener(ProxyHandler({"http": "http://127.0.0.1:9"})))
+        queue = Queue()
+        self.plugin.download_cover(
+            self.log,
+            queue,
+            self.abort,
+            identifiers={"isbn": "9780547928227"},
+            timeout=1,
+        )
+        self.assertTrue(queue.empty())
+        self.assertEqual(
+            self.plugin._cached_cover({"isbn": "9780547928227"}), cached_url
+        )
+        install_opener(build_opener(ProxyHandler({"http": self.url})))
+        self.plugin.download_cover(
+            self.log, queue, self.abort, identifiers={"isbn": "9780547928227"}
+        )
+        self.assertEqual(queue.get_nowait()[1], png())
+        self.assertEqual(
+            self.plugin._cached_cover({"isbn": "9780547928227"}), cached_url
+        )
+
 
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 10:
+    if result.testsRun != 17:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)

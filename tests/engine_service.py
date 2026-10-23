@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import importlib.util
 import json
 import sys
@@ -14,7 +15,7 @@ from fastapi import Response
 from fixture_api import png
 
 
-async def run(engine_root: Path, work: Path, port: int) -> None:
+async def run(engine_root: Path, work: Path, port: int, pg_dsn: str = "") -> None:
     """Load the actual engine entry point without replacing API handlers."""
     sys.path.insert(0, str(engine_root))
     spec = importlib.util.spec_from_file_location(
@@ -23,7 +24,7 @@ async def run(engine_root: Path, work: Path, port: int) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     provider_dir = work / "providers"
-    provider_dir.mkdir()
+    provider_dir.mkdir(exist_ok=True)
     provider_dir.joinpath("fixture.py").write_text(
         Path(__file__).with_name("engine_provider.py").read_text("utf-8"),
         encoding="utf-8",
@@ -71,7 +72,45 @@ async def run(engine_root: Path, work: Path, port: int) -> None:
         },
         "evidence": {"enabled": True},
     }
+    if pg_dsn:
+        import psycopg
+        from psycopg import sql
+        from psycopg.conninfo import conninfo_to_dict
+
+        connection = conninfo_to_dict(pg_dsn)
+        if (
+            connection.get("host") != "127.0.0.1"
+            or connection.get("dbname") != "postgres"
+        ):
+            raise ValueError(
+                "Only a disposable loopback PostgreSQL test service is accepted"
+            )
+        database = "calibre_" + hashlib.sha256(str(work).encode()).hexdigest()[:16]
+        with psycopg.connect(pg_dsn, autocommit=True) as admin:
+            if not admin.execute(
+                "SELECT 1 FROM pg_database WHERE datname=%s", (database,)
+            ).fetchone():
+                admin.execute(
+                    sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database))
+                )
+        cfg["database"] = {
+            "backend": "postgresql",
+            "postgresql": {
+                "host": "127.0.0.1",
+                "port": int(connection["port"]),
+                "database": database,
+                "user": connection.get("user", "postgres"),
+                "password": connection.get("password", ""),
+                "pool_min": 1,
+                "pool_max": 4,
+            },
+        }
     app = await module.build(cfg, work)
+
+    @app.post("/test-provider-down")
+    async def down():
+        app.state.plugins.plugins["calibre_fixture"].failure = True
+        return {"ok": True}
 
     @app.get("/test-cover.png")
     async def cover():
@@ -93,5 +132,8 @@ if __name__ == "__main__":
     parser.add_argument("--engine-root", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--pg-dsn", default="")
     args = parser.parse_args()
-    asyncio.run(run(args.engine_root.resolve(), args.work.resolve(), args.port))
+    asyncio.run(
+        run(args.engine_root.resolve(), args.work.resolve(), args.port, args.pg_dsn)
+    )

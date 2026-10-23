@@ -35,3 +35,7 @@ The four camel-case `unittest.TestResult` callbacks in `ci/unit_report.py` keep
 their required names, with individual N802 exceptions. The root `__init__.py`
 is the Calibre ZIP entry point; its repository directory name contains hyphens.
 The N999 exception applies only to that ZIP entry point.
+
+## Integrated Calibre reconciliation
+
+PR #3 now incorporates main at `80c23f429592cdc69ad40b3e32543e4177852fb5`, including Calibre 1.1.3 media/schema/edition fixes, all 17 runtime regressions, independent desktop acceptance, PostgreSQL readiness and exact-artifact qualification/distribution. The audit covers all 26 Python files. After excluding imports and normalizing the reviewed E731 lambda-to-function spelling, all non-import ASTs match integrated main. The style job uses a hosted runner because this public repository has no registered local worker. Formatting changes ZIP bytes; old artifact evidence is retained as history but cannot approve this candidate. New Docker-backed qualification must pass before reconciliation is complete.

@@ -1,9 +1,9 @@
 {
   "repository": "calibre-plugin-metadata-engine",
-  "audited_python_files": 19,
+  "audited_python_files": 26,
   "ruff_version": "0.14.1",
   "selected_lint_violations": 0,
-  "formatter_result": "19 files already formatted",
+  "formatter_result": "26 files already formatted",
   "observational_E501_remaining": 1,
   "negative_lint_probe_exit": 1,
   "negative_formatter_probe_exit": 1,
@@ -17,5 +17,6 @@
     "calibre_native": "Requires existing container CI",
     "docker": "compileall passed; requires independent packaging/runtime CI"
   },
-  "integration_status": "Worker validation pending; do not merge until required checks and pinned compatibility pass."
+  "integration_status": "Reconciled with integrated Calibre 1.1.3; refreshed exact-ZIP worker qualification pending",
+  "reconciliation_baseline": "80c23f429592cdc69ad40b3e32543e4177852fb5"
 }
