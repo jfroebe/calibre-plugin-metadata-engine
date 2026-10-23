@@ -2,7 +2,7 @@
 
 ## Current assessment
 
-**Draft implementation; not release-qualified.** No release is published or
+**Implemented test infrastructure; not fully release-qualified.** No release is published or
 deployed by this change. Personal Calibre configurations and libraries are
 never used. The existing plugin implementation remains unchanged.
 
@@ -138,11 +138,12 @@ artifacts for 14 days. Distinct runs never share a test database or library.
 | Environment | State |
 |---|---|
 | Host Python 3.12, Linux x86-64 | Packaging, actual-engine API/cache and deterministic routing tests passed locally |
-| Calibre 9.15.0 official Linux x86-64 | Archive downloaded and ELF architecture verified; launcher fails before Python starts in the implementation environment |
+| Calibre 9.15.0 official Linux x86-64 | Native hosted runtime, ten regressions and preference-preserving upgrade passed in run 39953303726 |
 | Calibre 9.16.0 / bundled Python 3.14.8 | Ten regressions and actual-engine/library integration passed in the pinned container |
 | chatgpt-build-02 | Container launch, ten regressions, engine/cache/library integration and GUI control passed |
 | chatgpt-dev | Container launch, ten real-Calibre regressions and GUI control passed |
-| Windows 11/current Calibre, Python 3.14-era regression | Not yet implemented or qualified; required before release |
+| Windows Server 2025 / pinned Calibre 9.15.0 | Ten regressions and preference-preserving upgrade passed; bundled Python 3.14.7 |
+| Windows 11 desktop/current Calibre | Remains outside hosted Server regression coverage |
 | Calibre 6.0 declared plugin minimum | Existing declaration retained; not verified by these tests |
 | macOS | Future extension; no support claim added |
 
@@ -161,10 +162,10 @@ not proof the plugin fails under a normal Linux Calibre installation.
   existing build-worker runner is scoped to the Docker repository; do not guess
   that it can accept Calibre-repository jobs. The actual runtime harness has
   passed; the draft Calibre-repository qualification job remains provisional.
-- Implement and pass Windows qualification with pinned installer digest and the
-  relevant bundled Python runtime. No permanent Windows VM is required.
-- Extend lifecycle assertions to verify prior-version preference preservation
-  and configuration migration, rather than merely installing old then new ZIPs.
+- Complete Windows 11 desktop/current-version qualification beyond the pinned
+  native Windows regression job added here. No permanent Windows VM is required.
+- Verify future preference schema migrations when such migrations are introduced;
+  current-schema preference preservation is now asserted across ZIP upgrades.
 - Verify mixed book/movie responses and wrong-edition/full-resolution covers;
   the existing book fixtures alone do not prove media filtering.
 - Add structural API schema rejection assertions; malformed JSON coverage does
@@ -346,4 +347,23 @@ The actual engine is pinned to
 
 Container/GUI implementation is verified. Full release qualification remains a
 draft because the other explicitly listed release blockers are still open.
-Nothing was merged, published or deployed.
+The container/GUI infrastructure was merged. No release was published or deployed.
+
+## Native qualification evidence (October 23, 2026)
+
+[Run 39953556989](https://github.com/jfroebe/calibre-plugin-metadata-engine/actions/runs/39953556989)
+passed packaging, all ten installed-plugin regressions on each operating system,
+preference preservation across installation of the previous and candidate ZIPs,
+removal/reinstallation, and the final CI aggregation job. Windows Server 2025
+and Ubuntu 24.04 both reported **Calibre 9.15 with bundled Python 3.14.7**,
+covering the runtime generation in the reported Windows failure.
+
+Both native jobs consumed the same candidate artifact and reported ZIP SHA-256
+`9e4c1a449f429cd9bd85ccecbeed9d16269631411c936127d5b862510516141f`.
+This also matches the previously verified Linux container/actual-engine artifact.
+The native jobs do not themselves run the private engine or real authenticated
+relays. Their success must not be described as those integration checks passing.
+
+The first Windows attempt exposed a host-harness encoding error while reading
+Calibre's Unicode output. Reading UTF-8 explicitly fixed it without changing the
+plugin or dropping assertions. A host subprocess regression covers that behavior.
