@@ -21,30 +21,72 @@ class MetadataEngineSource(Source):
     supported_platforms = ["windows", "osx", "linux"]
 
     capabilities = frozenset(["identify", "cover"])
-    touched_fields = frozenset([
-        "title", "authors", "publisher", "pubdate", "comments", "languages",
-        "tags", "series", "series_index", "identifier:isbn", "identifier:asin",
-    ])
+    touched_fields = frozenset(
+        [
+            "title",
+            "authors",
+            "publisher",
+            "pubdate",
+            "comments",
+            "languages",
+            "tags",
+            "series",
+            "series_index",
+            "identifier:isbn",
+            "identifier:asin",
+        ]
+    )
     has_html_comments = False
     supports_gzip_transfer_encoding = True
     cached_cover_url_is_reliable = False
     can_get_multiple_covers = False
 
     options = (
-        Option("base_url", "string", "http://127.0.0.1:8790", "Metadata Engine URL",
-               "Base URL of metadata-engine."),
-        Option("plugin_ids", "string", "", "Metadata Engine plugin IDs",
-               "Comma-separated provider IDs. Blank means discover all enabled providers."),
-        Option("max_results", "number", 20, "Maximum results",
-               "Maximum metadata results returned to Calibre."),
-        Option("per_plugin_limit", "number", 10, "Per-provider result limit",
-               "Maximum results requested from each metadata-engine provider."),
-        Option("api_token", "string", "", "Bearer token",
-               "Optional HTTP Bearer token."),
-        Option("verify_ssl", "bool", True, "Verify HTTPS certificates",
-               "Verify TLS certificates for HTTPS connections."),
-        Option("include_source_tag", "bool", False, "Add source tag",
-               "Add metadata-engine:<source> to Calibre tags."),
+        Option(
+            "base_url",
+            "string",
+            "http://127.0.0.1:8790",
+            "Metadata Engine URL",
+            "Base URL of metadata-engine.",
+        ),
+        Option(
+            "plugin_ids",
+            "string",
+            "",
+            "Metadata Engine plugin IDs",
+            "Comma-separated provider IDs. Blank means discover all enabled providers.",
+        ),
+        Option(
+            "max_results",
+            "number",
+            20,
+            "Maximum results",
+            "Maximum metadata results returned to Calibre.",
+        ),
+        Option(
+            "per_plugin_limit",
+            "number",
+            10,
+            "Per-provider result limit",
+            "Maximum results requested from each metadata-engine provider.",
+        ),
+        Option(
+            "api_token", "string", "", "Bearer token", "Optional HTTP Bearer token."
+        ),
+        Option(
+            "verify_ssl",
+            "bool",
+            True,
+            "Verify HTTPS certificates",
+            "Verify TLS certificates for HTTPS connections.",
+        ),
+        Option(
+            "include_source_tag",
+            "bool",
+            False,
+            "Add source tag",
+            "Add metadata-engine:<source> to Calibre tags.",
+        ),
     )
 
     def __init__(self, *args, **kwargs):
@@ -56,28 +98,45 @@ class MetadataEngineSource(Source):
 
     def config_widget(self):
         from calibre_plugins.metadata_engine.config import ConfigWidget
+
         return ConfigWidget(self)
 
     def save_settings(self, config_widget):
         config_widget.commit()
 
-    def identify(self, log, result_queue, abort, title=None, authors=None,
-                 identifiers=None, timeout=30):
+    def identify(
+        self,
+        log,
+        result_queue,
+        abort,
+        title=None,
+        authors=None,
+        identifiers=None,
+        timeout=30,
+    ):
         identifiers = identifiers or {}
         query = self._make_query(title, authors, identifiers)
         if not query:
-            return "Metadata Engine requires a title, author, ISBN, ASIN, or identifier."
+            return (
+                "Metadata Engine requires a title, author, ISBN, ASIN, or identifier."
+            )
 
         try:
-            provider_ids = self._configured_provider_ids() or self._discover(timeout, abort)
+            provider_ids = self._configured_provider_ids() or self._discover(
+                timeout, abort
+            )
             rows = []
             for provider_id in provider_ids:
                 if abort.is_set():
                     return None
                 try:
-                    rows.extend(self._search(provider_id, query, authors, identifiers, timeout))
+                    rows.extend(
+                        self._search(provider_id, query, authors, identifiers, timeout)
+                    )
                 except Exception as exc:
-                    log.error("Metadata Engine provider %r failed: %s", provider_id, exc)
+                    log.error(
+                        "Metadata Engine provider %r failed: %s", provider_id, exc
+                    )
 
             rows = self._dedupe(rows)
             rows.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
@@ -95,23 +154,36 @@ class MetadataEngineSource(Source):
             log.exception("Metadata Engine identify failed")
             return "Metadata Engine identify failed: %s" % exc
 
-    def download_cover(self, log, result_queue, abort, title=None, authors=None,
-                       identifiers=None, timeout=30, get_best_cover=False):
+    def download_cover(
+        self,
+        log,
+        result_queue,
+        abort,
+        title=None,
+        authors=None,
+        identifiers=None,
+        timeout=30,
+        get_best_cover=False,
+    ):
         identifiers = identifiers or {}
         candidates = []
 
         cached = self._cached_cover(identifiers)
         if cached:
-            candidates.append({
-                "cover_url": cached,
-                "confidence": 1.0,
-                "source": "cache",
-            })
+            candidates.append(
+                {
+                    "cover_url": cached,
+                    "confidence": 1.0,
+                    "source": "cache",
+                }
+            )
 
         query = self._make_query(title, authors, identifiers)
         if query:
             try:
-                provider_ids = self._configured_provider_ids() or self._discover(timeout, abort)
+                provider_ids = self._configured_provider_ids() or self._discover(
+                    timeout, abort
+                )
             except Exception as exc:
                 log.error("Metadata Engine provider discovery failed: %s", exc)
                 provider_ids = []
@@ -125,7 +197,9 @@ class MetadataEngineSource(Source):
                         provider_id, query, authors, identifiers, timeout
                     )
                     rows.extend(provider_rows)
-                    cover_count = sum(1 for row in provider_rows if row.get("cover_url"))
+                    cover_count = sum(
+                        1 for row in provider_rows if row.get("cover_url")
+                    )
                     if cover_count:
                         log.info(
                             "Metadata Engine provider %r returned %d cover candidate(s)",
@@ -182,7 +256,9 @@ class MetadataEngineSource(Source):
                 )
 
         if candidates:
-            log.error("Metadata Engine exhausted %d cover candidate(s)", len(candidates))
+            log.error(
+                "Metadata Engine exhausted %d cover candidate(s)", len(candidates)
+            )
         else:
             log.error("Metadata Engine returned no cover candidates")
         return None
@@ -204,7 +280,9 @@ class MetadataEngineSource(Source):
     def _search(self, provider_id, query, authors, identifiers, timeout):
         params = {
             "query": query,
-            "limit": max(1, min(100, int(self.prefs.get("per_plugin_limit", 10) or 10))),
+            "limit": max(
+                1, min(100, int(self.prefs.get("per_plugin_limit", 10) or 10))
+            ),
         }
         if authors:
             params["author"] = ", ".join(authors)
@@ -219,7 +297,9 @@ class MetadataEngineSource(Source):
             params["language"] = language
 
         url = "%s/plugins/%s/search?%s" % (
-            self._base_url(), quote(str(provider_id), safe=""), urlencode(params)
+            self._base_url(),
+            quote(str(provider_id), safe=""),
+            urlencode(params),
         )
         data = self._http_json(url, timeout)
         out = []
@@ -262,7 +342,9 @@ class MetadataEngineSource(Source):
         source = self._text(row.get("source"))
         source_id = self._text(row.get("source_id"))
         if source and source_id:
-            mi.set_identifier("metadata_engine_%s" % source.lower().replace(" ", "_"), source_id)
+            mi.set_identifier(
+                "metadata_engine_%s" % source.lower().replace(" ", "_"), source_id
+            )
 
         year = self._text(row.get("published_year"))
         if year:
@@ -277,7 +359,9 @@ class MetadataEngineSource(Source):
             if isinstance(item, str):
                 mi.series = item
             elif isinstance(item, dict):
-                mi.series = self._text(item.get("name") or item.get("title") or item.get("series"))
+                mi.series = self._text(
+                    item.get("name") or item.get("title") or item.get("series")
+                )
                 idx = item.get("index", item.get("position", item.get("number")))
                 try:
                     mi.series_index = float(idx) if idx is not None else None
@@ -324,18 +408,24 @@ class MetadataEngineSource(Source):
         return json.loads(self._http_bytes(url, timeout).decode("utf-8"))
 
     def _http_bytes(self, url, timeout):
-        headers = {"Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-                   "User-Agent": "Calibre-Metadata-Engine/1.1.2",
-                   "Accept-Encoding": "identity"}
+        headers = {
+            "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.2",
+            "Accept-Encoding": "identity",
+        }
         token = str(self.prefs.get("api_token", "") or "").strip()
         if token:
             headers["Authorization"] = "Bearer " + token
         req = Request(url, headers=headers)
         context = None
-        if url.lower().startswith("https://") and not self.prefs.get("verify_ssl", True):
+        if url.lower().startswith("https://") and not self.prefs.get(
+            "verify_ssl", True
+        ):
             context = ssl._create_unverified_context()
         try:
-            with urlopen(req, timeout=max(1, int(timeout)), context=context) as response:
+            with urlopen(
+                req, timeout=max(1, int(timeout)), context=context
+            ) as response:
                 return response.read()
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")
@@ -347,7 +437,11 @@ class MetadataEngineSource(Source):
         return str(self.prefs.get("base_url", "") or "").strip().rstrip("/")
 
     def _configured_provider_ids(self):
-        return [x.strip() for x in str(self.prefs.get("plugin_ids", "") or "").split(",") if x.strip()]
+        return [
+            x.strip()
+            for x in str(self.prefs.get("plugin_ids", "") or "").split(",")
+            if x.strip()
+        ]
 
     @classmethod
     def _cover_identifier_score(cls, row, identifiers):
@@ -426,11 +520,20 @@ class MetadataEngineSource(Source):
             elif row.get("asin"):
                 key = ("asin", str(row["asin"]).upper())
             elif row.get("source") and row.get("source_id"):
-                key = ("source", str(row["source"]).casefold(), str(row["source_id"]).casefold())
+                key = (
+                    "source",
+                    str(row["source"]).casefold(),
+                    str(row["source_id"]).casefold(),
+                )
             else:
-                key = ("book", str(row.get("title") or "").casefold(),
-                       tuple(a.casefold() for a in cls._list(row.get("authors"))))
+                key = (
+                    "book",
+                    str(row.get("title") or "").casefold(),
+                    tuple(a.casefold() for a in cls._list(row.get("authors"))),
+                )
             old = best.get(key)
-            if old is None or float(row.get("confidence") or 0) > float(old.get("confidence") or 0):
+            if old is None or float(row.get("confidence") or 0) > float(
+                old.get("confidence") or 0
+            ):
                 best[key] = row
         return list(best.values())
