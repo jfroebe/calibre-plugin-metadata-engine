@@ -1,0 +1,23 @@
+{
+  "repository": "calibre-plugin-metadata-engine",
+  "baseline_sha": "b6de75da9122a98fc8bf287d6146b81a91616173",
+  "python_files": 26,
+  "initial_violations": 13,
+  "selected_remaining_violations": 0,
+  "raw_remaining_missing_docstrings_in_test_exceptions": 0,
+  "raw_remaining_by_rule": {},
+  "docstrings_added": 13,
+  "docstrings_corrected": 0,
+  "python_files_changed": 2,
+  "ruff_version": "0.14.1",
+  "ruff_exit": 0,
+  "formatter_exit": 0,
+  "executable_ast_differences": 0,
+  "source_compatibility": "All 229 Python ASTs match baseline after removing docstrings. Documentation/introspection output intentionally changes.",
+  "intentional_exceptions": "None added; existing non-docstring PEP8/UP exceptions retained.",
+  "ci_status": "Pending exact-head Actions validation.",
+  "worker_integration": "Pending immutable cross-repository snapshot.",
+  "local_tests": "20 official host unittest cases passed with CALIBRE_ENGINE_ROOT set; native Calibre remains pending",
+  "negative_docstring_probe_exit": 1,
+  "workflow_yaml": "Parsed successfully"
+}
