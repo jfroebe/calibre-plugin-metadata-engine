@@ -65,6 +65,11 @@ def engine(root: Path, work: Path, report: Path):
                 str(work),
                 "--port",
                 str(port),
+                *(
+                    ["--pg-dsn", os.environ["CALIBRE_TEST_PG_DSN"]]
+                    if os.environ.get("CALIBRE_TEST_PG_DSN")
+                    else []
+                ),
             ],
             stdout=log,
             stderr=subprocess.STDOUT,

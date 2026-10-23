@@ -39,6 +39,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pattern", default="test_*.py")
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--require-no-skips", action="store_true")
     args = parser.parse_args()
     Result.xml = ET.Element("testsuite", name="calibre-host-validation")
     suite = unittest.defaultTestLoader.discover("tests", pattern=args.pattern)
@@ -50,7 +51,11 @@ def main() -> None:
     ET.ElementTree(Result.xml).write(
         args.report, encoding="utf-8", xml_declaration=True
     )
-    if not result.wasSuccessful():
+    if (
+        not result.wasSuccessful()
+        or result.testsRun == 0
+        or (args.require_no_skips and result.skipped)
+    ):
         raise SystemExit(1)
 
 

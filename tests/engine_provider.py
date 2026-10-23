@@ -20,6 +20,8 @@ class FixtureProvider(MetadataPlugin):
     async def search(self, request):
         """Count calls so tests can prove cache hits skip provider execution."""
         self.calls += 1
+        if getattr(self, "failure", False):
+            raise RuntimeError("Controlled provider outage")
         rows = select(request.query, request.isbn or "", request.asin or "")
         return [
             MetadataCandidate(
