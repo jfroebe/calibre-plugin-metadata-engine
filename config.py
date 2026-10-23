@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+"""Edit and validate Calibre Metadata Engine connection and provider preferences."""
+
 from __future__ import annotations
 
 import json
@@ -31,7 +33,10 @@ except Exception:
 
 
 class ConfigWidget(QWidget):
+    """Edit connection, provider selection and result settings in Calibre's Qt UI."""
+
     def __init__(self, plugin):
+        """Build the settings controls, load plugin preferences and apply provider-mode state."""
         super().__init__()
         self.plugin = plugin
         self.setMinimumWidth(680)
@@ -188,6 +193,11 @@ class ConfigWidget(QWidget):
         )
 
     def commit(self):
+        """Persist displayed preferences only after validation succeeds.
+
+        An invalid configuration displays an error and leaves stored preferences
+        unchanged. Automatic mode stores an empty provider-selection string.
+        """
         if not self.validate():
             return
         p = self.plugin.prefs
@@ -204,6 +214,11 @@ class ConfigWidget(QWidget):
         )
 
     def validate(self):
+        """Check the URL scheme and required provider selection without contacting the server.
+
+        Display a user-facing error and return False for invalid input; return True
+        when these local checks succeed.
+        """
         url = self.base_url.text().strip()
         if not url:
             self._error("Metadata Engine URL is required.")
