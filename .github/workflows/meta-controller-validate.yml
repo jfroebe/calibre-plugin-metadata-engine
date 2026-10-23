@@ -9,7 +9,7 @@ on:
       mode:
         description: CI, local integration, or full release qualification
         type: choice
-        options: [ci, local, release]
+        options: [ci, release]
         default: ci
   workflow_call:
     inputs:
@@ -44,6 +44,8 @@ jobs:
       - run: python ci/unit_report.py --pattern test_package.py --report reports/package.xml
       - run: python ci/unit_report.py --pattern test_qualification.py --report reports/qualification.xml
       - run: python ci/unit_report.py --pattern test_runtime_harness.py --report reports/harness.xml
+      - run: python ci/unit_report.py --pattern test_snapshot_gate.py --require-no-skips --report reports/snapshot.xml
+      - run: python ci/unit_report.py --pattern test_release_gate.py --require-no-skips --report reports/release.xml
       - id: pins
         run: |
           python - <<'PY'
@@ -69,144 +71,6 @@ jobs:
           name: calibre-packaging-report
           path: reports
           retention-days: 14
-
-  worker-configuration:
-    needs: package
-    # Never execute untrusted fork code on a persistent local worker.
-    if: (inputs.mode == 'local' || inputs.mode == 'release') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - name: Require verified existing worker labels and credentials
-        env:
-          BUILD_LABELS: ${{ vars.CALIBRE_BUILD_RUNNER_LABELS }}
-          CONTROLLER_LABELS: ${{ vars.CALIBRE_CONTROLLER_RUNNER_LABELS }}
-          REPO_TOKEN: ${{ secrets.METADATA_ENGINE_REPO_TOKEN }}
-          SOCKS_PASSWORD: ${{ secrets.CALIBRE_TEST_SOCKS_PASSWORD }}
-        run: |
-          python - <<'PY'
-          import json, os
-          for variable in ('BUILD_LABELS', 'CONTROLLER_LABELS'):
-              if not os.environ[variable]:
-                  raise SystemExit('Configure verified CALIBRE_*_RUNNER_LABELS JSON arrays; runner inventory is required')
-              labels = json.loads(os.environ[variable])
-              if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels):
-                  raise SystemExit('Runner labels must be a JSON string array')
-              if not {'self-hosted', 'linux', 'x64'}.issubset(labels):
-                  raise SystemExit('Require existing self-hosted Linux x64 workers')
-          if not os.environ['REPO_TOKEN']:
-              raise SystemExit('Missing METADATA_ENGINE_REPO_TOKEN: repository Contents read permission required')
-          if not os.environ['SOCKS_PASSWORD']:
-              raise SystemExit('Missing CALIBRE_TEST_SOCKS_PASSWORD; do not embed credentials')
-          PY
-
-  engine:
-    needs: [package, worker-configuration]
-    runs-on: ${{ fromJSON(vars.CALIBRE_CONTROLLER_RUNNER_LABELS) }}
-    timeout-minutes: 15
-    env:
-      http_proxy: http://192.168.0.59:8118
-      https_proxy: http://192.168.0.59:8118
-      no_proxy: localhost,127.0.0.1,::1,.localhost
-    steps:
-      - name: Configure case-sensitive Linux proxy aliases
-        run: |
-          printf '%s\n' "HTTP_PROXY=$http_proxy" "HTTPS_PROXY=$https_proxy" "NO_PROXY=$no_proxy" >> "$GITHUB_ENV"
-      - run: test "$(hostname -s)" = chatgpt-dev
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: jfroebe/metadata-engine
-          ref: ${{ needs.package.outputs.engine }}
-          path: pinned-engine
-          token: ${{ secrets.METADATA_ENGINE_REPO_TOKEN }}
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Isolate test dependencies
-        run: |
-          python -m venv "$RUNNER_TEMP/calibre-engine-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          echo "$RUNNER_TEMP/calibre-engine-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin" >> "$GITHUB_PATH"
-      - run: python -m pip install -r ci/requirements.txt -r pinned-engine/requirements.txt
-      - name: Actual API contract and cache
-        env:
-          CALIBRE_ENGINE_ROOT: ${{ github.workspace }}/pinned-engine
-        run: |
-          python ci/unit_report.py --pattern test_engine.py --report reports/engine.xml
-          python ci/unit_report.py --pattern test_proxy.py --report reports/proxy-routing.xml
-      - name: Established local proxy qualification
-        env:
-          CALIBRE_ENGINE_ROOT: ${{ github.workspace }}/pinned-engine
-          CALIBRE_SOCKS_PASSWORD: ${{ secrets.CALIBRE_TEST_SOCKS_PASSWORD }}
-          CALIBRE_PROXY_REPORT: reports/proxy.json
-        run: python ci/proxy_gate.py
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: calibre-engine-report
-          path: reports
-          retention-days: 14
-      - name: Clean isolated Python
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/calibre-engine-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-
-  linux-runtime:
-    needs: [package, worker-configuration]
-    runs-on: ${{ fromJSON(vars.CALIBRE_BUILD_RUNNER_LABELS) }}
-    timeout-minutes: 20
-    env:
-      http_proxy: http://192.168.0.59:8118
-      https_proxy: http://192.168.0.59:8118
-      no_proxy: localhost,127.0.0.1,::1,.localhost
-    steps:
-      - name: Configure case-sensitive Linux proxy aliases
-        run: |
-          printf '%s\n' "HTTP_PROXY=$http_proxy" "HTTPS_PROXY=$https_proxy" "NO_PROXY=$no_proxy" >> "$GITHUB_ENV"
-      - run: test "$(hostname -s)" = chatgpt-build-02
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: jfroebe/metadata-engine
-          ref: ${{ needs.package.outputs.engine }}
-          path: pinned-engine
-          token: ${{ secrets.METADATA_ENGINE_REPO_TOKEN }}
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.package.outputs.previous }}
-          path: previous
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: calibre-candidate-${{ github.sha }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Isolate test dependencies
-        run: |
-          python -m venv "$RUNNER_TEMP/calibre-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          echo "$RUNNER_TEMP/calibre-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin" >> "$GITHUB_PATH"
-      - run: python -m pip install -r pinned-engine/requirements.txt
-      - name: Real Calibre container, actual engine and disposable library
-        run: |
-          python ci/container_runtime.py \
-            --previous-zip previous/Calibre-Metadata-Engine.zip \
-            --engine-root "$GITHUB_WORKSPACE/pinned-engine" \
-            --report reports/linux
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: calibre-linux-report
-          path: reports
-          retention-days: 14
-      - name: Clean isolated Python
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/calibre-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 
   native-runtime:
     needs: package
@@ -260,8 +124,23 @@ jobs:
           path: reports
           retention-days: 14
 
+  integration-evidence:
+    needs: package
+    if: inputs.mode == 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: calibre-candidate-${{ github.sha }}
+      - name: Bind qualification to the exact tested ZIP and component pins
+        run: python3 ci/release_gate.py
+
   qualification:
-    needs: [package, native-runtime, worker-configuration, engine, linux-runtime]
+    needs: [package, native-runtime, integration-evidence]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2

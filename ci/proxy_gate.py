@@ -53,7 +53,8 @@ async def main() -> None:
         original_resolver = socket.getaddrinfo
 
         def guarded_resolver(host, *args, **kwargs):
-            if str(host).rstrip(".").lower() == "example.com":
+            name = host.decode("ascii") if isinstance(host, bytes) else str(host)
+            if name.rstrip(".").lower() == "example.com":
                 lookups.append("target")
                 raise OSError("Target resolution forbidden during remote-DNS test")
             return original_resolver(host, *args, **kwargs)
