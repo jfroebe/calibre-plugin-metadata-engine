@@ -1,0 +1,21 @@
+{
+  "repository": "calibre-plugin-metadata-engine",
+  "audited_python_files": 19,
+  "ruff_version": "0.14.1",
+  "selected_lint_violations": 0,
+  "formatter_result": "19 files already formatted",
+  "observational_E501_remaining": 1,
+  "negative_lint_probe_exit": 1,
+  "negative_formatter_probe_exit": 1,
+  "mechanical_formatting_ast_changes": 0,
+  "import_stage_non_import_ast_changes": 0,
+  "local_tests": {
+    "engine": "266 passed, 3 environment skips",
+    "plugins": "423 passed, 26 subtests",
+    "adapters": "244 passed, 34 subtests, 2 baseline warnings",
+    "calibre_host": "3 packaging and 5 proxy tests passed",
+    "calibre_native": "Requires existing container CI",
+    "docker": "compileall passed; requires independent packaging/runtime CI"
+  },
+  "integration_status": "Worker validation pending; do not merge until required checks and pinned compatibility pass."
+}

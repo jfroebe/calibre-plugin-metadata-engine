@@ -1,0 +1,54 @@
+name: Python style
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'release/**', 'maintenance/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-style-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  http_proxy: http://192.168.0.59:8118
+  https_proxy: http://192.168.0.59:8118
+  all_proxy: http://192.168.0.59:8118
+  no_proxy: localhost,127.0.0.1,::1,.localhost,meta-postgres
+
+jobs:
+  pep8:
+    runs-on: [self-hosted, linux, x64, meta-controller]
+    timeout-minutes: 10
+    steps:
+      - name: Prepare isolated Python on chatgpt-dev
+        shell: bash
+        run: |
+          test "$(hostname -s)" = chatgpt-dev
+          printf '%s\n' "HTTP_PROXY=$http_proxy" "HTTPS_PROXY=$https_proxy" \
+            "ALL_PROXY=$all_proxy" "NO_PROXY=$no_proxy" >> "$GITHUB_ENV"
+          interpreter="$RUNNER_TOOL_CACHE/Python/3.12.15/x64/bin/python"
+          environment="$RUNNER_TEMP/style-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          "$interpreter" -m venv "$environment"
+          echo "$environment/bin" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v4
+      - name: Install pinned style tools
+        run: python -m pip install --disable-pip-version-check -r requirements-style.txt
+      - name: Check Python style
+        shell: bash
+        run: |
+          mkdir -p reports/style
+          status=0
+          python -m ruff check . --output-format json > reports/style/ruff.json || status=$?
+          cat reports/style/ruff.json
+          exit "$status"
+      - name: Check Python formatting
+        run: python -m ruff format --check .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-style-${{ github.sha }}
+          path: reports/style
+          if-no-files-found: error
