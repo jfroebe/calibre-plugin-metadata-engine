@@ -28,3 +28,10 @@ imports need individual review. Unsafe autofixes are not permitted by default.
 The baseline reports distinguish formatter, imports, naming, unused bindings
 and behavior-sensitive findings. Existing test failures must be compared with
 the recorded pre-remediation results.
+
+## Naming compatibility
+
+The four camel-case `unittest.TestResult` callbacks in `ci/unit_report.py` keep
+their required names, with individual N802 exceptions. The root `__init__.py`
+is the Calibre ZIP entry point; its repository directory name contains hyphens.
+The N999 exception applies only to that ZIP entry point.
