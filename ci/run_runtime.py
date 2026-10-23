@@ -75,12 +75,13 @@ def engine(root: Path, work: Path, report: Path):
             stderr=subprocess.STDOUT,
         )
         try:
-            for _ in range(100):
+            for _ in range(300):
                 if process.poll() is not None:
                     raise RuntimeError("Disposable engine failed; see engine.log")
                 try:
                     with opener.open(url + "/health", timeout=1) as response:
-                        if json.load(response)["ok"]:
+                        health = json.load(response)
+                        if health["ok"] and health.get("cache", {}).get("ready") is True:
                             break
                 except (OSError, ValueError):
                     time.sleep(0.1)
