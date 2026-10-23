@@ -449,9 +449,12 @@ class MetadataEngineSource(Source):
         wanted_isbn = cls._identifier(identifiers, "isbn", "isbn13", "isbn10")
         row_isbn = cls._text(row.get("isbn"))
         if wanted_isbn and row_isbn:
-            normalize = lambda value: "".join(
-                ch for ch in str(value).upper() if ch.isdigit() or ch == "X"
-            )
+
+            def normalize(value):
+                return "".join(
+                    ch for ch in str(value).upper() if ch.isdigit() or ch == "X"
+                )
+
             if normalize(wanted_isbn) == normalize(row_isbn):
                 return 3
 
