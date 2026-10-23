@@ -81,7 +81,10 @@ def engine(root: Path, work: Path, report: Path):
                 try:
                     with opener.open(url + "/health", timeout=1) as response:
                         health = json.load(response)
-                        if health["ok"] and health.get("cache", {}).get("ready") is True:
+                        if (
+                            health["ok"]
+                            and health.get("cache", {}).get("ready") is True
+                        ):
                             break
                 except (OSError, ValueError):
                     time.sleep(0.1)
