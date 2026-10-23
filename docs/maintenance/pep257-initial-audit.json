@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "repository": "jfroebe/calibre-plugin-metadata-engine",
+  "sha": "b6de75da9122a98fc8bf287d6146b81a91616173",
+  "python_files": 26,
+  "modules": 26,
+  "public_classes": 13,
+  "public_functions_and_methods": 95,
+  "audit_command": "ruff check --isolated --select D --config lint.pydocstyle.convention=\"pep257\" --output-format json .",
+  "ruff_version": "0.14.1",
+  "violations": 13,
+  "by_rule": {
+    "D104": 1,
+    "D101": 2,
+    "D107": 2,
+    "D102": 7,
+    "D100": 1
+  },
+  "by_file": {
+    "__init__.py": 8,
+    "config.py": 5
+  },
+  "docstring_consumers": [
+    "ci/run_runtime.py",
+    "ci/unit_report.py",
+    "ci/gui_smoke.py",
+    "ci/container_runtime.py",
+    "ci/runtime_preflight.py",
+    "ci/gui_control.py",
+    "tests/engine_service.py"
+  ],
+  "semantic_review": {
+    "inaccurate": "Requires source review; lint cannot determine accuracy.",
+    "redundant": "Requires source review.",
+    "ambiguous_contracts": "Requires source review.",
+    "domain_knowledge": "Provider terms and unspecified behavior must not be invented.",
+    "sensitive": "No credential extraction performed; inspect documentation edits for sensitive values."
+  },
+  "exclusions": "No generated or vendored Python excluded from this inventory. Existing .ci workspace exclusion retained in enforcement.",
+  "missing_documentation_count": 45
+}

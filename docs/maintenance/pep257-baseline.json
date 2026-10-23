@@ -1,0 +1,437 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-23T20:09:53.265Z",
+  "release": {
+    "url": "https://api.github.com/repos/jfroebe/metadata-engine-docker/releases/421766607",
+    "assets_url": "https://api.github.com/repos/jfroebe/metadata-engine-docker/releases/421766607/assets",
+    "upload_url": "https://uploads.github.com/repos/jfroebe/metadata-engine-docker/releases/421766607/assets{?name,label}",
+    "html_url": "https://github.com/jfroebe/metadata-engine-docker/releases/tag/v1.0.81",
+    "id": 421766607,
+    "author": {
+      "login": "github-actions[bot]",
+      "id": 41898282,
+      "node_id": "MDM6Qm90NDE4OTgyODI=",
+      "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/github-actions%5Bbot%5D",
+      "html_url": "https://github.com/apps/github-actions",
+      "followers_url": "https://api.github.com/users/github-actions%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/github-actions%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/github-actions%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/github-actions%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/github-actions%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/github-actions%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/github-actions%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/github-actions%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/github-actions%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "node_id": "RE_kwDOU1kn0c4ZI6XP",
+    "tag_name": "v1.0.81",
+    "target_commitish": "7f2898026b114d2ada3ecf8278af46eebd5c9948",
+    "name": "Metadata Engine v1.0.81",
+    "draft": false,
+    "immutable": false,
+    "prerelease": false,
+    "created_at": "2026-10-23T11:32:22Z",
+    "updated_at": "2026-10-23T11:32:25Z",
+    "published_at": "2026-10-23T11:32:25Z",
+    "assets": [],
+    "tarball_url": "https://api.github.com/repos/jfroebe/metadata-engine-docker/tarball/v1.0.81",
+    "zipball_url": "https://api.github.com/repos/jfroebe/metadata-engine-docker/zipball/v1.0.81",
+    "body": "Formal stable release v1.0.81 \u2014 2026-10-23\n\nDocker commit: 7f2898026b114d2ada3ecf8278af46eebd5c9948\nEngine: 6d8d759428cf8049f5b8f4c4894022b897fd3229\nPlugins: 81b3f71febc79491c1cb0b59487bb551b255c14d\nAdapters: 9f7732138c72723f10a5a5aafaaa3d1a4e6282d1\n\nImage: ghcr.io/jfroebe/metadata-engine-docker@sha256:c91d8d9e1fc3b3c1eb97f026381ad52ba2fee14108cbb8060d0e39d131db950a\nTags: 1.0.81, stable, latest\nTested platform: linux/amd64\n\nIncludes movie, TV, book and audiobook metadata; Performer Explorer and photography; music foundation; content warnings; Plex integration.\n\nValidation: exact pinned source suites, cross-repository contracts, packaged HTTP and music/cache tests, JavaScript syntax, native Plex prepublication gate, independent registry tag pulls, component provenance, pulled-image runtime and health.\nWorkflow evidence: https://github.com/jfroebe/metadata-engine-docker/actions/runs/39946223207\n\nLimitations: only the platform listed above is validated. Source APIs retain their credential, availability and terms requirements. See PR #59 for premerge checks, skips and warnings.\n\nUpgrade: back up configuration and databases, record the current image digest, then separately authorize deployment using the immutable image above. No production deployment was performed.\nRollback: stop the upgraded container, restore the recorded prior image digest and matching configuration/database backup, then restart. Do not use mutable tags as rollback identifiers."
+  },
+  "repositories": [
+    {
+      "repository": "jfroebe/metadata-engine",
+      "sha": "939d5dca4942293329f5f5a39fd30832fa1b78a1",
+      "branch": "main",
+      "python_files": 53,
+      "pep8_pr": [
+        {
+          "number": 16,
+          "merged_at": "2026-10-23T19:05:56Z",
+          "merge_commit_sha": "edc1e5752fb775d5cf6f0ae0d4a2416d1863ba7e"
+        }
+      ],
+      "open_prs": [],
+      "ci": [
+        {
+          "id": 40015566293,
+          "name": "Publish release",
+          "head_sha": "939d5dca4942293329f5f5a39fd30832fa1b78a1",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "id": 40015566410,
+          "name": "Validate release readiness",
+          "head_sha": "939d5dca4942293329f5f5a39fd30832fa1b78a1",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40015566310,
+          "name": "Python style",
+          "head_sha": "939d5dca4942293329f5f5a39fd30832fa1b78a1",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40008703882,
+          "name": "Validate release readiness",
+          "head_sha": "edc1e5752fb775d5cf6f0ae0d4a2416d1863ba7e",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40008701910,
+          "name": "Publish release",
+          "head_sha": "edc1e5752fb775d5cf6f0ae0d4a2416d1863ba7e",
+          "status": "completed",
+          "conclusion": "skipped"
+        }
+      ],
+      "ruff_configuration": "# Python style tooling; keep this version identical in CI and developer installs.\nrequired-version = \"==0.14.1\"\ntarget-version = \"py311\"\nline-length = 88\nextend-exclude = [\".ci\"]\n\n[lint]\nselect = [\"E4\", \"E7\", \"E9\", \"W\", \"I\", \"N\", \"F401\", \"F841\"]\n\n[format]\nquote-style = \"double\"\nindent-style = \"space\"\nline-ending = \"lf\"\ndocstring-code-format = false\n",
+      "ruff_version": "ruff==0.14.1",
+      "documentation_convention": "Existing prose docstrings; no configured pydocstyle convention except Calibre D203/D213 exclusions.",
+      "python_versions": {
+        "workspace": "3.12.14",
+        "ci": "3.12.15 (workflow tool-cache pin)",
+        "minimum": "3.11 (Ruff target)"
+      },
+      "initial_audit": {
+        "violations": 416,
+        "by_rule": {
+          "D100": 36,
+          "D103": 196,
+          "D104": 1,
+          "D101": 27,
+          "D107": 19,
+          "D102": 87,
+          "D105": 5,
+          "D202": 7,
+          "D400": 36,
+          "D401": 2
+        },
+        "docstring_consumers": []
+      }
+    },
+    {
+      "repository": "jfroebe/metadata-engine-plugins",
+      "sha": "7194f8f1b542ba36bbe1ffa872e20bf65cef804e",
+      "branch": "main",
+      "python_files": 98,
+      "pep8_pr": [
+        {
+          "number": 29,
+          "merged_at": "2026-10-23T19:06:03Z",
+          "merge_commit_sha": "30e034e9b0a8c2c7e39fb46fa6193a62d5f41b51"
+        }
+      ],
+      "open_prs": [],
+      "ci": [
+        {
+          "id": 40015581760,
+          "name": "Validate release readiness",
+          "head_sha": "7194f8f1b542ba36bbe1ffa872e20bf65cef804e",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40015581684,
+          "name": "Python style",
+          "head_sha": "7194f8f1b542ba36bbe1ffa872e20bf65cef804e",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40008716422,
+          "name": "Validate release readiness",
+          "head_sha": "30e034e9b0a8c2c7e39fb46fa6193a62d5f41b51",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40008716136,
+          "name": "Python style",
+          "head_sha": "30e034e9b0a8c2c7e39fb46fa6193a62d5f41b51",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 39852855331,
+          "name": "Validate release readiness",
+          "head_sha": "81b3f71febc79491c1cb0b59487bb551b255c14d",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "ruff_configuration": "# Python style tooling; keep this version identical in CI and developer installs.\nrequired-version = \"==0.14.1\"\ntarget-version = \"py311\"\nline-length = 88\nextend-exclude = [\".ci\"]\n\n[lint]\nselect = [\"E4\", \"E7\", \"E9\", \"W\", \"I\", \"N\", \"F401\", \"F841\"]\n\n[format]\nquote-style = \"double\"\nindent-style = \"space\"\nline-ending = \"lf\"\ndocstring-code-format = false\n",
+      "ruff_version": "ruff==0.14.1",
+      "documentation_convention": "Existing prose docstrings; no configured pydocstyle convention except Calibre D203/D213 exclusions.",
+      "python_versions": {
+        "workspace": "3.12.14",
+        "ci": "3.12.15 (workflow tool-cache pin)",
+        "minimum": "3.11 (Ruff target)"
+      },
+      "initial_audit": {
+        "violations": 585,
+        "by_rule": {
+          "D100": 79,
+          "D102": 378,
+          "D101": 47,
+          "D107": 10,
+          "D400": 28,
+          "D401": 1,
+          "D202": 1,
+          "D103": 41
+        },
+        "docstring_consumers": []
+      }
+    },
+    {
+      "repository": "jfroebe/metadata-engine-adapters",
+      "sha": "6663955feda3997fc22937d7fee62a8cc9f67ee4",
+      "branch": "main",
+      "python_files": 35,
+      "pep8_pr": [
+        {
+          "number": 25,
+          "merged_at": "2026-10-23T19:06:10Z",
+          "merge_commit_sha": "339414b07aede7bb84fb61cb6995eb82a86188df"
+        }
+      ],
+      "open_prs": [],
+      "ci": [
+        {
+          "id": 40012169457,
+          "name": "Python style",
+          "head_sha": "6663955feda3997fc22937d7fee62a8cc9f67ee4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40012169504,
+          "name": "Validate release readiness",
+          "head_sha": "6663955feda3997fc22937d7fee62a8cc9f67ee4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40008731408,
+          "name": "Python style",
+          "head_sha": "339414b07aede7bb84fb61cb6995eb82a86188df",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40008731520,
+          "name": "Validate release readiness",
+          "head_sha": "339414b07aede7bb84fb61cb6995eb82a86188df",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 39907901468,
+          "name": "Validate release readiness",
+          "head_sha": "9f7732138c72723f10a5a5aafaaa3d1a4e6282d1",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "ruff_configuration": "# Python style tooling; keep this version identical in CI and developer installs.\nrequired-version = \"==0.14.1\"\ntarget-version = \"py311\"\nline-length = 88\nextend-exclude = [\".ci\"]\n\n[lint]\nselect = [\"E4\", \"E7\", \"E9\", \"W\", \"I\", \"N\", \"F401\", \"F841\"]\n\n[format]\nquote-style = \"double\"\nindent-style = \"space\"\nline-ending = \"lf\"\ndocstring-code-format = false\n",
+      "ruff_version": "ruff==0.14.1",
+      "documentation_convention": "Existing prose docstrings; no configured pydocstyle convention except Calibre D203/D213 exclusions.",
+      "python_versions": {
+        "workspace": "3.12.14",
+        "ci": "3.12.15 (workflow tool-cache pin)",
+        "minimum": "3.11 (Ruff target)"
+      },
+      "initial_audit": {
+        "violations": 231,
+        "by_rule": {
+          "D104": 5,
+          "D100": 13,
+          "D102": 137,
+          "D103": 61,
+          "D202": 1,
+          "D400": 6,
+          "D107": 2,
+          "D101": 6
+        },
+        "docstring_consumers": []
+      }
+    },
+    {
+      "repository": "jfroebe/metadata-engine-docker",
+      "sha": "9a365f3f270eea615a8ec01064c2ccde5765208c",
+      "branch": "main",
+      "python_files": 17,
+      "pep8_pr": [
+        {
+          "number": 61,
+          "merged_at": "2026-10-23T19:03:11Z",
+          "merge_commit_sha": "b5f0da1ac27b9e7f21a12835cf5356496af2a231"
+        }
+      ],
+      "open_prs": [],
+      "ci": [
+        {
+          "id": 40015604349,
+          "name": "Validate built image runtime before merge",
+          "head_sha": "9a365f3f270eea615a8ec01064c2ccde5765208c",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40015604323,
+          "name": "PEP 8 pinned compatibility",
+          "head_sha": "9a365f3f270eea615a8ec01064c2ccde5765208c",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40015604342,
+          "name": "PEP 8 Calibre compatibility",
+          "head_sha": "9a365f3f270eea615a8ec01064c2ccde5765208c",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40015604381,
+          "name": "META Controller Validation",
+          "head_sha": "9a365f3f270eea615a8ec01064c2ccde5765208c",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40015604482,
+          "name": "Python style",
+          "head_sha": "9a365f3f270eea615a8ec01064c2ccde5765208c",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "ruff_configuration": "# Python style tooling; keep this version identical in CI and developer installs.\nrequired-version = \"==0.14.1\"\ntarget-version = \"py311\"\nline-length = 88\nextend-exclude = [\".ci\"]\n\n[lint]\nselect = [\"E4\", \"E7\", \"E9\", \"W\", \"I\", \"N\", \"F401\", \"F841\"]\n\n[format]\nquote-style = \"double\"\nindent-style = \"space\"\nline-ending = \"lf\"\ndocstring-code-format = false\n",
+      "ruff_version": "ruff==0.14.1",
+      "documentation_convention": "Existing prose docstrings; no configured pydocstyle convention except Calibre D203/D213 exclusions.",
+      "python_versions": {
+        "workspace": "3.12.14",
+        "ci": "3.12.15 (workflow tool-cache pin)",
+        "minimum": "3.11 (Ruff target)"
+      },
+      "initial_audit": {
+        "violations": 68,
+        "by_rule": {
+          "D100": 1,
+          "D101": 23,
+          "D107": 14,
+          "D102": 25,
+          "D103": 3,
+          "D105": 2
+        },
+        "docstring_consumers": [
+          "release/plex/lifecycle.py",
+          "release/plex/probe.py",
+          "release/plex/native.py",
+          "release/plex/packaged.py",
+          "release/plex/authorize.py"
+        ]
+      }
+    },
+    {
+      "repository": "jfroebe/calibre-plugin-metadata-engine",
+      "sha": "b6de75da9122a98fc8bf287d6146b81a91616173",
+      "branch": "main",
+      "python_files": 26,
+      "pep8_pr": [
+        {
+          "number": 3,
+          "merged_at": "2026-10-23T19:00:08Z",
+          "merge_commit_sha": "d39a09f57b7c6264d6332dfa60ed5b21b286c806"
+        }
+      ],
+      "open_prs": [],
+      "ci": [
+        {
+          "id": 40007913197,
+          "name": "Build Calibre plugin",
+          "head_sha": "d39a09f57b7c6264d6332dfa60ed5b21b286c806",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40007913048,
+          "name": "Calibre validation",
+          "head_sha": "d39a09f57b7c6264d6332dfa60ed5b21b286c806",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40007913127,
+          "name": "Python style",
+          "head_sha": "d39a09f57b7c6264d6332dfa60ed5b21b286c806",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40004005639,
+          "name": "Calibre validation",
+          "head_sha": "ae3fb4c934c90b392a5744c710e35c255f46c1f5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 40004005720,
+          "name": "Build Calibre plugin",
+          "head_sha": "ae3fb4c934c90b392a5744c710e35c255f46c1f5",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "ruff_configuration": "# Python style tooling; keep this version identical in CI and developer installs.\nrequired-version = \"==0.14.1\"\ntarget-version = \"py311\"\nline-length = 88\nextend-exclude = [\".ci\"]\n\n[lint]\nselect = [\"E4\", \"E7\", \"E9\", \"W\", \"I\", \"N\", \"F\", \"D\", \"UP\"]\nignore = [\"D203\", \"D213\"]\n\n[lint.per-file-ignores]\n# Preserve the previous ci/tests-only scope of pre-existing D and UP checks.\n\"__init__.py\" = [\"D\", \"UP\", \"N999\"]\n\"config.py\" = [\"D\", \"UP\"]\n\n[format]\nquote-style = \"double\"\nindent-style = \"space\"\nline-ending = \"lf\"\ndocstring-code-format = false\n",
+      "ruff_version": "ruff==0.14.1",
+      "documentation_convention": "Existing prose docstrings; no configured pydocstyle convention except Calibre D203/D213 exclusions.",
+      "python_versions": {
+        "workspace": "3.12.14",
+        "ci": "3.12.15 (workflow tool-cache pin)",
+        "minimum": "3.11 (Ruff target)"
+      },
+      "initial_audit": {
+        "violations": 13,
+        "by_rule": {
+          "D104": 1,
+          "D101": 2,
+          "D107": 2,
+          "D102": 7,
+          "D100": 1
+        },
+        "docstring_consumers": [
+          "ci/run_runtime.py",
+          "ci/unit_report.py",
+          "ci/gui_smoke.py",
+          "ci/container_runtime.py",
+          "ci/runtime_preflight.py",
+          "ci/gui_control.py",
+          "tests/engine_service.py"
+        ]
+      }
+    }
+  ],
+  "verification_limits": [
+    "Registry digest is evidenced by successful release workflow 39946223207; not independently pulled in this workspace.",
+    "Calibre main b6de75d has no run in the five latest main workflow records; do not infer current-head success."
+  ],
+  "release_tag": {
+    "tag_object_sha": "5a7753c313334b0852c682b4b42a39ce64ba15f1",
+    "peeled_sha": "7f2898026b114d2ada3ecf8278af46eebd5c9948"
+  },
+  "constraints": {
+    "production_changes": false,
+    "docker_publication": false,
+    "release_pins_unchanged": true
+  }
+}

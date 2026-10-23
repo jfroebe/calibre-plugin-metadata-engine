@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+"""Integrate Metadata Engine searches and covers with Calibre's Source API."""
+
 from __future__ import annotations
 
 import json
@@ -13,6 +15,13 @@ from calibre.ebooks.metadata.sources.base import Option, Source
 
 
 class MetadataEngineSource(Source):
+    """Provide Calibre metadata and cover lookup through an external engine server.
+
+    Use configured providers or discover enabled providers. Optional bearer
+    credentials and TLS preferences apply to HTTP acquisition; successful identify
+    results are placed on Calibre's queue rather than written to a library here.
+    """
+
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
@@ -90,18 +99,22 @@ class MetadataEngineSource(Source):
     )
 
     def __init__(self, *args, **kwargs):
+        """Initialize the Calibre source base and a per-instance identifier-to-cover cache."""
         super().__init__(*args, **kwargs)
         self._cover_urls = {}
 
     def is_configured(self):
+        """Return whether the resolved engine base URL is nonempty."""
         return bool(self._base_url())
 
     def config_widget(self):
+        """Create the Qt settings editor for this plugin instance."""
         from calibre_plugins.metadata_engine.config import ConfigWidget
 
         return ConfigWidget(self)
 
     def save_settings(self, config_widget):
+        """Validate and commit settings through the supplied configuration widget."""
         config_widget.commit()
 
     def identify(
@@ -114,6 +127,13 @@ class MetadataEngineSource(Source):
         identifiers=None,
         timeout=30,
     ):
+        """Queue normalized book metadata from configured or discovered engine providers.
+
+        Honor abort between provider/result operations and isolate provider failures.
+        Return None on completion/cancellation, or an explanatory error string when
+        query construction or the outer operation fails. Individual provider failures
+        are logged and do not suppress other successful candidates.
+        """
         identifiers = identifiers or {}
         query = self._make_query(title, authors, identifiers)
         if not query:
@@ -165,6 +185,13 @@ class MetadataEngineSource(Source):
         timeout=30,
         get_best_cover=False,
     ):
+        """Queue the first valid cover from cached or newly searched candidate URLs.
+
+        Rank searched candidates by identifier match and confidence, skip failed or
+        non-image downloads, and honor abort between operations. Queue (self, bytes)
+        on success and return None; get_best_cover is accepted for Calibre API
+        compatibility but does not alter this implementation's selection.
+        """
         identifiers = identifiers or {}
         candidates = []
 
