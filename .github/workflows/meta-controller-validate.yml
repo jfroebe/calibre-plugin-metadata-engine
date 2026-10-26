@@ -1,3 +1,8 @@
+env:
+  http_proxy: http://192.168.0.59:8118
+  https_proxy: http://192.168.0.59:8118
+  no_proxy: localhost,127.0.0.1,::1,.localhost
+
 name: Calibre validation
 
 on:
@@ -26,18 +31,22 @@ concurrency:
 
 jobs:
   package:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
     timeout-minutes: 10
     outputs:
       engine: ${{ steps.pins.outputs.engine }}
       previous: ${{ steps.pins.outputs.previous }}
     steps:
+      - name: Require approved Meta worker
+        run: |
+          test "$(hostname -s)" = chatgpt-dev
+          test "$(id -un)" = agent
+          test -S /var/run/docker.sock
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: ci/requirements.txt
+      - name: Isolate Python tools on the Meta worker
+        run: |
+          python3 -m venv "$RUNNER_TEMP/calibre-tools-$GITHUB_RUN_ID-$GITHUB_JOB-$GITHUB_RUN_ATTEMPT"
+          echo "$RUNNER_TEMP/calibre-tools-$GITHUB_RUN_ID-$GITHUB_JOB-$GITHUB_RUN_ATTEMPT/bin" >> "$GITHUB_PATH"
       - run: python -m pip install -r ci/requirements.txt
       - run: python -m ruff check ci tests
       - run: python -m ruff format --check ci tests
@@ -74,16 +83,18 @@ jobs:
 
   native-runtime:
     needs: package
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-2025]
-    runs-on: ${{ matrix.os }}
+    # Windows 11/macOS acceptance is independent; automated runtime is Meta Linux.
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
     timeout-minutes: 20
     defaults:
       run:
         shell: bash
     steps:
+      - name: Require approved Meta worker
+        run: |
+          test "$(hostname -s)" = chatgpt-build-02
+          test "$(id -un)" = agent
+          test -S /var/run/docker.sock
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -92,9 +103,10 @@ jobs:
           ref: ${{ needs.package.outputs.previous }}
           path: previous
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Isolate Python tools on the Meta worker
+        run: |
+          python3 -m venv "$RUNNER_TEMP/calibre-tools-$GITHUB_RUN_ID-$GITHUB_JOB-$GITHUB_RUN_ATTEMPT"
+          echo "$RUNNER_TEMP/calibre-tools-$GITHUB_RUN_ID-$GITHUB_JOB-$GITHUB_RUN_ATTEMPT/bin" >> "$GITHUB_PATH"
       - uses: actions/download-artifact@v4
         with:
           name: calibre-candidate-${{ github.sha }}
@@ -120,15 +132,20 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: calibre-native-${{ matrix.os }}
+          name: calibre-native-meta-linux
           path: reports
           retention-days: 14
 
   integration-evidence:
     needs: package
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
     timeout-minutes: 5
     steps:
+      - name: Require approved Meta worker
+        run: |
+          test "$(hostname -s)" = chatgpt-dev
+          test "$(id -un)" = agent
+          test -S /var/run/docker.sock
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -141,9 +158,14 @@ jobs:
   qualification:
     needs: [package, native-runtime, integration-evidence]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
     timeout-minutes: 2
     steps:
+      - name: Require approved Meta worker
+        run: |
+          test "$(hostname -s)" = chatgpt-dev
+          test "$(id -un)" = agent
+          test -S /var/run/docker.sock
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
