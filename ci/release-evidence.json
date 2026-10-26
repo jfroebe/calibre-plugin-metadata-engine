@@ -3,10 +3,10 @@
   "qualification_status": "qualified",
   "scope": "calibre-integration",
   "repository": "jfroebe/metadata-engine-docker",
-  "run_id": 40020895872,
-  "workflow_sha": "63e0787c985d14778929bed02be3df19d82c11c6",
-  "source_sha": "71e6ce2ffe8a04c7e248be62e39cf86ecc64fd62",
-  "zip_sha256": "e54b6222d3380408a7475c811b71dd87cd3db0d13dae062cfe7a23cf7a9cb7ba",
+  "run_id": 40392873980,
+  "workflow_sha": "2f014136bdb75740782c1406a8b813db83c2d4ba",
+  "source_sha": "01c49b2467f4051aa1fba5dc013ee77f174798c5",
+  "zip_sha256": "708a19e369ac4d8b6f545fe689e2a85dc00082764d07b6b2077daddb8c083518",
   "components": {
     "engine": {
       "repository": "jfroebe/metadata-engine",
@@ -69,5 +69,13 @@
     "native-runtime": "success",
     "engine-proxy": "success",
     "linux-runtime": "success"
+  },
+  "execution_environment": {
+    "orchestration": "chatgpt-dev",
+    "calibre": "chatgpt-build-02",
+    "automated_platforms": [
+      "linux"
+    ],
+    "github_hosted_runners": false
   }
 }
