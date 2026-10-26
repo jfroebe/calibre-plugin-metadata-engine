@@ -225,6 +225,36 @@ class InstalledPluginTests(unittest.TestCase):
             "Preferred description",
         )
 
+    def test_title_query_and_cross_provider_content_for_curvy(self):
+        """Separate title/author and retain content from an identifier-less match."""
+        self.assertEqual(
+            self.plugin._make_query(
+                "Curvy", ["Alexa Riley"], {"isbn": "9781978363632"}
+            ),
+            "Curvy",
+        )
+        book = dict(title="Curvy", authors=["Alexa Riley"], confidence=0.98)
+        google = dict(
+            book,
+            source="google_books",
+            isbn="9781978363632",
+            description="Provider description",
+            cover_url=None,
+        )
+        hardcover = dict(
+            book,
+            source="hardcover",
+            source_id="curvy",
+            isbn=None,
+            description=None,
+            cover_url=self.url + "/full.png",
+        )
+        results = self.plugin._dedupe([hardcover, google])
+        for row in results:
+            self.assertEqual(row["description"], "Provider description")
+            self.assertEqual(row["cover_url"], self.url + "/full.png")
+        self.assertIsNone(hardcover["description"])
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -357,6 +387,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 17:
+    if result.testsRun != 21:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
