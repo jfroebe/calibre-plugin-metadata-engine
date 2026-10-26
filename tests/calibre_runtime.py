@@ -180,6 +180,51 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["source"], "high")
 
+    def test_duplicate_edition_preserves_description_and_cover(self):
+        """A higher-ranked sparse record cannot erase another provider's content."""
+        for providers in ("sparse,rich", "rich,sparse"):
+            with self.subTest(providers=providers):
+                self.plugin.prefs["plugin_ids"] = providers
+                results = self.identify(title="The Hobbit")
+                self.assertEqual(len(results), 1)
+                self.assertEqual(
+                    results[0].comments, "The matching edition's full description."
+                )
+                self.assertTrue(results[0].has_cached_cover)
+
+    def test_duplicate_edition_cover_survives_sparse_or_broken_winner(self):
+        """Keep every same-edition cover URL until an actual download succeeds."""
+        for providers in ("sparse,rich", "bad-cover,rich", "rich,bad-cover"):
+            with self.subTest(providers=providers):
+                self.plugin._cover_urls.clear()
+                self.plugin.prefs["plugin_ids"] = providers
+                queue = Queue()
+                self.plugin.download_cover(
+                    self.log,
+                    queue,
+                    self.abort,
+                    title="The Hobbit",
+                    identifiers={"isbn": ROWS[0]["isbn"]},
+                    timeout=2,
+                )
+                self.assertEqual(queue.qsize(), 1)
+                self.assertEqual(queue.get()[1], png(600, 900))
+
+    def test_description_fill_does_not_cross_edition_or_overwrite_existing(self):
+        """Fill only identical keys and leave caller-owned provider rows intact."""
+        sparse = dict(ROWS[0], description=" ", confidence=1.0)
+        rich = dict(sparse, description="Matching description", confidence=0.8)
+        wrong = dict(rich, isbn="9780441172719", description="Wrong edition")
+        merged = self.plugin._dedupe([sparse, wrong, rich])
+        match = next(row for row in merged if row["isbn"] == sparse["isbn"])
+        self.assertEqual(match["description"], "Matching description")
+        self.assertEqual(sparse["description"], " ")
+        populated = dict(sparse, description="Preferred description")
+        self.assertEqual(
+            self.plugin._dedupe([rich, populated])[0]["description"],
+            "Preferred description",
+        )
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
