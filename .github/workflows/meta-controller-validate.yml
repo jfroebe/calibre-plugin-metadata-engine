@@ -73,13 +73,13 @@ jobs:
           name: calibre-candidate-${{ github.sha }}
           path: Calibre-Metadata-Engine.zip
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: calibre-packaging-report
           path: reports
-          retention-days: 14
+          retention-days: 7
 
   native-runtime:
     needs: package
@@ -112,7 +112,7 @@ jobs:
           name: calibre-candidate-${{ github.sha }}
       - name: Linux runtime libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxcb-cursor0 libxkbcommon0 libxinerama1
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libglx0 libopengl0 libxcb-cursor0 libxkbcommon0 libxinerama1
       - name: Verify and extract pinned official Calibre
         run: |
           python ci/install_calibre.py "$RUNNER_TEMP/calibre" > calibre-bin.txt
@@ -134,7 +134,7 @@ jobs:
         with:
           name: calibre-native-meta-linux
           path: reports
-          retention-days: 14
+          retention-days: 7
 
   integration-evidence:
     needs: package
