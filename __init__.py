@@ -25,7 +25,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 3)
+    version = (1, 1, 4)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -245,7 +245,7 @@ class MetadataEngineSource(Source):
 
             rows = [
                 r
-                for r in self._dedupe(rows)
+                for r in rows
                 if r.get("cover_url") and self._cover_identifier_score(r, identifiers)
             ]
             rows.sort(
@@ -481,7 +481,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.3",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.4",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -560,17 +560,15 @@ class MetadataEngineSource(Source):
 
     @classmethod
     def _make_query(cls, title, authors, identifiers):
-        parts = []
-        if title:
-            parts.append(str(title).strip())
-        parts.extend(str(a).strip() for a in (authors or []) if str(a).strip())
+        """Keep the title clean; author and edition IDs travel as API parameters."""
+        if title and str(title).strip():
+            return str(title).strip()
         for key in ("isbn", "isbn13", "isbn10", "asin"):
             value = cls._identifier(identifiers, key)
             if value:
-                parts.append(value)
-        if not parts:
-            parts.extend(str(v).strip() for v in identifiers.values() if v)
-        return " ".join(parts)
+                return value
+        parts = [str(a).strip() for a in (authors or []) if str(a).strip()]
+        return " ".join(parts or [str(v).strip() for v in identifiers.values() if v])
 
     @staticmethod
     def _text(value):
@@ -590,8 +588,17 @@ class MetadataEngineSource(Source):
 
     @classmethod
     def _dedupe(cls, rows):
+        """Keep ranked identity fields and fill missing content from duplicates.
+
+        Only rows with the same existing edition/source key contribute content.
+        Never overwrite a populated description or cover with an empty value.
+        Cover downloading separately retains every URL for transport fallback.
+        """
         best = {}
-        for row in rows:
+        for original in sorted(
+            rows, key=lambda row: float(row.get("confidence") or 0), reverse=True
+        ):
+            row = dict(original)
             if row.get("isbn"):
                 key = ("isbn", str(row["isbn"]).replace("-", "").replace(" ", ""))
             elif row.get("asin"):
@@ -609,8 +616,34 @@ class MetadataEngineSource(Source):
                     tuple(a.casefold() for a in cls._list(row.get("authors"))),
                 )
             old = best.get(key)
-            if old is None or float(row.get("confidence") or 0) > float(
-                old.get("confidence") or 0
-            ):
+            if old is None:
                 best[key] = row
+            else:
+                for field in ("description", "cover_url"):
+                    if not cls._text(old.get(field)) and cls._text(row.get(field)):
+                        old[field] = row[field]
+        for winner in best.values():
+            authors = tuple(a.casefold() for a in cls._list(winner.get("authors")))
+            if not authors:
+                continue
+            for donor in sorted(
+                rows, key=lambda row: float(row.get("confidence") or 0), reverse=True
+            ):
+                if cls._text(winner.get("title")) != cls._text(donor.get("title")):
+                    continue
+                if authors != tuple(
+                    a.casefold() for a in cls._list(donor.get("authors"))
+                ):
+                    continue
+                if any(
+                    winner.get(key)
+                    and donor.get(key)
+                    and str(winner[key]).replace("-", "").replace(" ", "").upper()
+                    != str(donor[key]).replace("-", "").replace(" ", "").upper()
+                    for key in ("isbn", "asin")
+                ):
+                    continue
+                for field in ("description", "cover_url"):
+                    if not cls._text(winner.get(field)) and cls._text(donor.get(field)):
+                        winner[field] = donor[field]
         return list(best.values())

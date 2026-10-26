@@ -1,3 +1,8 @@
+env:
+  http_proxy: http://192.168.0.59:8118
+  https_proxy: http://192.168.0.59:8118
+  no_proxy: localhost,127.0.0.1,::1,.localhost
+
 name: Build Calibre plugin
 
 on:
@@ -27,8 +32,13 @@ jobs:
       mode: release
   build:
     needs: validate
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
     steps:
+      - name: Require approved Meta worker
+        run: |
+          test "$(hostname -s)" = chatgpt-dev
+          test "$(id -un)" = agent
+          test -S /var/run/docker.sock
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:

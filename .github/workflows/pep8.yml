@@ -1,3 +1,8 @@
+env:
+  http_proxy: http://192.168.0.59:8118
+  https_proxy: http://192.168.0.59:8118
+  no_proxy: localhost,127.0.0.1,::1,.localhost
+
 name: Python style
 
 on:
@@ -14,15 +19,21 @@ concurrency:
 
 jobs:
   pep8:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
     timeout-minutes: 10
     steps:
+      - name: Require approved Meta worker
+        run: |
+          test "$(hostname -s)" = chatgpt-dev
+          test "$(id -un)" = agent
+          test -S /var/run/docker.sock
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Isolate Python tools on the Meta worker
+        run: |
+          python3 -m venv "$RUNNER_TEMP/calibre-tools-$GITHUB_RUN_ID-$GITHUB_JOB-$GITHUB_RUN_ATTEMPT"
+          echo "$RUNNER_TEMP/calibre-tools-$GITHUB_RUN_ID-$GITHUB_JOB-$GITHUB_RUN_ATTEMPT/bin" >> "$GITHUB_PATH"
       - name: Install pinned style tools
         run: python -m pip install --disable-pip-version-check -r requirements-style.txt
       - name: Check Python style and PEP 257 docstrings

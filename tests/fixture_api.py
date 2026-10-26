@@ -130,6 +130,23 @@ def serve():
             elif path.path == "/plugins/slow/search":
                 time.sleep(2)
                 payload = {"results": []}
+            elif path.path in {
+                "/plugins/sparse/search",
+                "/plugins/rich/search",
+                "/plugins/bad-cover/search",
+            }:
+                provider = path.path.split("/")[2]
+                row = dict(ROWS[0], source=provider, confidence=0.99)
+                row.update(description=None, cover_url=None)
+                if provider == "rich":
+                    row.update(
+                        confidence=0.8,
+                        description="The matching edition's full description.",
+                        cover_url=self.server.base_url + "/full.png",
+                    )
+                elif provider == "bad-cover":
+                    row["cover_url"] = self.server.base_url + "/invalid.png"
+                payload = {"results": [row]}
             elif path.path == "/plugins/fixture/search":
                 rows = select(
                     query.get("query", [""])[0],
