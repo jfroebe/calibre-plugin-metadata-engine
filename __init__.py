@@ -396,12 +396,12 @@ class MetadataEngineSource(Source):
         # Keep a structured provider series authoritative when available.
         inferred_series = None
         match = re.fullmatch(
-            r"(.+?)\\s+\\((.+?)\\s+Book\\s+(\\d+(?:\\.\\d+)?)\\)", title, re.IGNORECASE
+            r"(.+?)\s+\((.+?)\s+Book\s+(\d+(?:\.\d+)?)\)", title, re.IGNORECASE
         )
         if match:
             series_name = match.group(2).strip()
             # A numbered franchise prefix (e.g. "Aeon 14:") is not the series.
-            series_name = re.sub(r"^.+?\\s+\\d+\\s*:\\s*", "", series_name)
+            series_name = re.sub(r"^.+?\s+\d+\s*:\s*", "", series_name)
             if series_name:
                 title = match.group(1).strip()
                 inferred_series = (series_name, float(match.group(3)))
