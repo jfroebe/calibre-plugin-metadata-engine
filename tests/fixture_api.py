@@ -88,7 +88,7 @@ def serve():
                     payload = {
                         "results": [
                             {
-                                "title": "A Specter and an Invasion",
+                                "title": "A Specter and an Invasion (Aeon 14: Legacy of the Lost Book 3)",
                                 "authors": [],
                                 "asin": "B08CK7H7P2",
                                 "metadata_type": "books",
