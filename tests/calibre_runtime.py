@@ -255,6 +255,30 @@ class InstalledPluginTests(unittest.TestCase):
             self.assertEqual(row["cover_url"], self.url + "/full.png")
         self.assertIsNone(hardcover["description"])
 
+    def test_calibre_merge_keeps_isbnless_matching_book(self):
+        """Calibre's normal identify merger must retain the best title match."""
+        from calibre.ebooks.metadata.sources.identify import identify
+        from calibre.utils.logging import DevNull
+
+        self.plugin.prefs["plugin_ids"] = "curvy-merge"
+        results = identify(
+            DevNull(),
+            self.abort,
+            title="Curvy",
+            authors=["Alexa Riley"],
+            identifiers={"mobi-asin": "B01CDZAQTY"},
+            timeout=5,
+            allowed_plugins=["Metadata Engine"],
+        )
+        matches = [
+            item
+            for item in results
+            if item.title == "Curvy" and item.authors == ["Alexa Riley"]
+        ]
+        self.assertEqual(len(matches), 1)
+        self.assertIn("matching book description", matches[0].comments)
+        self.assertTrue(any(item.title == "My Curvy Belle" for item in results))
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -387,6 +411,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 21:
+    if result.testsRun != 22:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)

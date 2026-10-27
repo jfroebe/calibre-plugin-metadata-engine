@@ -25,7 +25,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 4)
+    version = (1, 1, 5)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -49,6 +49,9 @@ class MetadataEngineSource(Source):
     supports_gzip_transfer_encoding = True
     cached_cover_url_is_reliable = False
     can_get_multiple_covers = False
+    # Calibre otherwise discards ISBN-less matches whenever this source also
+    # returns an ISBN-bearing result, even if that result is a different book.
+    prefer_results_with_isbn = False
 
     options = (
         Option(
@@ -481,7 +484,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.4",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.5",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
