@@ -350,7 +350,9 @@ class InstalledPluginTests(unittest.TestCase):
             authors=["M. D. Cooper", "Chris J. Pike", "Jill Cooper"],
             identifiers={"mobi-asin": "B08CK7H7P2"},
         )
-        searches = [query for path, query in self.requests if path == "/plugins/fixture/search"]
+        searches = [
+            query for path, query in self.requests if path == "/plugins/fixture/search"
+        ]
         self.assertTrue(searches)
         self.assertEqual(searches[0].get("asin"), ["B08CK7H7P2"])
         self.assertEqual(
