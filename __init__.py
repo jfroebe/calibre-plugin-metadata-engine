@@ -741,7 +741,11 @@ class MetadataEngineSource(Source):
                         != str(donor[key]).replace("-", "").replace(" ", "").upper()
                         for key in ("isbn", "asin")
                     )
-                    if not conflict and not cls._text(winner.get("description")):
+                    if (
+                        not conflict
+                        and not cls._text(winner.get("description"))
+                        and cls._text(donor.get("description"))
+                    ):
                         winner["description"] = cls._text(donor.get("description"))
                 if cls._text(winner.get("title")) != cls._text(donor.get("title")):
                     continue
