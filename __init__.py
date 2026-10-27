@@ -379,7 +379,9 @@ class MetadataEngineSource(Source):
         provider_tags = self._list(row.get("tags"))
         if str(row.get("source") or "").casefold() == "hardcover":
             # Older cached Hardcover results include the provider name as a tag.
-            provider_tags = [tag for tag in provider_tags if tag.casefold() != "hardcover"]
+            provider_tags = [
+                tag for tag in provider_tags if tag.casefold() != "hardcover"
+            ]
         tags = self._list(row.get("genres")) + provider_tags
         if self.prefs.get("include_source_tag", False) and row.get("source"):
             tags.append("metadata-engine:%s" % self._text(row["source"]))
