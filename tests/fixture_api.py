@@ -89,13 +89,8 @@ def serve():
                         "results": [
                             {
                                 "title": "A Specter and an Invasion",
-                                "authors": [
-                                    "M. D. Cooper",
-                                    "Chris J. Pike",
-                                    "Jill Cooper",
-                                ],
+                                "authors": [],
                                 "asin": "B08CK7H7P2",
-                                "description": "Fixture description",
                                 "metadata_type": "books",
                                 "confidence": 0.99,
                             }
