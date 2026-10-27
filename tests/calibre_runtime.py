@@ -92,6 +92,18 @@ class InstalledPluginTests(unittest.TestCase):
                     "metadata-engine:fixture", [tag.casefold() for tag in actual.tags]
                 )
 
+    def test_cached_hardcover_provider_tag_is_not_a_book_tag(self):
+        """Filter the old source marker while preserving actual subjects."""
+        row = {"title": "Dark and Stabby", "authors": ["Alisha Williams"],
+               "source": "hardcover", "tags": ["Hardcover", "Anthologies"],
+               "genres": ["Romance"]}
+        self.plugin.prefs["include_source_tag"] = False
+        metadata = self.plugin._to_metadata(row, 0)
+        self.assertEqual(metadata.tags, ["Romance", "Anthologies"])
+        self.plugin.prefs["include_source_tag"] = True
+        metadata = self.plugin._to_metadata(row, 0)
+        self.assertIn("metadata-engine:hardcover", metadata.tags)
+
     def test_unknown_title_has_no_invented_matches(self):
         """An unknown title must leave the queue empty."""
         self.assertEqual(self.identify(title="Fictional Unfindable 72941"), [])
