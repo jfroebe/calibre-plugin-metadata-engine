@@ -108,9 +108,13 @@ class InstalledPluginTests(unittest.TestCase):
         metadata = self.plugin._to_metadata(row, 0)
         self.assertIn("metadata-engine:hardcover", metadata.tags)
         self.plugin.prefs["include_source_tag"] = False
-        apple = {"title": "City of Demons", "authors": ["Richelle Mead"],
-                 "source": "itunes", "tags": ["itunes", "books"],
-                 "genres": ["Paranormal Romance"]}
+        apple = {
+            "title": "City of Demons",
+            "authors": ["Richelle Mead"],
+            "source": "itunes",
+            "tags": ["itunes", "books"],
+            "genres": ["Paranormal Romance"],
+        }
         self.assertEqual(
             self.plugin._to_metadata(apple, 0).tags,
             ["Paranormal Romance", "books"],
