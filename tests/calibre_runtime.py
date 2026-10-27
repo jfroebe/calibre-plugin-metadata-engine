@@ -107,6 +107,14 @@ class InstalledPluginTests(unittest.TestCase):
         self.plugin.prefs["include_source_tag"] = True
         metadata = self.plugin._to_metadata(row, 0)
         self.assertIn("metadata-engine:hardcover", metadata.tags)
+        self.plugin.prefs["include_source_tag"] = False
+        apple = {"title": "City of Demons", "authors": ["Richelle Mead"],
+                 "source": "itunes", "tags": ["itunes", "books"],
+                 "genres": ["Paranormal Romance"]}
+        self.assertEqual(
+            self.plugin._to_metadata(apple, 0).tags,
+            ["Paranormal Romance", "books"],
+        )
 
     def test_ebook_enriches_matching_book_not_different_author(self):
         """Merge rich ebook details only into the same title and author."""
