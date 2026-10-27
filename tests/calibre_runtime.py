@@ -366,6 +366,26 @@ class InstalledPluginTests(unittest.TestCase):
             "B08CK7H7P2",
         )
 
+    def test_calibre_merge_with_mobi_asin_and_multiple_authors(self):
+        """Retain an identifier-dependent result through Calibre's real merger."""
+        from calibre.ebooks.metadata.sources.identify import identify
+        from calibre.utils.logging import DevNull
+
+        self.plugin.prefs["plugin_ids"] = "specter"
+        results = identify(
+            DevNull(),
+            self.abort,
+            title="A Specter and an Invasion (Legacy of the Lost Book 3)",
+            authors=["M. D. Cooper", "Chris J. Pike", "Jill Cooper"],
+            identifiers={"mobi-asin": "B08CK7H7P2"},
+            timeout=5,
+            allowed_plugins=["Metadata Engine"],
+        )
+        self.assertTrue(results)
+        self.assertEqual(results[0].title, "A Specter and an Invasion")
+        self.assertEqual(results[0].get_identifiers().get("asin"), "B08CK7H7P2")
+        self.assertEqual(results[0].comments, "Fixture description")
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -498,6 +518,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 25:
+    if result.testsRun != 26:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
