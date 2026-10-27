@@ -82,6 +82,20 @@ def serve():
                         {"plugin_id": "disabled", "enabled": False},
                     ]
                 }
+            elif path.path == "/plugins/specter/search":
+                payload = {"results": []}
+                if query.get("asin") == ["B08CK7H7P2"]:
+                    payload = {
+                        "results": [
+                            {
+                                "title": "A Specter and an Invasion (Aeon 14: Legacy of the Lost Book 3)",
+                                "authors": [],
+                                "asin": "B08CK7H7P2",
+                                "metadata_type": "books",
+                                "confidence": 0.99,
+                            }
+                        ]
+                    }
             elif path.path == "/plugins/broken/search":
                 status, payload = 502, {"detail": "controlled provider outage"}
             elif path.path == "/plugins/unauthorized/search":

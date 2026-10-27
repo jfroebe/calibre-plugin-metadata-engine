@@ -25,7 +25,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 7)
+    version = (1, 1, 8)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -173,6 +173,19 @@ class MetadataEngineSource(Source):
                         log.error(
                             "Metadata Engine provider %r failed: %s", provider_id, exc
                         )
+
+            # An exact edition identifier ties the provider result to the
+            # existing Calibre record even when the provider omits its authors.
+            requested_asin = self._identifier(identifiers, "asin")
+            if requested_asin and authors:
+                for row in rows:
+                    row_asin = self._text(row.get("asin"))
+                    if (
+                        not self._list(row.get("authors"))
+                        and row_asin
+                        and row_asin.upper() == requested_asin.upper()
+                    ):
+                        row["authors"] = self._list(authors)
 
             rows = self._dedupe(rows)
             rows.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
@@ -508,7 +521,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.7",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.8",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -581,6 +594,8 @@ class MetadataEngineSource(Source):
     def _identifier(identifiers, *keys):
         lower = {str(k).lower(): v for k, v in identifiers.items()}
         for key in keys:
+            if key == "asin" and not lower.get(key):
+                key = "mobi-asin"
             if lower.get(key):
                 return str(lower[key]).strip()
         return None
