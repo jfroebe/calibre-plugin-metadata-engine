@@ -96,6 +96,28 @@ def serve():
                             }
                         ]
                     }
+            elif path.path == "/plugins/goodreads/search":
+                payload = {"results": []}
+                if query.get("query") == [
+                    "a specter and an invasion"
+                ] and not query.get("author"):
+                    payload = {
+                        "results": [
+                            {
+                                "title": "A Specter and an Invasion (Legacy of the Lost #3)",
+                                "authors": [
+                                    "Chris J. Pike",
+                                    "M.D. Cooper",
+                                    "Jill Cooper",
+                                ],
+                                "source": "goodreads",
+                                "source_id": "55033599",
+                                "description": "The remaining free nations face an invasion.",
+                                "metadata_type": "audiobooks",
+                                "confidence": 0.8,
+                            }
+                        ]
+                    }
             elif path.path == "/plugins/broken/search":
                 status, payload = 502, {"detail": "controlled provider outage"}
             elif path.path == "/plugins/unauthorized/search":

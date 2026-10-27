@@ -371,7 +371,7 @@ class InstalledPluginTests(unittest.TestCase):
         from calibre.ebooks.metadata.sources.identify import identify
         from calibre.utils.logging import DevNull
 
-        self.plugin.prefs["plugin_ids"] = "specter"
+        self.plugin.prefs["plugin_ids"] = "specter,goodreads"
         results = identify(
             DevNull(),
             self.abort,
@@ -392,7 +392,15 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(
             results[0].authors, ["M. D. Cooper", "Chris J. Pike", "Jill Cooper"]
         )
-        self.assertFalse(results[0].comments)
+        self.assertIn("remaining free nations", results[0].comments)
+        searches = [
+            query
+            for path, query in self.requests
+            if path == "/plugins/goodreads/search"
+        ]
+        self.assertEqual(len(searches), 2)
+        self.assertEqual(searches[-1]["query"], ["a specter and an invasion"])
+        self.assertNotIn("author", searches[-1])
 
     def test_series_title_fallback_is_conservative(self):
         """Extract explicit numbered series while preserving structured values."""
@@ -417,6 +425,37 @@ class InstalledPluginTests(unittest.TestCase):
         unnumbered = convert("A Title (A Novel)")
         self.assertEqual(unnumbered.title, "A Title (A Novel)")
         self.assertFalse(unnumbered.series)
+
+    def test_description_fallback_requires_same_work_and_authors(self):
+        """Do not copy a synopsis across different works, authors, or editions."""
+        book = {
+            "title": "A Specter and an Invasion (Aeon 14: Legacy of the Lost Book 3)",
+            "authors": ["M. D. Cooper", "Chris J. Pike", "Jill Cooper"],
+            "asin": "B08CK7H7P2",
+            "confidence": 0.9,
+        }
+        donor = {
+            "title": "A Specter and an Invasion (Legacy of the Lost #3)",
+            "authors": ["Chris J. Pike", "M.D. Cooper", "Jill Cooper"],
+            "description": "matching synopsis",
+        }
+
+        def result(other):
+            return next(
+                row for row in self.plugin._dedupe([book, other]) if row.get("asin")
+            )
+
+        self.assertEqual(result(donor).get("description"), "matching synopsis")
+        self.assertFalse(
+            result(dict(donor, authors=["Another Writer"])).get("description")
+        )
+        self.assertFalse(
+            result(
+                dict(donor, title="A Specter and an Invasion (Legacy of the Lost #2)")
+            ).get("description")
+        )
+        self.assertFalse(result(dict(donor, asin="B000000000")).get("description"))
+        self.assertEqual(result(dict(donor, description="")).get("description"), None)
 
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
@@ -550,6 +589,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 27:
+    if result.testsRun != 28:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)

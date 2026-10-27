@@ -26,7 +26,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 9)
+    version = (1, 1, 10)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -169,6 +169,13 @@ class MetadataEngineSource(Source):
                             found = self._search(
                                 provider_id, query, authors, identifiers, timeout
                             )
+                        if provider_id == "goodreads" and not found and title:
+                            short_title, _, _ = self._work_title(title)
+                            if short_title != str(title).strip().casefold():
+                                log.info("Retrying Goodreads with a shortened title")
+                                found = self._search(
+                                    provider_id, short_title, None, {}, timeout
+                                )
                         rows.extend(found)
                     except Exception as exc:
                         log.error(
@@ -538,7 +545,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.9",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.10",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -646,6 +653,44 @@ class MetadataEngineSource(Source):
         return [value] if value else []
 
     @classmethod
+    def _work_title(cls, value):
+        """Extract a numbered series suffix only for matching book works."""
+        title = (cls._text(value) or "").casefold()
+        match = re.fullmatch(
+            r"(.+?)\s+\((.+?)\s+(?:book\s*|#)(\d+(?:\.\d+)?)\)",
+            title,
+            re.IGNORECASE,
+        )
+        if not match:
+            return title, None, None
+        series = re.sub(r"^.+?\s+\d+\s*:\s*", "", match.group(2)).strip()
+        return match.group(1).strip(), series, float(match.group(3))
+
+    @classmethod
+    def _work_description_matches(cls, winner, donor):
+        """Require matching work title, complete author set and compatible series."""
+        left, left_series, left_number = cls._work_title(winner.get("title"))
+        right, right_series, right_number = cls._work_title(donor.get("title"))
+        if not left or left != right:
+            return False
+        if (
+            left_series
+            and right_series
+            and (left_series != right_series or left_number != right_number)
+        ):
+            return False
+
+        def authors(row):
+            return {
+                re.sub(r"[\W_]+", "", name.casefold())
+                for name in cls._list(row.get("authors"))
+                if re.sub(r"[\W_]+", "", name.casefold())
+            }
+
+        left_authors, right_authors = authors(winner), authors(donor)
+        return bool(left_authors and left_authors == right_authors)
+
+    @classmethod
     def _dedupe(cls, rows):
         """Keep ranked identity fields and fill missing content from duplicates.
 
@@ -688,6 +733,20 @@ class MetadataEngineSource(Source):
             for donor in sorted(
                 rows, key=lambda row: float(row.get("confidence") or 0), reverse=True
             ):
+                if cls._work_description_matches(winner, donor):
+                    conflict = any(
+                        winner.get(key)
+                        and donor.get(key)
+                        and str(winner[key]).replace("-", "").replace(" ", "").upper()
+                        != str(donor[key]).replace("-", "").replace(" ", "").upper()
+                        for key in ("isbn", "asin")
+                    )
+                    if (
+                        not conflict
+                        and not cls._text(winner.get("description"))
+                        and cls._text(donor.get("description"))
+                    ):
+                        winner["description"] = cls._text(donor.get("description"))
                 if cls._text(winner.get("title")) != cls._text(donor.get("title")):
                     continue
                 if authors != tuple(
