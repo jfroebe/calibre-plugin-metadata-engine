@@ -25,7 +25,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 5)
+    version = (1, 1, 7)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -150,16 +150,29 @@ class MetadataEngineSource(Source):
             )
             rows = []
             for provider_id in provider_ids:
-                if abort.is_set():
-                    return None
-                try:
-                    rows.extend(
-                        self._search(provider_id, query, authors, identifiers, timeout)
-                    )
-                except Exception as exc:
-                    log.error(
-                        "Metadata Engine provider %r failed: %s", provider_id, exc
-                    )
+                media_types = (None, "books") if provider_id == "itunes" else (None,)
+                for media_type in media_types:
+                    if abort.is_set():
+                        return None
+                    try:
+                        if media_type:
+                            found = self._search(
+                                provider_id,
+                                query,
+                                authors,
+                                identifiers,
+                                timeout,
+                                metadata_type=media_type,
+                            )
+                        else:
+                            found = self._search(
+                                provider_id, query, authors, identifiers, timeout
+                            )
+                        rows.extend(found)
+                    except Exception as exc:
+                        log.error(
+                            "Metadata Engine provider %r failed: %s", provider_id, exc
+                        )
 
             rows = self._dedupe(rows)
             rows.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
@@ -315,13 +328,17 @@ class MetadataEngineSource(Source):
                 raise ValueError("Metadata Engine API schema: invalid plugin entry")
         return found
 
-    def _search(self, provider_id, query, authors, identifiers, timeout):
+    def _search(
+        self, provider_id, query, authors, identifiers, timeout, metadata_type=None
+    ):
         params = {
             "query": query,
             "limit": max(
                 1, min(100, int(self.prefs.get("per_plugin_limit", 10) or 10))
             ),
         }
+        if metadata_type:
+            params["metadata_type"] = metadata_type
         if authors:
             params["author"] = ", ".join(authors)
         isbn = self._identifier(identifiers, "isbn", "isbn13", "isbn10")
@@ -376,7 +393,14 @@ class MetadataEngineSource(Source):
         if row.get("language"):
             mi.languages = [self._text(row["language"])]
 
-        tags = self._list(row.get("genres")) + self._list(row.get("tags"))
+        provider_tags = self._list(row.get("tags"))
+        source_name = str(row.get("source") or "").casefold()
+        if source_name in {"hardcover", "itunes"}:
+            # These providers inject their source name into their own tag list.
+            provider_tags = [
+                tag for tag in provider_tags if tag.casefold() != source_name
+            ]
+        tags = self._list(row.get("genres")) + provider_tags
         if self.prefs.get("include_source_tag", False) and row.get("source"):
             tags.append("metadata-engine:%s" % self._text(row["source"]))
         mi.tags = list(dict.fromkeys(tags))
@@ -484,7 +508,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.5",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.7",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -649,4 +673,9 @@ class MetadataEngineSource(Source):
                 for field in ("description", "cover_url"):
                     if not cls._text(winner.get(field)) and cls._text(donor.get(field)):
                         winner[field] = donor[field]
+                winner["genres"] = list(
+                    dict.fromkeys(
+                        cls._list(winner.get("genres")) + cls._list(donor.get("genres"))
+                    )
+                )
         return list(best.values())
