@@ -396,18 +396,22 @@ class InstalledPluginTests(unittest.TestCase):
 
     def test_series_title_fallback_is_conservative(self):
         """Extract explicit numbered series while preserving structured values."""
+
         def convert(title, series=None):
             return self.plugin._to_metadata(
                 {"title": title, "authors": ["Example"], "series": series}, 0
             )
 
         inferred = convert("A Title (Some Series Book 2)")
-        self.assertEqual((inferred.title, inferred.series, inferred.series_index),
-                         ("A Title", "Some Series", 2.0))
-        structured = convert("A Title (Other Book 2)",
-                             [{"name": "Official", "index": 5}])
-        self.assertEqual((structured.title, structured.series, structured.series_index),
-                         ("A Title", "Official", 5.0))
+        self.assertEqual(
+            (inferred.title, inferred.series, inferred.series_index),
+            ("A Title", "Some Series", 2.0),
+        )
+        structured = convert("A Title (Other Book 2)", [{"name": "Official", "index": 5}])
+        self.assertEqual(
+            (structured.title, structured.series, structured.series_index),
+            ("A Title", "Official", 5.0),
+        )
         unnumbered = convert("A Title (A Novel)")
         self.assertEqual(unnumbered.title, "A Title (A Novel)")
         self.assertFalse(unnumbered.series)
