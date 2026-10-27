@@ -156,6 +156,13 @@ class MetadataEngineSource(Source):
                     rows.extend(
                         self._search(provider_id, query, authors, identifiers, timeout)
                     )
+                    if provider_id == "itunes" and not abort.is_set():
+                        rows.extend(
+                            self._search(
+                                provider_id, query, authors, identifiers, timeout,
+                                metadata_type="books",
+                            )
+                        )
                 except Exception as exc:
                     log.error(
                         "Metadata Engine provider %r failed: %s", provider_id, exc
@@ -315,13 +322,15 @@ class MetadataEngineSource(Source):
                 raise ValueError("Metadata Engine API schema: invalid plugin entry")
         return found
 
-    def _search(self, provider_id, query, authors, identifiers, timeout):
+    def _search(self, provider_id, query, authors, identifiers, timeout, metadata_type=None):
         params = {
             "query": query,
             "limit": max(
                 1, min(100, int(self.prefs.get("per_plugin_limit", 10) or 10))
             ),
         }
+        if metadata_type:
+            params["metadata_type"] = metadata_type
         if authors:
             params["author"] = ", ".join(authors)
         isbn = self._identifier(identifiers, "isbn", "isbn13", "isbn10")
@@ -655,4 +664,7 @@ class MetadataEngineSource(Source):
                 for field in ("description", "cover_url"):
                     if not cls._text(winner.get(field)) and cls._text(donor.get(field)):
                         winner[field] = donor[field]
+                winner["genres"] = list(dict.fromkeys(
+                    cls._list(winner.get("genres")) + cls._list(donor.get("genres"))
+                ))
         return list(best.values())
