@@ -130,6 +130,34 @@ def serve():
             elif path.path == "/plugins/slow/search":
                 time.sleep(2)
                 payload = {"results": []}
+            elif path.path == "/plugins/curvy-merge/search":
+                payload = {
+                    "results": [
+                        {
+                            "title": "Curvy",
+                            "authors": ["Alexa Riley"],
+                            "confidence": 0.98,
+                            "source_id": "curvy-no-isbn",
+                            "description": "A matching book description.",
+                            "cover_url": self.server.base_url + "/full.png",
+                        },
+                        {
+                            "title": "Curvy",
+                            "authors": ["Alexa Riley"],
+                            "confidence": 0.98,
+                            "source_id": "curvy-edition",
+                            "isbn": "9781978363632",
+                            "description": "A matching book description.",
+                        },
+                        {
+                            "title": "My Curvy Belle",
+                            "authors": ["Jordan Silver"],
+                            "source_id": "other-book",
+                            "isbn": "9781717900326",
+                            "confidence": 0.76,
+                        },
+                    ]
+                }
             elif path.path in {
                 "/plugins/sparse/search",
                 "/plugins/rich/search",
