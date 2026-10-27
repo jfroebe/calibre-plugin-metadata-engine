@@ -174,6 +174,19 @@ class MetadataEngineSource(Source):
                             "Metadata Engine provider %r failed: %s", provider_id, exc
                         )
 
+            # An exact edition identifier ties the provider result to the
+            # existing Calibre record even when the provider omits its authors.
+            requested_asin = self._identifier(identifiers, "asin")
+            if requested_asin and authors:
+                for row in rows:
+                    row_asin = self._text(row.get("asin"))
+                    if (
+                        not self._list(row.get("authors"))
+                        and row_asin
+                        and row_asin.upper() == requested_asin.upper()
+                    ):
+                        row["authors"] = self._list(authors)
+
             rows = self._dedupe(rows)
             rows.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
