@@ -342,6 +342,28 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertIn("matching book description", matches[0].comments)
         self.assertTrue(any(item.title == "My Curvy Belle" for item in results))
 
+    def test_mobi_asin_sent_for_identify_and_cover_matching(self):
+        """Forward Calibre's Kindle identifier and prefer its matching cover."""
+        self.plugin.prefs["plugin_ids"] = "fixture"
+        self.identify(
+            title="A Specter and an Invasion (Legacy of the Lost Book 3)",
+            authors=["M. D. Cooper", "Chris J. Pike", "Jill Cooper"],
+            identifiers={"mobi-asin": "B08CK7H7P2"},
+        )
+        searches = [query for path, query in self.requests if path == "/plugins/fixture/search"]
+        self.assertTrue(searches)
+        self.assertEqual(searches[0].get("asin"), ["B08CK7H7P2"])
+        self.assertEqual(
+            self.plugin._cover_identifier_score(
+                {"asin": "B08CK7H7P2"}, {"mobi-asin": "B08CK7H7P2"}
+            ),
+            2,
+        )
+        self.assertEqual(
+            self.plugin._make_query(None, None, {"mobi-asin": "B08CK7H7P2"}),
+            "B08CK7H7P2",
+        )
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
