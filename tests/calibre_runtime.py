@@ -382,7 +382,10 @@ class InstalledPluginTests(unittest.TestCase):
             allowed_plugins=["Metadata Engine"],
         )
         self.assertTrue(results)
-        self.assertEqual(results[0].title, "A Specter and an Invasion")
+        self.assertEqual(
+            results[0].title,
+            "A Specter and an Invasion (Aeon 14: Legacy of the Lost Book 3)",
+        )
         self.assertEqual(results[0].get_identifiers().get("asin"), "B08CK7H7P2")
         self.assertEqual(
             results[0].authors, ["M. D. Cooper", "Chris J. Pike", "Jill Cooper"]
