@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import ssl
 from datetime import datetime
 from urllib.error import HTTPError, URLError
@@ -25,7 +26,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 8)
+    version = (1, 1, 9)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -391,6 +392,17 @@ class MetadataEngineSource(Source):
         title = self._text(row.get("title"))
         if not title:
             return None
+        # Some books carry their series only in a trailing "Series Book N".
+        # Keep a structured provider series authoritative when available.
+        inferred_series = None
+        match = re.fullmatch(r"(.+?)\\s+\\((.+?)\\s+Book\\s+(\\d+(?:\\.\\d+)?)\\)", title, re.IGNORECASE)
+        if match:
+            series_name = match.group(2).strip()
+            # A numbered franchise prefix (e.g. "Aeon 14:") is not the series.
+            series_name = re.sub(r"^.+?\\s+\\d+\\s*:\\s*", "", series_name)
+            if series_name:
+                title = match.group(1).strip()
+                inferred_series = (series_name, float(match.group(3)))
         subtitle = self._text(row.get("subtitle"))
         if subtitle and subtitle.casefold() not in title.casefold():
             title = "%s: %s" % (title, subtitle)
@@ -451,6 +463,9 @@ class MetadataEngineSource(Source):
                     mi.series_index = float(idx) if idx is not None else None
                 except Exception:
                     pass
+
+        if not mi.series and inferred_series:
+            mi.series, mi.series_index = inferred_series
 
         if row.get("cover_url"):
             mi.has_cached_cover = True
@@ -521,7 +536,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.8",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.9",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
