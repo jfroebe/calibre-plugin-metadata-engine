@@ -157,7 +157,11 @@ class MetadataEngineSource(Source):
                     try:
                         if media_type:
                             found = self._search(
-                                provider_id, query, authors, identifiers, timeout,
+                                provider_id,
+                                query,
+                                authors,
+                                identifiers,
+                                timeout,
                                 metadata_type=media_type,
                             )
                         else:
@@ -324,7 +328,9 @@ class MetadataEngineSource(Source):
                 raise ValueError("Metadata Engine API schema: invalid plugin entry")
         return found
 
-    def _search(self, provider_id, query, authors, identifiers, timeout, metadata_type=None):
+    def _search(
+        self, provider_id, query, authors, identifiers, timeout, metadata_type=None
+    ):
         params = {
             "query": query,
             "limit": max(
@@ -666,7 +672,9 @@ class MetadataEngineSource(Source):
                 for field in ("description", "cover_url"):
                     if not cls._text(winner.get(field)) and cls._text(donor.get(field)):
                         winner[field] = donor[field]
-                winner["genres"] = list(dict.fromkeys(
-                    cls._list(winner.get("genres")) + cls._list(donor.get("genres"))
-                ))
+                winner["genres"] = list(
+                    dict.fromkeys(
+                        cls._list(winner.get("genres")) + cls._list(donor.get("genres"))
+                    )
+                )
         return list(best.values())
