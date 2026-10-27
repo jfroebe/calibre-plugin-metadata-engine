@@ -384,13 +384,39 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertTrue(results)
         self.assertEqual(
             results[0].title,
-            "A Specter and an Invasion (Aeon 14: Legacy of the Lost Book 3)",
+            "A Specter and an Invasion",
         )
+        self.assertEqual(results[0].series, "Legacy of the Lost")
+        self.assertEqual(results[0].series_index, 3.0)
         self.assertEqual(results[0].get_identifiers().get("asin"), "B08CK7H7P2")
         self.assertEqual(
             results[0].authors, ["M. D. Cooper", "Chris J. Pike", "Jill Cooper"]
         )
         self.assertFalse(results[0].comments)
+
+    def test_series_title_fallback_is_conservative(self):
+        """Extract explicit numbered series while preserving structured values."""
+
+        def convert(title, series=None):
+            return self.plugin._to_metadata(
+                {"title": title, "authors": ["Example"], "series": series}, 0
+            )
+
+        inferred = convert("A Title (Some Series Book 2)")
+        self.assertEqual(
+            (inferred.title, inferred.series, inferred.series_index),
+            ("A Title", "Some Series", 2.0),
+        )
+        structured = convert(
+            "A Title (Other Book 2)", [{"name": "Official", "index": 5}]
+        )
+        self.assertEqual(
+            (structured.title, structured.series, structured.series_index),
+            ("A Title", "Official", 5.0),
+        )
+        unnumbered = convert("A Title (A Novel)")
+        self.assertEqual(unnumbered.title, "A Title (A Novel)")
+        self.assertFalse(unnumbered.series)
 
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
@@ -524,6 +550,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 26:
+    if result.testsRun != 27:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
