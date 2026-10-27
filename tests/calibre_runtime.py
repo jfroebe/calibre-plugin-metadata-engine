@@ -94,9 +94,13 @@ class InstalledPluginTests(unittest.TestCase):
 
     def test_cached_hardcover_provider_tag_is_not_a_book_tag(self):
         """Filter the old source marker while preserving actual subjects."""
-        row = {"title": "Dark and Stabby", "authors": ["Alisha Williams"],
-               "source": "hardcover", "tags": ["Hardcover", "Anthologies"],
-               "genres": ["Romance"]}
+        row = {
+            "title": "Dark and Stabby",
+            "authors": ["Alisha Williams"],
+            "source": "hardcover",
+            "tags": ["Hardcover", "Anthologies"],
+            "genres": ["Romance"],
+        }
         self.plugin.prefs["include_source_tag"] = False
         metadata = self.plugin._to_metadata(row, 0)
         self.assertEqual(metadata.tags, ["Romance", "Anthologies"])
