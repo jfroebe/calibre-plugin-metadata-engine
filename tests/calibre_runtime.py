@@ -384,7 +384,10 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertTrue(results)
         self.assertEqual(results[0].title, "A Specter and an Invasion")
         self.assertEqual(results[0].get_identifiers().get("asin"), "B08CK7H7P2")
-        self.assertEqual(results[0].comments, "Fixture description")
+        self.assertEqual(
+            results[0].authors, ["M. D. Cooper", "Chris J. Pike", "Jill Cooper"]
+        )
+        self.assertFalse(results[0].comments)
 
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
