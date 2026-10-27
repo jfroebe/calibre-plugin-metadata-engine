@@ -395,7 +395,9 @@ class MetadataEngineSource(Source):
         # Some books carry their series only in a trailing "Series Book N".
         # Keep a structured provider series authoritative when available.
         inferred_series = None
-        match = re.fullmatch(r"(.+?)\\s+\\((.+?)\\s+Book\\s+(\\d+(?:\\.\\d+)?)\\)", title, re.IGNORECASE)
+        match = re.fullmatch(
+            r"(.+?)\\s+\\((.+?)\\s+Book\\s+(\\d+(?:\\.\\d+)?)\\)", title, re.IGNORECASE
+        )
         if match:
             series_name = match.group(2).strip()
             # A numbered franchise prefix (e.g. "Aeon 14:") is not the series.
