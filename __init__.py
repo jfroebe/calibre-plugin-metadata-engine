@@ -673,8 +673,10 @@ class MetadataEngineSource(Source):
         right, right_series, right_number = cls._work_title(donor.get("title"))
         if not left or left != right:
             return False
-        if left_series and right_series and (
-            left_series != right_series or left_number != right_number
+        if (
+            left_series
+            and right_series
+            and (left_series != right_series or left_number != right_number)
         ):
             return False
 
