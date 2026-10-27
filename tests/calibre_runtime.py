@@ -111,14 +111,30 @@ class InstalledPluginTests(unittest.TestCase):
     def test_ebook_enriches_matching_book_not_different_author(self):
         """Merge rich ebook details only into the same title and author."""
         rows = [
-            {"title": "City of Demons", "authors": ["Richelle Mead"],
-             "source": "goodreads", "source_id": "1", "confidence": 0.99},
-            {"title": "City of Demons", "authors": ["Richelle Mead"],
-             "source": "itunes", "source_id": "2", "confidence": 0.98,
-             "description": "Real synopsis", "cover_url": "https://example.test/a.jpg",
-             "genres": ["Paranormal Romance"]},
-            {"title": "City of Demons", "authors": ["Another Author"],
-             "source": "fixture", "source_id": "3", "confidence": 0.97},
+            {
+                "title": "City of Demons",
+                "authors": ["Richelle Mead"],
+                "source": "goodreads",
+                "source_id": "1",
+                "confidence": 0.99,
+            },
+            {
+                "title": "City of Demons",
+                "authors": ["Richelle Mead"],
+                "source": "itunes",
+                "source_id": "2",
+                "confidence": 0.98,
+                "description": "Real synopsis",
+                "cover_url": "https://example.test/a.jpg",
+                "genres": ["Paranormal Romance"],
+            },
+            {
+                "title": "City of Demons",
+                "authors": ["Another Author"],
+                "source": "fixture",
+                "source_id": "3",
+                "confidence": 0.97,
+            },
         ]
         merged = self.plugin._dedupe(rows)
         selected = next(row for row in merged if row.get("source") == "goodreads")
