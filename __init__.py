@@ -150,23 +150,25 @@ class MetadataEngineSource(Source):
             )
             rows = []
             for provider_id in provider_ids:
-                if abort.is_set():
-                    return None
-                try:
-                    rows.extend(
-                        self._search(provider_id, query, authors, identifiers, timeout)
-                    )
-                    if provider_id == "itunes" and not abort.is_set():
-                        rows.extend(
-                            self._search(
+                media_types = (None, "books") if provider_id == "itunes" else (None,)
+                for media_type in media_types:
+                    if abort.is_set():
+                        return None
+                    try:
+                        if media_type:
+                            found = self._search(
                                 provider_id, query, authors, identifiers, timeout,
-                                metadata_type="books",
+                                metadata_type=media_type,
                             )
+                        else:
+                            found = self._search(
+                                provider_id, query, authors, identifiers, timeout
+                            )
+                        rows.extend(found)
+                    except Exception as exc:
+                        log.error(
+                            "Metadata Engine provider %r failed: %s", provider_id, exc
                         )
-                except Exception as exc:
-                    log.error(
-                        "Metadata Engine provider %r failed: %s", provider_id, exc
-                    )
 
             rows = self._dedupe(rows)
             rows.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
