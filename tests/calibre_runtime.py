@@ -108,6 +108,25 @@ class InstalledPluginTests(unittest.TestCase):
         metadata = self.plugin._to_metadata(row, 0)
         self.assertIn("metadata-engine:hardcover", metadata.tags)
 
+    def test_ebook_enriches_matching_book_not_different_author(self):
+        """Merge rich ebook details only into the same title and author."""
+        rows = [
+            {"title": "City of Demons", "authors": ["Richelle Mead"],
+             "source": "goodreads", "source_id": "1", "confidence": 0.99},
+            {"title": "City of Demons", "authors": ["Richelle Mead"],
+             "source": "itunes", "source_id": "2", "confidence": 0.98,
+             "description": "Real synopsis", "cover_url": "https://example.test/a.jpg",
+             "genres": ["Paranormal Romance"]},
+            {"title": "City of Demons", "authors": ["Another Author"],
+             "source": "fixture", "source_id": "3", "confidence": 0.97},
+        ]
+        merged = self.plugin._dedupe(rows)
+        selected = next(row for row in merged if row.get("source") == "goodreads")
+        other = next(row for row in merged if row.get("source") == "fixture")
+        self.assertEqual(selected["description"], "Real synopsis")
+        self.assertEqual(selected["genres"], ["Paranormal Romance"])
+        self.assertNotIn("description", other)
+
     def test_unknown_title_has_no_invented_matches(self):
         """An unknown title must leave the queue empty."""
         self.assertEqual(self.identify(title="Fictional Unfindable 72941"), [])
@@ -427,6 +446,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 23:
+    if result.testsRun != 24:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
