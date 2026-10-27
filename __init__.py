@@ -25,7 +25,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 7)
+    version = (1, 1, 8)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -581,6 +581,8 @@ class MetadataEngineSource(Source):
     def _identifier(identifiers, *keys):
         lower = {str(k).lower(): v for k, v in identifiers.items()}
         for key in keys:
+            if key == "asin" and not lower.get(key):
+                key = "mobi-asin"
             if lower.get(key):
                 return str(lower[key]).strip()
         return None
