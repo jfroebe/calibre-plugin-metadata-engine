@@ -407,7 +407,9 @@ class InstalledPluginTests(unittest.TestCase):
             (inferred.title, inferred.series, inferred.series_index),
             ("A Title", "Some Series", 2.0),
         )
-        structured = convert("A Title (Other Book 2)", [{"name": "Official", "index": 5}])
+        structured = convert(
+            "A Title (Other Book 2)", [{"name": "Official", "index": 5}]
+        )
         self.assertEqual(
             (structured.title, structured.series, structured.series_index),
             ("A Title", "Official", 5.0),
