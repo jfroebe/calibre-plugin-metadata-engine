@@ -763,8 +763,9 @@ class MetadataEngineSource(Source):
             )
             candidates.extend(rows)
 
-        from qt.core import QImage
         from urllib.parse import urlsplit
+
+        from qt.core import QImage
 
         seen_urls = set()
         covers = []
