@@ -307,6 +307,7 @@ class MetadataEngineSource(Source):
             ("isbn", ("isbn", "isbn13", "isbn10")),
             ("lccn", ("lccn",)),
             ("goodreads", ("goodreads",)),
+            ("openlibrary", ("openlibrary",)),
         ):
             wanted = self._identifier(identifiers, *aliases)
             if key in {"lccn", "goodreads"}:
@@ -339,6 +340,7 @@ class MetadataEngineSource(Source):
                      "open_library", "internet_archive", "new_york_times_books"},
             "lccn": {"loc_json_yaml"},
             "goodreads": {"goodreads"},
+            "openlibrary": {"open_library"},
         }
         aliases = {"asin": ("asin",), "isbn": ("isbn", "isbn13", "isbn10"),
                    "lccn": ("lccn",), "goodreads": ("goodreads",)}
@@ -352,7 +354,12 @@ class MetadataEngineSource(Source):
             if kind in {"isbn", "asin"}:
                 return normalize(row.get(kind))
             extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
-            value = extra.get("goodreads_id" if kind == "goodreads" else "lccn")
+            if kind == "goodreads":
+                value = extra.get("goodreads_id")
+            elif kind == "openlibrary":
+                value = extra.get("open_library_edition_id") or extra.get("open_library_work_id")
+            else:
+                value = extra.get("lccn")
             if kind == "goodreads" and not value and row.get("source") == "goodreads":
                 value = row.get("source_id")
             return normalize(value)
@@ -361,14 +368,14 @@ class MetadataEngineSource(Source):
                    for kind, keys in aliases.items()}
         seeds = []
         # Goodreads IDs and LCCNs are not sent on the initial generic search.
-        for kind in ("goodreads", "lccn"):
+        for kind in ("goodreads", "lccn", "openlibrary"):
             value = initial[kind]
             if value and re.fullmatch(patterns[kind], value):
                 seeds.append((kind, value, None))
         for row in rows:
             if not self._matches_requested(row, title, authors, identifiers):
                 continue
-            for kind in ("isbn", "asin", "goodreads", "lccn"):
+            for kind in ("isbn", "asin", "goodreads", "lccn", "openlibrary"):
                 value = value_for(row, kind)
                 if not value or not re.fullmatch(patterns[kind], value):
                     continue
