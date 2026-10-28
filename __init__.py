@@ -913,7 +913,9 @@ class MetadataEngineSource(Source):
             "kindle e-books",
         }
         excluded.add(source)
-        normalize_label = lambda value: re.sub(r"[-_\\s]+", " ", value.casefold()).strip()
+        def normalize_label(value):
+            return re.sub(r"[-_\s]+", " ", value.casefold()).strip()
+
         excluded = {normalize_label(value) for value in excluded}
         tags = self._list(row.get("genres")) + self._list(row.get("tags"))
         mi.tags = list(
