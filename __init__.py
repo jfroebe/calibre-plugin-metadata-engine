@@ -786,6 +786,26 @@ class MetadataEngineSource(Source):
         return match.group(1).strip(), series, float(match.group(3))
 
     @classmethod
+    def _series_identity(cls, row):
+        """Normalize structured series, falling back to a numbered title suffix."""
+        title_name, title_series, title_number = cls._work_title(row.get("title"))
+        del title_name
+        raw = row.get("series")
+        item = raw[0] if isinstance(raw, list) and raw else raw
+        if isinstance(item, dict):
+            name = cls._text(item.get("name") or item.get("title") or item.get("series"))
+            number = item.get("index", item.get("position", item.get("number")))
+            try:
+                number = float(number) if number is not None else None
+            except (TypeError, ValueError):
+                number = None
+        else:
+            name, number = cls._text(item), None
+        name = (name or title_series or "").casefold().strip()
+        name = re.sub(r"^.+?\s+\d+\s*:\s*", "", name)
+        return name, number if number is not None else title_number
+
+    @classmethod
     def _work_description_matches(cls, winner, donor):
         """Require matching work title, complete author set and compatible series."""
         left, left_series, left_number = cls._work_title(winner.get("title"))
@@ -797,6 +817,12 @@ class MetadataEngineSource(Source):
             and right_series
             and (left_series != right_series or left_number != right_number)
         ):
+            return False
+        left_series, left_number = cls._series_identity(winner)
+        right_series, right_number = cls._series_identity(donor)
+        if left_series and right_series and left_series != right_series:
+            return False
+        if left_number is not None and right_number is not None and left_number != right_number:
             return False
 
         def authors(row):
@@ -861,7 +887,8 @@ class MetadataEngineSource(Source):
         if edition:
             for field in ("authors", "publisher", "published_year", "language", "isbn", "asin", "cover_url"):
                 value = donor.get(field)
-                if not winner.get(field) and value:
+                current = winner.get(field)
+                if (not current or (isinstance(current, str) and not current.strip())) and value:
                     winner[field] = value
         elif (
             cls._text(winner.get("title")) == cls._text(donor.get("title"))
