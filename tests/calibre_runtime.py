@@ -828,6 +828,61 @@ class InstalledPluginTests(unittest.TestCase):
             [["A Writer", "B Writer", "C Writer"], None, ["A Writer"], ["B Writer"]],
         )
 
+    def test_same_identifier_with_conflicting_title_or_authors_is_rejected(self):
+        """A source's reused ISBN or ASIN must not override contradictory evidence."""
+        primary = {"title": "Example", "authors": ["A Writer"], "isbn": "9781234567897",
+                   "source": "a", "source_id": "1", "confidence": 1}
+        for changed in ({"title": "Unrelated"}, {"authors": ["Other Writer"]}):
+            donor = dict(primary, source="b", source_id="2", description="Wrong")
+            donor.update(changed)
+            rows = self.plugin._dedupe([primary, donor])
+            self.assertEqual(len(rows), 2)
+            self.assertFalse(rows[0].get("description"))
+
+    def test_edition_details_are_corroborating_not_standalone_identity(self):
+        """Two large same-format discrepancies prevent an unsafe edition merge."""
+        base = {"title": "Example", "authors": ["A Writer"], "isbn": "9781234567897",
+                "published_year": "2000", "extra": {"format": "paperback", "page_count": 200}}
+        changed = dict(base, published_year="2015",
+                       extra={"format": "paperback", "page_count": 600})
+        self.assertFalse(self.plugin._identity_consistent(base, changed))
+        one_discrepancy = dict(changed, published_year="2000")
+        self.assertTrue(self.plugin._identity_consistent(base, one_discrepancy))
+        other_format = dict(changed, extra={"format": "audiobook", "page_count": 600})
+        self.assertTrue(self.plugin._identity_consistent(base, other_format))
+
+    def test_catalog_ids_are_preserved_but_dewey_is_not_an_identity(self):
+        """Expose source identifiers while never merging on a classification number."""
+        book = {"title": "One", "authors": ["A Writer"], "source": "library",
+                "extra": {"lccn": "2025001234", "oclc": "123456",
+                          "dewey_decimal": "813.54", "goodreads_id": "12345",
+                          "open_library_edition_id": "OL123M"}}
+        result = self.plugin._to_metadata(book, 0).get_identifiers()
+        for kind, value in (("lccn", "2025001234"), ("oclc", "123456"),
+                            ("dewey", "813.54"), ("goodreads", "12345"),
+                            ("openlibrary", "OL123M")):
+            self.assertEqual(result[kind], value)
+        unrelated = dict(book, title="Two", source="other", extra={"dewey_decimal": "813.54"})
+        self.assertFalse(self.plugin._same_edition(book, unrelated))
+
+    def test_catalog_id_followups_are_verified_and_not_recursive(self):
+        """Follow Goodreads and LCCN IDs while rejecting misleading records."""
+        rows = [{"title": "Example", "authors": ["A Writer"], "source": "base",
+                 "extra": {"goodreads_id": "12345", "lccn": "2025001234"}}]
+        def lookup(provider, query, authors, identifiers, timeout, **kwargs):
+            if provider == "goodreads":
+                return [{"title": "Wrong", "authors": ["A Writer"], "source": "goodreads",
+                         "source_id": "12345", "extra": {"goodreads_id": "12345"}}]
+            return [{"title": "Example", "authors": ["A Writer"], "source": "loc_json_yaml",
+                     "extra": {"lccn": "2025001234", "oclc": "new-id"}}]
+        with patch.object(self.plugin, "_search", side_effect=lookup) as search:
+            output = self.plugin._expand_identifiers(
+                self.log, self.abort, ["goodreads", "loc_json_yaml"], rows,
+                "Example", "Example", ["A Writer"], {}, 5)
+        self.assertEqual(search.call_count, 2)
+        self.assertEqual(len(output), 2)
+        self.assertTrue(all(row["title"] == "Example" for row in output))
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -960,6 +1015,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 39:
+    if result.testsRun != 43:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
