@@ -150,6 +150,7 @@ class MetadataEngineSource(Source):
                 timeout, abort
             )
             rows = []
+            retried_providers = set()
             for provider_id in provider_ids:
                 media_types = (None, "books") if provider_id == "itunes" else (None,)
                 for media_type in media_types:
@@ -169,6 +170,14 @@ class MetadataEngineSource(Source):
                             found = self._search(
                                 provider_id, query, authors, identifiers, timeout
                             )
+                        if provider_id == "goodreads" and not found and title:
+                            short_title, _, _ = self._work_title(title)
+                            if short_title != str(title).strip().casefold():
+                                log.info("Retrying Goodreads with a shortened title")
+                                found = self._search(
+                                    provider_id, short_title, None, {}, timeout
+                                )
+                                retried_providers.add(provider_id)
                         rows.extend(found)
                     except Exception as exc:
                         log.error(
@@ -198,6 +207,7 @@ class MetadataEngineSource(Source):
                 authors,
                 identifiers,
                 timeout,
+                retried_providers,
             )
             rows = self._dedupe(rows)
             rows.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
@@ -270,7 +280,7 @@ class MetadataEngineSource(Source):
             if abort.is_set():
                 return rows
             # These providers only support identifiers, already used above.
-            if provider_id in {"asintojson", "isbnlab"}:
+            if provider_id in {"asintojson", "isbnlab"} or provider_id in (retried_providers or set()):
                 continue
             # Avoid issuing the same title-only request twice.
             if (
