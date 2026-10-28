@@ -186,16 +186,22 @@ class MetadataEngineSource(Source):
 
             # An exact edition identifier ties the provider result to the
             # existing Calibre record even when the provider omits its authors.
-            requested_asin = self._identifier(identifiers, "asin")
-            if requested_asin and authors:
+            if authors:
                 for row in rows:
-                    row_asin = self._text(row.get("asin"))
-                    if (
-                        not self._list(row.get("authors"))
-                        and row_asin
-                        and row_asin.upper() == requested_asin.upper()
+                    for kind, aliases in (
+                        ("asin", ("asin",)),
+                        ("isbn", ("isbn", "isbn13", "isbn10")),
                     ):
-                        row["authors"] = self._list(authors)
+                        wanted = self._identifier(identifiers, *aliases)
+                        actual = self._text(row.get(kind))
+                        if wanted and actual and not self._list(row.get("authors")):
+                            wanted = re.sub(r"[\s-]+", "", wanted).upper()
+                            actual = re.sub(r"[\s-]+", "", actual).upper()
+                            if wanted == actual and self._matches_requested(
+                                row, title, authors, identifiers
+                            ):
+                                row["authors"] = self._list(authors)
+                                break
 
             rows = self._expand_identifiers(
                 log, abort, provider_ids, rows, query, title, authors, identifiers, timeout
