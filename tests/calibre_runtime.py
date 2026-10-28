@@ -72,10 +72,16 @@ class InstalledPluginTests(unittest.TestCase):
             "confidence": 0.90,
             "metadata_type": "book",
         }
+
         def search(provider, *args, **kwargs):
             return [dict(amazon if provider == "amazon" else goodreads)]
+
         with (
-            patch.object(self.plugin, "_configured_provider_ids", return_value=["amazon", "goodreads"]),
+            patch.object(
+                self.plugin,
+                "_configured_provider_ids",
+                return_value=["amazon", "goodreads"],
+            ),
             patch.object(self.plugin, "_search", side_effect=search),
         ):
             results = self.identify(
