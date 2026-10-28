@@ -172,16 +172,24 @@ class InstalledPluginTests(unittest.TestCase):
         row = {
             "title": "A Specter and an Invasion",
             "source": "goodreads",
-            "genres": ["Kindle Store", "Kindle eBooks", "Science Fiction & Fantasy",
-                       "Science Fiction", "Space Opera"],
+            "genres": [
+                "Kindle Store",
+                "Kindle eBooks",
+                "Science Fiction & Fantasy",
+                "Science Fiction",
+                "Space Opera",
+            ],
             "tags": ["goodreads", "audiobooks", "metadata-engine:goodreads"],
             "description": "Source: Goodreads\\nTime has passed. Goodreads is mentioned in prose.",
         }
         metadata = self.plugin._to_metadata(row, 0)
-        self.assertEqual(metadata.tags, [
-            "Science Fiction & Fantasy", "Science Fiction", "Space Opera"
-        ])
-        self.assertEqual(metadata.comments, "Time has passed. Goodreads is mentioned in prose.")
+        self.assertEqual(
+            metadata.tags,
+            ["Science Fiction & Fantasy", "Science Fiction", "Space Opera"],
+        )
+        self.assertEqual(
+            metadata.comments, "Time has passed. Goodreads is mentioned in prose."
+        )
 
     def test_ebook_enriches_matching_book_not_different_author(self):
         """Merge rich ebook details only into the same title and author."""
