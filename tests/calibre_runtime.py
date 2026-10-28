@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 from queue import Queue
 from threading import Event
+from unittest.mock import patch
 from urllib.request import ProxyHandler, build_opener, install_opener
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -457,6 +458,57 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertFalse(result(dict(donor, asin="B000000000")).get("description"))
         self.assertEqual(result(dict(donor, description="")).get("description"), None)
 
+    def test_description_recovery_across_configured_sources(self):
+        """Retry title-search sources and reject unrelated and blank results."""
+        sparse = {
+            "source": "asintojson", "asin": "B08CK7H7P2",
+            "title": "Example (Example Series Book 3)", "authors": ["A. Writer"],
+            "description": "  ", "confidence": 0.99,
+        }
+        wrong = {"source": "first", "title": "Example", "authors": ["Wrong Writer"],
+                 "description": "Wrong description"}
+        empty = {"source": "second", "title": "Example", "authors": ["A. Writer"],
+                 "description": "  "}
+        good = {"source": "third", "title": "Example", "authors": ["A. Writer"],
+                "description": "Recovered description"}
+        def search(provider, *args, **kwargs):
+            return {"first": [wrong], "second": [empty], "third": [good]}[provider]
+        with patch.object(self.plugin, "_search", side_effect=search) as mocked:
+            rows = self.plugin._recover_descriptions(
+                self.log, self.abort, ["asintojson", "first", "second", "third"],
+                [sparse], sparse["title"], sparse["title"], ["A. Writer"],
+                {"mobi-asin": "B08CK7H7P2"}, 5,
+            )
+        result = next(row for row in self.plugin._dedupe(rows) if row.get("asin"))
+        self.assertEqual(result["description"], "Recovered description")
+        self.assertEqual([call.args[0] for call in mocked.call_args_list],
+                         ["first", "second", "third"])
+
+    def test_description_recovery_reports_unavailable(self):
+        """Report exhausted providers and preserve the empty matching result."""
+        row = {"source": "test", "title": "Example", "authors": ["A Writer"],
+               "description": " \t "}
+        with patch.object(self.plugin, "_search", return_value=[]):
+            with self.assertLogs(self.log, level="WARNING") as logs:
+                result = self.plugin._recover_descriptions(
+                    self.log, self.abort, ["test"], [row], "Example", "Example",
+                    ["A Writer"], {}, 5,
+                )
+        self.assertEqual(result, [row])
+        self.assertIn("remains without a description", " ".join(logs.output))
+
+    def test_description_recovery_skips_complete_and_unmatched_results(self):
+        """Avoid extra searches when a match is complete or no match exists."""
+        complete = {"title": "Example", "authors": ["A Writer"], "description": "Complete"}
+        other = {"title": "Different", "authors": ["A Writer"], "description": ""}
+        with patch.object(self.plugin, "_search") as mocked:
+            for row in (complete, other):
+                self.plugin._recover_descriptions(
+                    self.log, self.abort, ["test"], [row], "Example", "Example",
+                    ["A Writer"], {}, 5,
+                )
+        mocked.assert_not_called()
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -589,6 +641,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 28:
+    if result.testsRun != 31:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
