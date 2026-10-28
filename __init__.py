@@ -1045,6 +1045,12 @@ class MetadataEngineSource(Source):
         right_title, _, _ = cls._work_title(right.get("title"))
         if left_title and right_title and left_title != right_title:
             return False
+        left_series, left_number = cls._series_identity(left)
+        right_series, right_number = cls._series_identity(right)
+        if left_series and right_series and left_series != right_series:
+            return False
+        if left_number is not None and right_number is not None and left_number != right_number:
+            return False
         if cls._list(left.get("authors")) and cls._list(right.get("authors")):
             if not cls._work_description_matches(left, right):
                 return False
