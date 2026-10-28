@@ -895,18 +895,33 @@ class MetadataEngineSource(Source):
         # Provider names, shop navigation and format labels are not subjects.
         source = (self._text(row.get("source")) or "").casefold()
         excluded = {
-            "amazon", "amazon.com", "audible", "audiobook", "audiobooks",
-            "goodreads", "hardcover", "itunes", "apple books", "open library",
-            "google books", "isbnlab", "asintojson", "kindle store",
-            "kindle ebooks", "kindle e-books",
+            "amazon",
+            "amazon.com",
+            "audible",
+            "audiobook",
+            "audiobooks",
+            "goodreads",
+            "hardcover",
+            "itunes",
+            "apple books",
+            "open library",
+            "google books",
+            "isbnlab",
+            "asintojson",
+            "kindle store",
+            "kindle ebooks",
+            "kindle e-books",
         }
         excluded.add(source)
         tags = self._list(row.get("genres")) + self._list(row.get("tags"))
-        mi.tags = list(dict.fromkeys(
-            tag for tag in tags
-            if tag.casefold().strip() not in excluded
-            and not tag.casefold().strip().startswith("metadata-engine:")
-        ))
+        mi.tags = list(
+            dict.fromkeys(
+                tag
+                for tag in tags
+                if tag.casefold().strip() not in excluded
+                and not tag.casefold().strip().startswith("metadata-engine:")
+            )
+        )
 
         if row.get("isbn") and self._canonical_isbn(row["isbn"]):
             mi.set_identifier("isbn", self._text(row["isbn"]))
