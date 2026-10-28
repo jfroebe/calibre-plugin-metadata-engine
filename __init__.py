@@ -264,9 +264,7 @@ class MetadataEngineSource(Source):
             target = {"title": title, "authors": authors}
             if title and authors:
                 verified = [
-                    row
-                    for row in rows
-                    if self._work_description_matches(target, row)
+                    row for row in rows if self._work_description_matches(target, row)
                 ]
                 for row in rows:
                     if self._list(row.get("authors")):
