@@ -226,8 +226,15 @@ class InstalledPluginTests(unittest.TestCase):
             "authors": ["Caroline Dooner"],
             "source": "open_library",
             "genres": ["Books", "Psychology", "Self-Improvement"],
-            "tags": ["books", " BOOKS ", "psychology", "Open-Library", "Cleaned",
-                     "Self Improvement", "Health, Mind & Body"],
+            "tags": [
+                "books",
+                " BOOKS ",
+                "psychology",
+                "Open-Library",
+                "Cleaned",
+                "Self Improvement",
+                "Health, Mind & Body",
+            ],
         }
         metadata = self.plugin._to_metadata(row, 0)
         self.plugin.clean_downloaded_metadata(metadata)
