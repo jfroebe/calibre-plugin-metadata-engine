@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 16)
+    version = (1, 1, 17)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1048,7 +1048,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.16",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.17",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -1188,7 +1188,7 @@ class MetadataEngineSource(Source):
         title_name, title_series, title_number = cls._work_title(row.get("title"))
         del title_name
         raw = row.get("series")
-        item = raw[0] if isinstance(raw, list) and raw else raw
+        item = (raw[0] if raw else None) if isinstance(raw, list) else raw
         if isinstance(item, dict):
             name = cls._text(
                 item.get("name") or item.get("title") or item.get("series")
@@ -1454,10 +1454,11 @@ class MetadataEngineSource(Source):
                 value = donor.get(field)
                 if value and (not isinstance(value, str) or value.strip()):
                     winner[field] = value
-        # Genre lists describe the work; preserve order and remove duplicates.
-        genres = cls._list(winner.get("genres")) + cls._list(donor.get("genres"))
-        if genres:
-            winner["genres"] = list(dict.fromkeys(genres))
+        # Subjects can be supplied in either provider field.
+        for field in ("genres", "tags"):
+            values = cls._list(winner.get(field)) + cls._list(donor.get(field))
+            if values:
+                winner[field] = list(dict.fromkeys(values))
 
         winner_extra = dict(winner.get("extra") or {})
         donor_extra = donor.get("extra") if isinstance(donor.get("extra"), dict) else {}
@@ -1512,44 +1513,24 @@ class MetadataEngineSource(Source):
     def _dedupe(cls, rows):
         """Retain ranked candidates and enrich only compatible matching records."""
         best = []
-        groups = {}
         for original in sorted(
             rows, key=lambda row: float(row.get("confidence") or 0), reverse=True
         ):
             row = dict(original)
-            if row.get("isbn"):
-                key = ("isbn", cls._canonical_isbn(row["isbn"]) or str(row["isbn"]))
-            elif row.get("asin"):
-                key = ("asin", str(row["asin"]).upper())
-            elif row.get("source") and row.get("source_id"):
-                key = (
-                    "source",
-                    str(row["source"]).casefold(),
-                    str(row["source_id"]).casefold(),
-                )
-            else:
-                key = (
-                    "book",
-                    str(row.get("title") or "").casefold(),
-                    tuple(a.casefold() for a in cls._list(row.get("authors"))),
-                )
-            group = groups.setdefault(key, [])
             existing = next(
                 (
                     item
-                    for item in group
-                    if (
-                        cls._same_edition(item, row)
-                        or (
-                            cls._compatible_identifiers(item, row)
-                            and cls._work_description_matches(item, row)
-                        )
+                    for item in best
+                    if cls._same_edition(item, row)
+                    or (
+                        cls._compatible_identifiers(item, row)
+                        and cls._identity_consistent(item, row)
+                        and cls._work_description_matches(item, row)
                     )
                 ),
                 None,
             )
             if existing is None:
-                group.append(row)
                 best.append(row)
             else:
                 cls._merge_metadata(existing, row)
