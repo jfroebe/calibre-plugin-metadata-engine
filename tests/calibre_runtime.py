@@ -1443,16 +1443,19 @@ class InstalledPluginTests(unittest.TestCase):
         ):
             self.assertFalse(self.plugin._work_description_matches(target, wrong))
         queue = Queue()
+        def search(provider, query, authors, *args, **kwargs):
+            return [] if authors and len(authors) > 1 else [row]
         with (
             patch.object(
                 self.plugin, "_configured_provider_ids", return_value=["goodreads"]
             ),
-            patch.object(self.plugin, "_search", return_value=[row]),
+            patch.object(self.plugin, "_search", side_effect=search) as searches,
             patch.object(self.plugin, "_http_bytes", return_value=image),
         ):
             self.plugin.download_cover(
                 self.log, queue, self.abort, **target, identifiers={}
             )
+        self.assertTrue(any(call.args[2] is None for call in searches.call_args_list))
         self.assertFalse(queue.empty())
         self.assertEqual(queue.get_nowait()[1], image)
 
