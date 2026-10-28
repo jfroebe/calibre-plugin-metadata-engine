@@ -480,6 +480,11 @@ class MetadataEngineSource(Source):
 
         # Freeze initial seeds. Results from these lookups never generate more
         # lookups; four IDs and each compatible provider/ID pair are the limit.
+        if len(seeds) > 4:
+            log.warning(
+                "Metadata Engine: identifier follow-up limited to 4 of %d discovered IDs",
+                len(seeds),
+            )
         for kind, value, anchor in seeds[:4]:
             for provider in provider_ids:
                 if abort.is_set():
