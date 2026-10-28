@@ -51,6 +51,52 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertIsNone(error)
         return list(queue.queue)
 
+    def test_specter_without_identifier_combines_partial_sources(self):
+        """A title and authors lookup must return one complete leading match."""
+        authors = ["M. D. Cooper", "Chris J. Pike", "Jill Cooper"]
+        amazon = {
+            "title": "A Specter and an Invasion",
+            "authors": [],
+            "series": [{"name": "Legacy of the Lost", "position": 3}],
+            "asin": "B08CK7H7P2",
+            "source": "amazon",
+            "confidence": 0.99,
+            "metadata_type": "book",
+        }
+        goodreads = {
+            "title": "A Specter and an Invasion (Legacy of the Lost #3)",
+            "authors": ["Chris J. Pike", "M. D. Cooper", "Jill Cooper"],
+            "source": "goodreads",
+            "source_id": "55033599",
+            "description": "President Finley threatens the remaining free nations.",
+            "confidence": 0.90,
+            "metadata_type": "book",
+        }
+
+        def search(provider, *args, **kwargs):
+            return [dict(amazon if provider == "amazon" else goodreads)]
+
+        with (
+            patch.object(
+                self.plugin,
+                "_configured_provider_ids",
+                return_value=["amazon", "goodreads"],
+            ),
+            patch.object(self.plugin, "_search", side_effect=search),
+        ):
+            results = self.identify(
+                title="A Specter and an Invasion (Legacy of the Lost Book 3)",
+                authors=authors,
+                identifiers={},
+            )
+        self.assertTrue(results)
+        match = results[0]
+        self.assertEqual(match.title, "A Specter and an Invasion")
+        self.assertEqual(match.authors, authors)
+        self.assertEqual(match.series, "Legacy of the Lost")
+        self.assertEqual(match.series_index, 3)
+        self.assertIn("President Finley", match.comments)
+
     def test_namespace_configuration_and_source_registration(self):
         """Resolve both packaged modules through Calibre's import namespace."""
         module = importlib.import_module("calibre_plugins.metadata_engine")
@@ -1198,6 +1244,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 48:
+    if result.testsRun != 49:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
