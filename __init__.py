@@ -492,6 +492,8 @@ class MetadataEngineSource(Source):
                     return rows
                 if provider not in support[kind]:
                     continue
+                if anchor and provider == anchor.get("source"):
+                    continue
                 try:
                     if kind in {"isbn", "asin"}:
                         found = self._search(
