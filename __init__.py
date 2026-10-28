@@ -322,7 +322,19 @@ class MetadataEngineSource(Source):
                 if key == "oclc":
                     candidates += self._list(extra.get("oclc_numbers"))
                 normalized_requested = re.sub(r"[\s-]+", "", wanted or "").upper()
-                actual = next((item for item in candidates if re.sub(r"[\s-]+", "", item).upper() == normalized_requested), None) if wanted else None
+                actual = (
+                    next(
+                        (
+                            item
+                            for item in candidates
+                            if re.sub(r"[\s-]+", "", item).upper()
+                            == normalized_requested
+                        ),
+                        None,
+                    )
+                    if wanted
+                    else None
+                )
                 if not actual and candidates:
                     actual = candidates[0]
                 if key == "openlibrary" and wanted and wanted.upper().endswith("W"):
@@ -424,7 +436,9 @@ class MetadataEngineSource(Source):
                     "open_library_work_id"
                 )
             elif kind == "oclc":
-                value = extra.get("oclc") or next(iter(self._list(extra.get("oclc_numbers"))), None)
+                value = extra.get("oclc") or next(
+                    iter(self._list(extra.get("oclc_numbers"))), None
+                )
             else:
                 value = next(iter(self._list(extra.get("lccn"))), None)
             if kind == "goodreads" and not value and row.get("source") == "goodreads":
@@ -1226,8 +1240,11 @@ class MetadataEngineSource(Source):
         left_extra = left.get("extra") if isinstance(left.get("extra"), dict) else {}
         right_extra = right.get("extra") if isinstance(right.get("extra"), dict) else {}
         for keys in (
-            ("lccn",), ("oclc", "oclc_numbers"), ("goodreads_id",),
-            ("open_library_edition_id",), ("open_library_work_id",),
+            ("lccn",),
+            ("oclc", "oclc_numbers"),
+            ("goodreads_id",),
+            ("open_library_edition_id",),
+            ("open_library_work_id",),
         ):
             values = []
             for extra in (left_extra, right_extra):
@@ -1325,7 +1342,12 @@ class MetadataEngineSource(Source):
                 return True
         left_extra = left.get("extra") if isinstance(left.get("extra"), dict) else {}
         right_extra = right.get("extra") if isinstance(right.get("extra"), dict) else {}
-        for keys in (("lccn",), ("oclc", "oclc_numbers"), ("goodreads_id",), ("open_library_edition_id",)):
+        for keys in (
+            ("lccn",),
+            ("oclc", "oclc_numbers"),
+            ("goodreads_id",),
+            ("open_library_edition_id",),
+        ):
             values = []
             for extra in (left_extra, right_extra):
                 identifiers = set()
