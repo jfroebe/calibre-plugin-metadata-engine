@@ -865,6 +865,14 @@ class InstalledPluginTests(unittest.TestCase):
         other_format = dict(changed, extra={"format": "audiobook", "page_count": 600})
         self.assertTrue(self.plugin._identity_consistent(base, other_format))
 
+    def test_title_typography_matches_without_removing_words(self):
+        """Normalize curly apostrophes and dashes without conflating different words."""
+        original = {"title": "The Writer’s Book", "authors": ["A Writer"]}
+        equivalent = {"title": "The Writer's Book", "authors": ["A Writer"]}
+        wrong = {"title": "The Writers Book", "authors": ["A Writer"]}
+        self.assertTrue(self.plugin._work_description_matches(original, equivalent))
+        self.assertFalse(self.plugin._work_description_matches(original, wrong))
+
     def test_catalog_ids_are_preserved_but_dewey_is_not_an_identity(self):
         """Expose source identifiers while never merging on a classification number."""
         book = {
@@ -1151,6 +1159,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 46:
+    if result.testsRun != 47:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
