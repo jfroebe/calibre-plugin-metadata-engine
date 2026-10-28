@@ -711,6 +711,13 @@ class MetadataEngineSource(Source):
                     provider_rows = self._search(
                         provider_id, query, authors, identifiers, timeout
                     )
+                    if provider_id == "itunes":
+                        provider_rows.extend(
+                            self._search(
+                                provider_id, query, authors, identifiers, timeout,
+                                metadata_type="books",
+                            )
+                        )
                     rows.extend(provider_rows)
                     cover_count = sum(
                         1 for row in provider_rows if row.get("cover_url")
