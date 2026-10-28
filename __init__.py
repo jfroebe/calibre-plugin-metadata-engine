@@ -322,87 +322,88 @@ class MetadataEngineSource(Source):
         )
 
     def _expand_identifiers(
-        self,
-        log,
-        abort,
-        provider_ids,
-        rows,
-        query,
-        title,
-        authors,
-        identifiers,
-        timeout,
+        self, log, abort, provider_ids, rows, query, title, authors, identifiers, timeout
     ):
-        """Query compatible sources once for identifiers from initial matching results."""
+        """Follow initial edition and catalog IDs once through compatible providers."""
         support = {
             "asin": {"asintojson", "isbnlab", "audible", "audnexus"},
-            "isbn": {
-                "isbnlab",
-                "goodreads",
-                "google_books",
-                "hardcover",
-                "open_library",
-                "internet_archive",
-                "new_york_times_books",
-            },
+            "isbn": {"isbnlab", "goodreads", "google_books", "hardcover",
+                     "open_library", "internet_archive", "new_york_times_books"},
+            "lccn": {"loc_json_yaml"},
+            "goodreads": {"goodreads"},
         }
-        initial = {
-            "asin": self._identifier(identifiers, "asin"),
-            "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
-        }
+        aliases = {"asin": ("asin",), "isbn": ("isbn", "isbn13", "isbn10"),
+                   "lccn": ("lccn",), "goodreads": ("goodreads",)}
+        patterns = {"asin": r"[A-Z0-9]{10}", "isbn": r"(?:\d{13}|\d{9}[\dX])",
+                    "lccn": r"[A-Z0-9]{4,20}", "goodreads": r"\d{1,16}"}
+
+        def normalize(value):
+            return re.sub(r"[\s-]+", "", self._text(value) or "").upper()
+
+        def value_for(row, kind):
+            if kind in {"isbn", "asin"}:
+                return normalize(row.get(kind))
+            extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+            value = extra.get("goodreads_id" if kind == "goodreads" else "lccn")
+            if kind == "goodreads" and not value and row.get("source") == "goodreads":
+                value = row.get("source_id")
+            return normalize(value)
+
+        initial = {kind: normalize(self._identifier(identifiers, *keys))
+                   for kind, keys in aliases.items()}
         seeds = []
+        # Goodreads IDs and LCCNs are not sent on the initial generic search.
+        for kind in ("goodreads", "lccn"):
+            value = initial[kind]
+            if value and re.fullmatch(patterns[kind], value):
+                seeds.append((kind, value, None))
         for row in rows:
             if not self._matches_requested(row, title, authors, identifiers):
                 continue
-            for kind in ("isbn", "asin"):
-                value = re.sub(r"[\s-]+", "", self._text(row.get(kind)) or "").upper()
-                pattern = (
-                    r"(?:\d{13}|\d{9}[\dX])" if kind == "isbn" else r"[A-Z0-9]{10}"
-                )
-                if not re.fullmatch(pattern, value):
+            for kind in ("isbn", "asin", "goodreads", "lccn"):
+                value = value_for(row, kind)
+                if not value or not re.fullmatch(patterns[kind], value):
                     continue
-                original = re.sub(r"[\s-]+", "", initial[kind] or "").upper()
-                if value != original and not any(
-                    x[0] == kind and x[1] == value for x in seeds
-                ):
+                if kind in {"isbn", "asin"} and value == initial[kind]:
+                    continue
+                if not any(item[0] == kind and item[1] == value for item in seeds):
                     seeds.append((kind, value, row))
-        # Freeze the initial identifier set: follow-up results cannot trigger
-        # nested lookups. Bound expansion even for large multi-edition searches.
-        seeds = seeds[:4]
-        for kind, value, anchor in seeds:
+
+        # Freeze initial seeds. Results from these lookups never generate more
+        # lookups; four IDs and each compatible provider/ID pair are the limit.
+        for kind, value, anchor in seeds[:4]:
             for provider in provider_ids:
                 if abort.is_set():
                     return rows
                 if provider not in support[kind]:
                     continue
                 try:
-                    found = self._search(
-                        provider, query or value, authors, {kind: value}, timeout
-                    )
+                    if kind in {"isbn", "asin"}:
+                        found = self._search(provider, query or value, authors, {kind: value}, timeout)
+                    else:
+                        lookup = "goodreads:" + value if kind == "goodreads" else value
+                        found = self._search(provider, lookup, None, {}, timeout)
                     accepted = []
                     for candidate in found:
-                        actual = re.sub(
-                            r"[\s-]+", "", self._text(candidate.get(kind)) or ""
-                        ).upper()
-                        if (
-                            actual == value
-                            and self._compatible_identifiers(anchor, candidate)
-                            and self._identity_consistent(anchor, candidate)
+                        if value_for(candidate, kind) != value:
+                            continue
+                        if not self._matches_requested(candidate, title, authors, identifiers):
+                            continue
+                        if anchor and (
+                            not self._compatible_identifiers(anchor, candidate)
+                            or not self._identity_consistent(anchor, candidate)
                         ):
-                            accepted.append(candidate)
+                            continue
+                        accepted.append(candidate)
                     rows.extend(accepted)
                     log.info(
                         "Metadata Engine: identifier follow-up provider=%s kind=%s accepted=%d",
-                        provider,
-                        kind,
-                        len(accepted),
+                        provider, kind, len(accepted),
                     )
                 except Exception as exc:
                     log.error(
                         "Metadata Engine identifier follow-up provider %s kind %s failed: %s",
-                        provider,
-                        kind,
-                        exc,
+                        provider, kind, exc,
                     )
         return rows
 
