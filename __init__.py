@@ -1207,7 +1207,7 @@ class MetadataEngineSource(Source):
                 )
             ) % 10
             return stem + str(check)
-        if re.fullmatch(r"\d{13}", raw):
+        if re.fullmatch(r"97[89]\d{10}", raw):
             if (
                 sum(
                     int(char) * (1 if index % 2 == 0 else 3)
