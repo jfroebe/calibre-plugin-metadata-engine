@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import ssl
+import unicodedata
 from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -26,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 13)
+    version = (1, 1, 14)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -44,6 +45,11 @@ class MetadataEngineSource(Source):
             "series_index",
             "identifier:isbn",
             "identifier:asin",
+            "identifier:goodreads",
+            "identifier:lccn",
+            "identifier:oclc",
+            "identifier:dewey",
+            "identifier:openlibrary",
         ]
     )
     has_html_comments = False
@@ -178,6 +184,55 @@ class MetadataEngineSource(Source):
                                     provider_id, short_title, None, {}, timeout
                                 )
                                 retried_providers.add(provider_id)
+                        if (
+                            not found
+                            and title
+                            and len(self._list(authors)) > 1
+                            and provider_id
+                            in {
+                                "goodreads",
+                                "google_books",
+                                "hardcover",
+                                "open_library",
+                                "itunes",
+                            }
+                        ):
+                            short_title = self._search_title(title)
+                            variants = [None, *self._list(authors)[:3]]
+                            for person in variants:
+                                if abort.is_set():
+                                    return None
+                                if person is None and provider_id in retried_providers:
+                                    continue
+                                retry = self._search(
+                                    provider_id,
+                                    short_title,
+                                    [person] if person else None,
+                                    {},
+                                    timeout,
+                                    **(
+                                        {"metadata_type": media_type}
+                                        if media_type
+                                        else {}
+                                    ),
+                                )
+                                if person is None:
+                                    retried_providers.add(provider_id)
+                                target = {"title": title, "authors": authors}
+                                matching = [
+                                    item
+                                    for item in retry
+                                    if self._work_description_matches(target, item)
+                                ]
+                                log.info(
+                                    "Metadata Engine: contributor search provider=%s candidates=%d matches=%d",
+                                    provider_id,
+                                    len(retry),
+                                    len(matching),
+                                )
+                                if matching:
+                                    found.extend(matching)
+                                    break
                         rows.extend(found)
                     except Exception as exc:
                         log.error(
@@ -186,17 +241,34 @@ class MetadataEngineSource(Source):
 
             # An exact edition identifier ties the provider result to the
             # existing Calibre record even when the provider omits its authors.
-            requested_asin = self._identifier(identifiers, "asin")
-            if requested_asin and authors:
+            if authors:
                 for row in rows:
-                    row_asin = self._text(row.get("asin"))
-                    if (
-                        not self._list(row.get("authors"))
-                        and row_asin
-                        and row_asin.upper() == requested_asin.upper()
+                    for kind, aliases in (
+                        ("asin", ("asin",)),
+                        ("isbn", ("isbn", "isbn13", "isbn10")),
                     ):
-                        row["authors"] = self._list(authors)
+                        wanted = self._identifier(identifiers, *aliases)
+                        actual = self._text(row.get(kind))
+                        if wanted and actual and not self._list(row.get("authors")):
+                            wanted = re.sub(r"[\s-]+", "", wanted).upper()
+                            actual = re.sub(r"[\s-]+", "", actual).upper()
+                            if wanted == actual and self._matches_requested(
+                                row, title, authors, identifiers
+                            ):
+                                row["authors"] = self._list(authors)
+                                break
 
+            rows = self._expand_identifiers(
+                log,
+                abort,
+                provider_ids,
+                rows,
+                query,
+                title,
+                authors,
+                identifiers,
+                timeout,
+            )
             rows = self._recover_descriptions(
                 log,
                 abort,
@@ -225,6 +297,275 @@ class MetadataEngineSource(Source):
             log.exception("Metadata Engine identify failed")
             return "Metadata Engine identify failed: %s" % exc
 
+    def _matches_requested(self, row, title, authors, identifiers):
+        """Reject ID matches that contradict the requested title or contributors."""
+        if not self._identity_consistent({"title": title, "authors": authors}, row):
+            return False
+        matched_identifier = False
+        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+        for key, aliases in (
+            ("asin", ("asin",)),
+            ("isbn", ("isbn", "isbn13", "isbn10")),
+            ("lccn", ("lccn",)),
+            ("oclc", ("oclc",)),
+            ("goodreads", ("goodreads",)),
+            ("openlibrary", ("openlibrary",)),
+        ):
+            wanted = self._identifier(identifiers, *aliases)
+            if key in {"lccn", "oclc", "goodreads", "openlibrary"}:
+                extra_key = {
+                    "goodreads": "goodreads_id",
+                    "openlibrary": "open_library_edition_id",
+                    "lccn": "lccn",
+                    "oclc": "oclc",
+                }[key]
+                candidates = self._list(extra.get(extra_key))
+                if key == "oclc":
+                    candidates += self._list(extra.get("oclc_numbers"))
+                normalized_requested = re.sub(r"[\s-]+", "", wanted or "").upper()
+                actual = (
+                    next(
+                        (
+                            item
+                            for item in candidates
+                            if re.sub(r"[\s-]+", "", item).upper()
+                            == normalized_requested
+                        ),
+                        None,
+                    )
+                    if wanted
+                    else None
+                )
+                if not actual and candidates:
+                    actual = candidates[0]
+                if key == "openlibrary" and wanted and wanted.upper().endswith("W"):
+                    actual = self._text(extra.get("open_library_work_id"))
+                elif key == "openlibrary" and not actual:
+                    actual = self._text(extra.get("open_library_work_id"))
+                if (
+                    key == "goodreads"
+                    and not actual
+                    and row.get("source") == "goodreads"
+                ):
+                    actual = self._text(row.get("source_id"))
+            else:
+                actual = self._text(row.get(key))
+            if wanted and actual:
+                normalized_wanted = (
+                    self._canonical_isbn(wanted)
+                    if key == "isbn"
+                    else re.sub(r"[\s-]+", "", wanted).upper()
+                )
+                normalized_actual = (
+                    self._canonical_isbn(actual)
+                    if key == "isbn"
+                    else re.sub(r"[\s-]+", "", actual).upper()
+                )
+                if (
+                    normalized_wanted
+                    and normalized_actual
+                    and normalized_wanted != normalized_actual
+                ):
+                    return False
+                if normalized_wanted and normalized_wanted == normalized_actual:
+                    matched_identifier = True
+        return matched_identifier or bool(
+            title
+            and authors
+            and self._work_description_matches(
+                {"title": title, "authors": authors}, row
+            )
+        )
+
+    def _expand_identifiers(
+        self,
+        log,
+        abort,
+        provider_ids,
+        rows,
+        query,
+        title,
+        authors,
+        identifiers,
+        timeout,
+    ):
+        """Follow initial edition and catalog IDs once through compatible providers."""
+        support = {
+            "asin": {"asintojson", "isbnlab", "audible", "audnexus"},
+            "isbn": {
+                "isbnlab",
+                "goodreads",
+                "google_books",
+                "hardcover",
+                "open_library",
+                "internet_archive",
+                "new_york_times_books",
+            },
+            "lccn": {"loc_json_yaml", "open_library"},
+            "oclc": {"open_library"},
+            "goodreads": {"goodreads"},
+            "openlibrary": {"open_library"},
+        }
+        aliases = {
+            "asin": ("asin",),
+            "isbn": ("isbn", "isbn13", "isbn10"),
+            "lccn": ("lccn",),
+            "oclc": ("oclc",),
+            "goodreads": ("goodreads",),
+            "openlibrary": ("openlibrary",),
+        }
+        patterns = {
+            "asin": r"[A-Z0-9]{10}",
+            "isbn": r"(?:\d{13}|\d{9}[\dX])",
+            "lccn": r"[A-Z0-9]{4,20}",
+            "oclc": r"\d{1,20}",
+            "goodreads": r"\d{1,16}",
+            "openlibrary": r"OL\d+[MW]",
+        }
+
+        def normalize(value):
+            return re.sub(r"[\s-]+", "", self._text(value) or "").upper()
+
+        def value_for(row, kind):
+            if kind in {"isbn", "asin"}:
+                return normalize(row.get(kind))
+            extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+            if kind == "goodreads":
+                value = extra.get("goodreads_id")
+            elif kind == "openlibrary":
+                value = extra.get("open_library_edition_id") or extra.get(
+                    "open_library_work_id"
+                )
+            elif kind == "oclc":
+                value = extra.get("oclc") or next(
+                    iter(self._list(extra.get("oclc_numbers"))), None
+                )
+            else:
+                value = next(iter(self._list(extra.get("lccn"))), None)
+            if kind == "goodreads" and not value and row.get("source") == "goodreads":
+                value = row.get("source_id")
+            return normalize(value)
+
+        initial = {
+            kind: normalize(self._identifier(identifiers, *keys))
+            for kind, keys in aliases.items()
+        }
+        seeds = []
+        # Goodreads IDs and LCCNs are not sent on the initial generic search.
+        for kind in ("goodreads", "lccn", "oclc", "openlibrary"):
+            value = initial[kind]
+            if value and re.fullmatch(patterns[kind], value):
+                seeds.append((kind, value, None))
+        for row in rows:
+            if not self._matches_requested(row, title, authors, identifiers):
+                continue
+            for kind in ("isbn", "asin", "goodreads", "lccn", "oclc", "openlibrary"):
+                value = value_for(row, kind)
+                if not value or not re.fullmatch(patterns[kind], value):
+                    continue
+                if kind == "isbn" and not self._canonical_isbn(value):
+                    log.warning(
+                        "Metadata Engine: ignoring invalid ISBN from provider=%s",
+                        row.get("source"),
+                    )
+                    continue
+                equivalent = (
+                    self._canonical_isbn(value) == self._canonical_isbn(initial[kind])
+                    if kind == "isbn" and initial[kind]
+                    else value == initial[kind]
+                )
+                if kind in {"isbn", "asin"} and equivalent:
+                    continue
+                if not any(item[0] == kind and item[1] == value for item in seeds):
+                    seeds.append((kind, value, row))
+
+        # Freeze initial seeds. Results from these lookups never generate more
+        # lookups; four IDs and each compatible provider/ID pair are the limit.
+        if len(seeds) > 4:
+            log.warning(
+                "Metadata Engine: identifier follow-up limited to 4 of %d discovered IDs",
+                len(seeds),
+            )
+        visited = set()
+        for kind, value, anchor in seeds[:4]:
+            for provider in provider_ids:
+                if abort.is_set():
+                    return rows
+                if provider not in support[kind]:
+                    continue
+                if anchor and provider == anchor.get("source"):
+                    continue
+                pair = (provider, kind, value)
+                if pair in visited:
+                    continue
+                if len(visited) >= 12:
+                    log.warning(
+                        "Metadata Engine: identifier follow-up stopped at 12 requests"
+                    )
+                    return rows
+                visited.add(pair)
+                try:
+                    if kind in {"isbn", "asin"}:
+                        found = self._search(
+                            provider, query or value, authors, {kind: value}, timeout
+                        )
+                    else:
+                        lookup = "goodreads:" + value if kind == "goodreads" else value
+                        if provider == "open_library" and kind in {"lccn", "oclc"}:
+                            lookup = kind.upper() + ":" + value
+                        found = self._search(provider, lookup, None, {}, timeout)
+                    accepted = []
+                    for candidate in found:
+                        candidate_values = {value_for(candidate, kind)}
+                        if kind == "isbn":
+                            candidate_values = {
+                                self._canonical_isbn(item) for item in candidate_values
+                            }
+                            compare_value = self._canonical_isbn(value)
+                        else:
+                            compare_value = value
+                        if kind == "openlibrary":
+                            candidate_extra = (
+                                candidate.get("extra")
+                                if isinstance(candidate.get("extra"), dict)
+                                else {}
+                            )
+                            candidate_values.add(
+                                normalize(candidate_extra.get("open_library_work_id"))
+                            )
+                        if compare_value not in candidate_values:
+                            continue
+                        if not self._matches_requested(
+                            candidate, title, authors, identifiers
+                        ):
+                            continue
+                        if anchor and (
+                            not self._compatible_identifiers(anchor, candidate)
+                            or not self._identity_consistent(anchor, candidate)
+                        ):
+                            log.warning(
+                                "Metadata Engine: rejected conflicting identity evidence provider=%s kind=%s",
+                                provider,
+                                kind,
+                            )
+                            continue
+                        accepted.append(candidate)
+                    rows.extend(accepted)
+                    log.info(
+                        "Metadata Engine: identifier follow-up provider=%s kind=%s accepted=%d",
+                        provider,
+                        kind,
+                        len(accepted),
+                    )
+                except Exception as exc:
+                    log.error(
+                        "Metadata Engine identifier follow-up provider %s kind %s failed: %s",
+                        provider,
+                        kind,
+                        exc,
+                    )
+        return rows
+
     def _recover_descriptions(
         self,
         log,
@@ -241,26 +582,7 @@ class MetadataEngineSource(Source):
         """Retry configured title-search providers for an incomplete matching work."""
 
         def requested_match(row):
-            matched_identifier = False
-            for key, aliases in (
-                ("asin", ("asin",)),
-                ("isbn", ("isbn", "isbn13", "isbn10")),
-            ):
-                wanted = self._identifier(identifiers, *aliases)
-                actual = self._text(row.get(key))
-                if wanted and actual:
-                    normalized_wanted = re.sub(r"[\s-]+", "", wanted).upper()
-                    normalized_actual = re.sub(r"[\s-]+", "", actual).upper()
-                    if normalized_wanted != normalized_actual:
-                        return False
-                    matched_identifier = True
-            return matched_identifier or bool(
-                title
-                and authors
-                and self._work_description_matches(
-                    {"title": title, "authors": authors}, row
-                )
-            )
+            return self._matches_requested(row, title, authors, identifiers)
 
         matches = [row for row in self._dedupe(rows) if requested_match(row)]
         missing = [row for row in matches if not self._text(row.get("description"))]
@@ -554,10 +876,29 @@ class MetadataEngineSource(Source):
             tags.append("metadata-engine:%s" % self._text(row["source"]))
         mi.tags = list(dict.fromkeys(tags))
 
-        if row.get("isbn"):
+        if row.get("isbn") and self._canonical_isbn(row["isbn"]):
             mi.set_identifier("isbn", self._text(row["isbn"]))
         if row.get("asin"):
             mi.set_identifier("asin", self._text(row["asin"]))
+
+        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+        for scheme, keys in (
+            ("goodreads", ("goodreads_id",)),
+            ("lccn", ("lccn",)),
+            ("oclc", ("oclc", "oclc_numbers")),
+            ("dewey", ("dewey_decimal", "dewey_decimal_class")),
+            ("openlibrary", ("open_library_edition_id", "open_library_work_id")),
+        ):
+            value = next(
+                (
+                    self._list(extra.get(key))[0]
+                    for key in keys
+                    if self._list(extra.get(key))
+                ),
+                None,
+            )
+            if value:
+                mi.set_identifier(scheme, value)
 
         source = self._text(row.get("source"))
         source_id = self._text(row.get("source_id"))
@@ -660,7 +1001,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.13",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.14",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -781,7 +1122,9 @@ class MetadataEngineSource(Source):
     @classmethod
     def _work_title(cls, value):
         """Extract a numbered series suffix only for matching book works."""
-        title = (cls._text(value) or "").casefold()
+        title = unicodedata.normalize("NFKC", cls._text(value) or "").casefold()
+        title = title.translate(str.maketrans({"’": "'", "‘": "'", "–": "-", "—": "-"}))
+        title = " ".join(title.split())
         match = re.fullmatch(
             r"(.+?)\s+\((.+?)\s+(?:book\s*|#)(\d+(?:\.\d+)?)\)",
             title,
@@ -816,7 +1159,7 @@ class MetadataEngineSource(Source):
 
     @classmethod
     def _work_description_matches(cls, winner, donor):
-        """Require matching work title, complete author set and compatible series."""
+        """Require matching work title, compatible contributors and series."""
         left, left_series, left_number = cls._work_title(winner.get("title"))
         right, right_series, right_number = cls._work_title(donor.get("title"))
         if not left or left != right:
@@ -838,41 +1181,203 @@ class MetadataEngineSource(Source):
         ):
             return False
 
-        def authors(row):
-            return {
-                re.sub(r"[\W_]+", "", name.casefold())
-                for name in cls._list(row.get("authors"))
-                if re.sub(r"[\W_]+", "", name.casefold())
-            }
+        def names(row):
+            people = cls._list(row.get("authors"))
+            for contributor in row.get("contributors") or []:
+                if not isinstance(contributor, dict):
+                    continue
+                role = str(contributor.get("role") or "").casefold().strip()
+                if role in {"author", "writer", "editor", "edited by", "co-author"}:
+                    name = cls._text(contributor.get("name"))
+                    if name:
+                        people.append(name)
 
-        left_authors, right_authors = authors(winner), authors(donor)
-        return bool(left_authors and left_authors == right_authors)
+            def normalize(name):
+                if "," in name:
+                    parts = [part.strip() for part in name.split(",", 1)]
+                    if all(parts):
+                        name = parts[1] + " " + parts[0]
+                return re.sub(r"[\W_]+", "", name.casefold())
+
+            return {value for value in (normalize(name) for name in people) if value}
+
+        left_people, right_people = names(winner), names(donor)
+        # One source may list a subset of an anthology's authors or identify
+        # an editor as its author. Require a nonempty subset, never mere overlap
+        # between two conflicting contributor lists.
+        return bool(
+            left_people
+            and right_people
+            and (left_people <= right_people or right_people <= left_people)
+        )
+
+    @classmethod
+    def _canonical_isbn(cls, value):
+        """Return a validated ISBN-13 identity, or an empty string for invalid ISBNs."""
+        raw = re.sub(r"[\s-]+", "", cls._text(value) or "").upper()
+        if re.fullmatch(r"\d{9}[\dX]", raw):
+            digits = [10 if char == "X" else int(char) for char in raw]
+            if sum((10 - index) * digit for index, digit in enumerate(digits)) % 11:
+                return ""
+            stem = "978" + raw[:9]
+            check = (
+                -sum(
+                    int(char) * (1 if index % 2 == 0 else 3)
+                    for index, char in enumerate(stem)
+                )
+            ) % 10
+            return stem + str(check)
+        if re.fullmatch(r"97[89]\d{10}", raw):
+            if (
+                sum(
+                    int(char) * (1 if index % 2 == 0 else 3)
+                    for index, char in enumerate(raw)
+                )
+                % 10
+                == 0
+            ):
+                return raw
+        return ""
 
     @classmethod
     def _compatible_identifiers(cls, left, right):
         """Reject explicitly conflicting edition identifiers."""
         for key in ("isbn", "asin"):
             a, b = cls._text(left.get(key)), cls._text(right.get(key))
-            if (
-                a
-                and b
-                and re.sub(r"[\s-]+", "", a).upper() != re.sub(r"[\s-]+", "", b).upper()
+            if a and b:
+                left_id = (
+                    cls._canonical_isbn(a)
+                    if key == "isbn"
+                    else re.sub(r"[\s-]+", "", a).upper()
+                )
+                right_id = (
+                    cls._canonical_isbn(b)
+                    if key == "isbn"
+                    else re.sub(r"[\s-]+", "", b).upper()
+                )
+                if left_id and right_id and left_id != right_id:
+                    return False
+        left_extra = left.get("extra") if isinstance(left.get("extra"), dict) else {}
+        right_extra = right.get("extra") if isinstance(right.get("extra"), dict) else {}
+        for keys in (
+            ("lccn",),
+            ("oclc", "oclc_numbers"),
+            ("goodreads_id",),
+            ("open_library_edition_id",),
+            ("open_library_work_id",),
+        ):
+            values = []
+            for extra in (left_extra, right_extra):
+                ids = set()
+                for key in keys:
+                    ids.update(
+                        re.sub(r"[\s-]+", "", item).upper()
+                        for item in cls._list(extra.get(key))
+                    )
+                values.append(ids)
+            if values[0] and values[1] and not values[0].intersection(values[1]):
+                return False
+        return True
+
+    @classmethod
+    def _edition_evidence_conflicts(cls, left, right):
+        """Detect strong, corroborated contradictions for the same known format."""
+
+        def evidence(row):
+            extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+            raw_format = str(
+                extra.get("physical_format") or extra.get("format") or ""
+            ).casefold()
+            if "audio" in raw_format:
+                kind = "audio"
+            elif any(word in raw_format for word in ("kindle", "ebook", "e-book")):
+                kind = "ebook"
+            elif any(
+                word in raw_format
+                for word in ("hardcover", "hardback", "paperback", "print")
             ):
+                kind = "print"
+            else:
+                kind = ""
+            try:
+                pages = int(extra.get("page_count") or row.get("page_count") or 0)
+                year = int(str(row.get("published_year") or "")[:4])
+            except (TypeError, ValueError):
+                return kind, 0, 0
+            return kind, pages, year
+
+        left_kind, left_pages, left_year = evidence(left)
+        right_kind, right_pages, right_year = evidence(right)
+        if (
+            not left_kind
+            or left_kind != right_kind
+            or not all((left_pages, right_pages, left_year, right_year))
+        ):
+            return False
+        # One field can legitimately vary between providers. Require two large
+        # disagreements before treating the edition evidence as contradictory.
+        return abs(left_year - right_year) > 5 and abs(left_pages - right_pages) > max(
+            100, 0.3 * max(left_pages, right_pages)
+        )
+
+    @classmethod
+    def _identity_consistent(cls, left, right):
+        """Reject contradictory titles or known contributor sets even with a shared ID."""
+        left_title, _, _ = cls._work_title(left.get("title"))
+        right_title, _, _ = cls._work_title(right.get("title"))
+        if left_title and right_title and left_title != right_title:
+            return False
+        if cls._edition_evidence_conflicts(left, right):
+            return False
+        left_series, left_number = cls._series_identity(left)
+        right_series, right_number = cls._series_identity(right)
+        if left_series and right_series and left_series != right_series:
+            return False
+        if (
+            left_number is not None
+            and right_number is not None
+            and left_number != right_number
+        ):
+            return False
+        if cls._list(left.get("authors")) and cls._list(right.get("authors")):
+            if not cls._work_description_matches(left, right):
                 return False
         return True
 
     @classmethod
     def _same_edition(cls, left, right):
         """Accept a shared edition identifier or the same provider record."""
-        if not cls._compatible_identifiers(left, right):
+        if not cls._compatible_identifiers(left, right) or not cls._identity_consistent(
+            left, right
+        ):
             return False
         for key in ("isbn", "asin"):
             a, b = cls._text(left.get(key)), cls._text(right.get(key))
-            if (
-                a
-                and b
-                and re.sub(r"[\s-]+", "", a).upper() == re.sub(r"[\s-]+", "", b).upper()
-            ):
+            if key == "isbn":
+                a, b = cls._canonical_isbn(a), cls._canonical_isbn(b)
+            else:
+                a = re.sub(r"[\s-]+", "", a or "").upper()
+                b = re.sub(r"[\s-]+", "", b or "").upper()
+            if a and b and a == b:
+                return True
+        left_extra = left.get("extra") if isinstance(left.get("extra"), dict) else {}
+        right_extra = right.get("extra") if isinstance(right.get("extra"), dict) else {}
+        for keys in (
+            ("lccn",),
+            ("oclc", "oclc_numbers"),
+            ("goodreads_id",),
+            ("open_library_edition_id",),
+        ):
+            values = []
+            for extra in (left_extra, right_extra):
+                identifiers = set()
+                for key in keys:
+                    identifiers.update(
+                        re.sub(r"[\s-]+", "", item).upper()
+                        for item in cls._list(extra.get(key))
+                    )
+                values.append(identifiers)
+            if values[0].intersection(values[1]):
                 return True
         return bool(
             cls._text(left.get("source"))
@@ -886,7 +1391,9 @@ class MetadataEngineSource(Source):
     @classmethod
     def _merge_metadata(cls, winner, donor):
         """Fill missing work or edition fields from a compatible provider result."""
-        if not cls._compatible_identifiers(winner, donor):
+        if not cls._compatible_identifiers(
+            winner, donor
+        ) or not cls._identity_consistent(winner, donor):
             return False
         edition = cls._same_edition(winner, donor)
         work = cls._work_description_matches(winner, donor)
@@ -905,6 +1412,23 @@ class MetadataEngineSource(Source):
         if genres:
             winner["genres"] = list(dict.fromkeys(genres))
 
+        winner_extra = dict(winner.get("extra") or {})
+        donor_extra = donor.get("extra") if isinstance(donor.get("extra"), dict) else {}
+        extra_fields = ["open_library_work_id", "dewey_decimal", "dewey_decimal_class"]
+        if edition:
+            extra_fields += [
+                "goodreads_id",
+                "lccn",
+                "oclc",
+                "oclc_numbers",
+                "open_library_edition_id",
+            ]
+        for key in extra_fields:
+            if not winner_extra.get(key) and donor_extra.get(key):
+                winner_extra[key] = donor_extra[key]
+        if winner_extra:
+            winner["extra"] = winner_extra
+
         if edition:
             for field in (
                 "authors",
@@ -916,7 +1440,11 @@ class MetadataEngineSource(Source):
                 "cover_url",
             ):
                 value = donor.get(field)
+                if field == "isbn" and value and not cls._canonical_isbn(value):
+                    continue
                 current = winner.get(field)
+                if field == "isbn" and current and not cls._canonical_isbn(current):
+                    current = None
                 if (
                     not current or (isinstance(current, str) and not current.strip())
                 ) and value:
@@ -943,7 +1471,7 @@ class MetadataEngineSource(Source):
         ):
             row = dict(original)
             if row.get("isbn"):
-                key = ("isbn", str(row["isbn"]).replace("-", "").replace(" ", ""))
+                key = ("isbn", cls._canonical_isbn(row["isbn"]) or str(row["isbn"]))
             elif row.get("asin"):
                 key = ("asin", str(row["asin"]).upper())
             elif row.get("source") and row.get("source_id"):
@@ -960,7 +1488,18 @@ class MetadataEngineSource(Source):
                 )
             group = groups.setdefault(key, [])
             existing = next(
-                (item for item in group if cls._compatible_identifiers(item, row)), None
+                (
+                    item
+                    for item in group
+                    if (
+                        cls._same_edition(item, row)
+                        or (
+                            cls._compatible_identifiers(item, row)
+                            and cls._work_description_matches(item, row)
+                        )
+                    )
+                ),
+                None,
             )
             if existing is None:
                 group.append(row)
