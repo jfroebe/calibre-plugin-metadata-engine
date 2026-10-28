@@ -754,7 +754,7 @@ class MetadataEngineSource(Source):
                         continue
                     extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
                     value = self._text(extra.get("goodreads_id") or row.get("source_id"))
-                    if value and self._identity_consistent({"title": title, "authors": authors}, row):
+                    if value and (not requested or value == requested) and self._identity_consistent({"title": title, "authors": authors}, row):
                         ids.append(value)
                 for value in list(dict.fromkeys(ids))[:4]:
                     if abort.is_set():
@@ -1211,6 +1211,16 @@ class MetadataEngineSource(Source):
             return 2
         if wanted_asin and row_asin:
             return 0
+
+        wanted_goodreads = cls._identifier(
+            identifiers, "goodreads", "metadata_engine_goodreads"
+        )
+        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+        row_goodreads = cls._text(extra.get("goodreads_id"))
+        if not row_goodreads and row.get("source") == "goodreads":
+            row_goodreads = cls._text(row.get("source_id"))
+        if wanted_goodreads and row_goodreads:
+            return 2 if wanted_goodreads == row_goodreads else 0
 
         return 1
 
