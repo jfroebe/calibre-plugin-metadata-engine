@@ -26,7 +26,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 13)
+    version = (1, 1, 14)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -660,7 +660,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.13",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.14",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -816,7 +816,7 @@ class MetadataEngineSource(Source):
 
     @classmethod
     def _work_description_matches(cls, winner, donor):
-        """Require matching work title, complete author set and compatible series."""
+        """Require matching work title, compatible contributors and series."""
         left, left_series, left_number = cls._work_title(winner.get("title"))
         right, right_series, right_number = cls._work_title(donor.get("title"))
         if not left or left != right:
@@ -838,15 +838,35 @@ class MetadataEngineSource(Source):
         ):
             return False
 
-        def authors(row):
-            return {
-                re.sub(r"[\W_]+", "", name.casefold())
-                for name in cls._list(row.get("authors"))
-                if re.sub(r"[\W_]+", "", name.casefold())
-            }
+        def names(row):
+            people = cls._list(row.get("authors"))
+            for contributor in row.get("contributors") or []:
+                if not isinstance(contributor, dict):
+                    continue
+                role = str(contributor.get("role") or "").casefold().strip()
+                if role in {"author", "writer", "editor", "edited by", "co-author"}:
+                    name = cls._text(contributor.get("name"))
+                    if name:
+                        people.append(name)
 
-        left_authors, right_authors = authors(winner), authors(donor)
-        return bool(left_authors and left_authors == right_authors)
+            def normalize(name):
+                if "," in name:
+                    parts = [part.strip() for part in name.split(",", 1)]
+                    if all(parts):
+                        name = parts[1] + " " + parts[0]
+                return re.sub(r"[\W_]+", "", name.casefold())
+
+            return {value for value in (normalize(name) for name in people) if value}
+
+        left_people, right_people = names(winner), names(donor)
+        # One source may list a subset of an anthology's authors or identify
+        # an editor as its author. Require a nonempty subset, never mere overlap
+        # between two conflicting contributor lists.
+        return bool(
+            left_people
+            and right_people
+            and (left_people <= right_people or right_people <= left_people)
+        )
 
     @classmethod
     def _compatible_identifiers(cls, left, right):
