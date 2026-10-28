@@ -746,38 +746,73 @@ class MetadataEngineSource(Source):
             # book record has the cover. Follow only initial IDs, once each.
             if "goodreads" in provider_ids:
                 ids = []
-                requested = self._identifier(identifiers, "goodreads", "metadata_engine_goodreads")
+                requested = self._identifier(
+                    identifiers, "goodreads", "metadata_engine_goodreads"
+                )
                 if requested:
                     ids.append(requested)
                 for row in rows:
                     if row.get("source") != "goodreads":
                         continue
-                    extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
-                    value = self._text(extra.get("goodreads_id") or row.get("source_id"))
-                    if value and (not requested or value == requested) and self._identity_consistent({"title": title, "authors": authors}, row):
+                    extra = (
+                        row.get("extra") if isinstance(row.get("extra"), dict) else {}
+                    )
+                    value = self._text(
+                        extra.get("goodreads_id") or row.get("source_id")
+                    )
+                    if (
+                        value
+                        and (not requested or value == requested)
+                        and self._identity_consistent(
+                            {"title": title, "authors": authors}, row
+                        )
+                    ):
                         ids.append(value)
                 for value in list(dict.fromkeys(ids))[:4]:
                     if abort.is_set():
                         return None
                     if not re.fullmatch(r"\d{1,16}", value):
-                        log.warning("Metadata Engine cover: invalid Goodreads ID ignored")
+                        log.warning(
+                            "Metadata Engine cover: invalid Goodreads ID ignored"
+                        )
                         continue
                     try:
-                        found = self._search("goodreads", "goodreads:" + value, None, {}, timeout)
+                        found = self._search(
+                            "goodreads", "goodreads:" + value, None, {}, timeout
+                        )
                         for row in found:
-                            extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
-                            returned = self._text(extra.get("goodreads_id") or row.get("source_id"))
+                            extra = (
+                                row.get("extra")
+                                if isinstance(row.get("extra"), dict)
+                                else {}
+                            )
+                            returned = self._text(
+                                extra.get("goodreads_id") or row.get("source_id")
+                            )
                             if (
                                 returned == value
-                                and self._identity_consistent({"title": title, "authors": authors}, row)
+                                and self._identity_consistent(
+                                    {"title": title, "authors": authors}, row
+                                )
                                 and self._cover_identifier_score(row, identifiers)
                             ):
                                 rows.append(row)
                             else:
-                                log.warning("Metadata Engine cover: rejected conflicting Goodreads record id=%s", value)
-                        log.info("Metadata Engine cover: Goodreads ID=%s returned %d record(s)", value, len(found))
+                                log.warning(
+                                    "Metadata Engine cover: rejected conflicting Goodreads record id=%s",
+                                    value,
+                                )
+                        log.info(
+                            "Metadata Engine cover: Goodreads ID=%s returned %d record(s)",
+                            value,
+                            len(found),
+                        )
                     except Exception as exc:
-                        log.error("Metadata Engine cover: Goodreads ID=%s failed: %s", value, exc)
+                        log.error(
+                            "Metadata Engine cover: Goodreads ID=%s failed: %s",
+                            value,
+                            exc,
+                        )
 
             target = {"title": title, "authors": authors}
             rows = [
@@ -1105,7 +1140,9 @@ class MetadataEngineSource(Source):
         source = self._text(row.get("source"))
         source_id = self._text(row.get("source_id"))
         if source and source_id:
-            self._cover_urls[("metadata_engine_" + source.lower().replace(" ", "_"), source_id)] = url
+            self._cover_urls[
+                ("metadata_engine_" + source.lower().replace(" ", "_"), source_id)
+            ] = url
         goodreads_id = self._text(extra.get("goodreads_id"))
         if not goodreads_id and source == "goodreads":
             goodreads_id = source_id
