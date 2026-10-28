@@ -303,7 +303,9 @@ class MetadataEngineSource(Source):
                     len(found),
                 )
                 for winner in rows:
-                    if not requested_match(winner) or self._text(winner.get("description")):
+                    if not requested_match(winner) or self._text(
+                        winner.get("description")
+                    ):
                         continue
                     for donor in found:
                         description = self._text(donor.get("description"))
@@ -325,7 +327,10 @@ class MetadataEngineSource(Source):
                             shared or self._work_description_matches(winner, donor)
                         ):
                             winner["description"] = description
-                            log.info("Metadata Engine: description supplied by provider=%r", provider_id)
+                            log.info(
+                                "Metadata Engine: description supplied by provider=%r",
+                                provider_id,
+                            )
                             break
                 if not any(
                     requested_match(row) and not self._text(row.get("description"))
