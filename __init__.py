@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 16)
+    version = (1, 1, 17)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1048,7 +1048,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.16",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.17",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -1512,44 +1512,24 @@ class MetadataEngineSource(Source):
     def _dedupe(cls, rows):
         """Retain ranked candidates and enrich only compatible matching records."""
         best = []
-        groups = {}
         for original in sorted(
             rows, key=lambda row: float(row.get("confidence") or 0), reverse=True
         ):
             row = dict(original)
-            if row.get("isbn"):
-                key = ("isbn", cls._canonical_isbn(row["isbn"]) or str(row["isbn"]))
-            elif row.get("asin"):
-                key = ("asin", str(row["asin"]).upper())
-            elif row.get("source") and row.get("source_id"):
-                key = (
-                    "source",
-                    str(row["source"]).casefold(),
-                    str(row["source_id"]).casefold(),
-                )
-            else:
-                key = (
-                    "book",
-                    str(row.get("title") or "").casefold(),
-                    tuple(a.casefold() for a in cls._list(row.get("authors"))),
-                )
-            group = groups.setdefault(key, [])
             existing = next(
                 (
                     item
-                    for item in group
-                    if (
-                        cls._same_edition(item, row)
-                        or (
-                            cls._compatible_identifiers(item, row)
-                            and cls._work_description_matches(item, row)
-                        )
+                    for item in best
+                    if cls._same_edition(item, row)
+                    or (
+                        cls._compatible_identifiers(item, row)
+                        and cls._identity_consistent(item, row)
+                        and cls._work_description_matches(item, row)
                     )
                 ),
                 None,
             )
             if existing is None:
-                group.append(row)
                 best.append(row)
             else:
                 cls._merge_metadata(existing, row)
