@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 17)
+    version = (1, 1, 18)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -913,12 +913,14 @@ class MetadataEngineSource(Source):
             "kindle e-books",
         }
         excluded.add(source)
+        normalize_label = lambda value: re.sub(r"[-_\\s]+", " ", value.casefold()).strip()
+        excluded = {normalize_label(value) for value in excluded}
         tags = self._list(row.get("genres")) + self._list(row.get("tags"))
         mi.tags = list(
             dict.fromkeys(
                 tag
                 for tag in tags
-                if tag.casefold().strip() not in excluded
+                if normalize_label(tag) not in excluded
                 and not tag.casefold().strip().startswith("metadata-engine:")
             )
         )
@@ -1048,7 +1050,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.17",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.18",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
