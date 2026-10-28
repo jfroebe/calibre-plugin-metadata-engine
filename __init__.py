@@ -302,7 +302,31 @@ class MetadataEngineSource(Source):
                     provider_id,
                     len(found),
                 )
-                rows.extend(found)
+                for winner in rows:
+                    if not requested_match(winner) or self._text(winner.get("description")):
+                        continue
+                    for donor in found:
+                        description = self._text(donor.get("description"))
+                        if not description:
+                            continue
+                        shared = False
+                        conflict = False
+                        for key in ("isbn", "asin"):
+                            left = self._text(winner.get(key))
+                            right = self._text(donor.get(key))
+                            if left and right:
+                                left = re.sub(r"[\s-]+", "", left).upper()
+                                right = re.sub(r"[\s-]+", "", right).upper()
+                                if left != right:
+                                    conflict = True
+                                    break
+                                shared = True
+                        if not conflict and (
+                            shared or self._work_description_matches(winner, donor)
+                        ):
+                            winner["description"] = description
+                            log.info("Metadata Engine: description supplied by provider=%r", provider_id)
+                            break
                 if not any(
                     requested_match(row) and not self._text(row.get("description"))
                     for row in self._dedupe(rows)
