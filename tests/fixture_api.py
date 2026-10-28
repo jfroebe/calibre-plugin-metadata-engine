@@ -99,7 +99,7 @@ def serve():
             elif path.path == "/plugins/goodreads/search":
                 payload = {"results": []}
                 if query.get("query") == [
-                    "a specter and an invasion"
+                    "A Specter and an Invasion"
                 ] and not query.get("author"):
                     payload = {
                         "results": [
