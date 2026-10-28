@@ -737,6 +737,23 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(search.call_args.args[0], "open_library")
         self.assertEqual(search.call_args.args[3], {"isbn": "9781234567897"})
 
+    def test_multi_author_lookup_tries_individual_contributors(self):
+        """Recover an anthology listed by one contributor when a combined query misses."""
+        self.plugin.prefs["plugin_ids"] = "hardcover"
+        def lookup(provider, query, authors, identifiers, timeout, **kwargs):
+            if authors == ["B Writer"]:
+                return [{"source": "hardcover", "source_id": "result",
+                         "title": "An Anthology", "authors": ["B Writer"],
+                         "description": "Anthology synopsis", "confidence": 0.9}]
+            return []
+        with patch.object(self.plugin, "_search", side_effect=lookup) as search:
+            results = self.identify(title="An Anthology",
+                                    authors=["A Writer", "B Writer", "C Writer"])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].comments, "Anthology synopsis")
+        self.assertEqual([call.args[2] for call in search.call_args_list],
+                         [["A Writer", "B Writer", "C Writer"], None, ["A Writer"], ["B Writer"]])
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -869,6 +886,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 38:
+    if result.testsRun != 39:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
