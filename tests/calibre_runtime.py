@@ -172,7 +172,9 @@ class InstalledPluginTests(unittest.TestCase):
         self.plugin.prefs["plugin_ids"] = "fixture"
         self.identify(title="Dune", identifiers={"isbn": "9780441013593"})
         self.assertNotIn("/plugins", [path for path, _ in self.requests])
-        searches = [query for path, query in self.requests if path == "/plugins/fixture/search"]
+        searches = [
+            query for path, query in self.requests if path == "/plugins/fixture/search"
+        ]
         self.assertEqual(searches[0]["isbn"], ["9780441013593"])
 
     def test_failures_are_isolated(self):
