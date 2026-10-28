@@ -236,6 +236,7 @@ class MetadataEngineSource(Source):
         authors,
         identifiers,
         timeout,
+        retried_providers=None,
     ):
         """Retry configured title-search providers for an incomplete matching work."""
 
