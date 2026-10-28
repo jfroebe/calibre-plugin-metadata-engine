@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 14)
+    version = (1, 1, 15)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -257,6 +257,32 @@ class MetadataEngineSource(Source):
                             ):
                                 row["authors"] = self._list(authors)
                                 break
+
+            # A title-only lookup can return an authorless edition. Trust the
+            # requested contributors only when a second source independently
+            # confirms the same work and contributor set.
+            target = {"title": title, "authors": authors}
+            if title and authors:
+                verified = [
+                    row
+                    for row in rows
+                    if self._work_description_matches(target, row)
+                ]
+                for row in rows:
+                    if self._list(row.get("authors")):
+                        continue
+                    for witness in verified:
+                        if (
+                            self._identity_consistent(target, row)
+                            and self._identity_consistent(row, witness)
+                            and self._compatible_identifiers(row, witness)
+                        ):
+                            row["authors"] = self._list(authors)
+                            log.info(
+                                "Metadata Engine: corroborated missing contributors using provider=%s",
+                                witness.get("source"),
+                            )
+                            break
 
             rows = self._expand_identifiers(
                 log,
@@ -840,7 +866,7 @@ class MetadataEngineSource(Source):
         # Keep a structured provider series authoritative when available.
         inferred_series = None
         match = re.fullmatch(
-            r"(.+?)\s+\((.+?)\s+Book\s+(\d+(?:\.\d+)?)\)", title, re.IGNORECASE
+            r"(.+?)\s+\((.+?)\s+(?:Book\s*|#)(\d+(?:\.\d+)?)\)", title, re.IGNORECASE
         )
         if match:
             series_name = match.group(2).strip()
