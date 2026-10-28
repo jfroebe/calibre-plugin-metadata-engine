@@ -1483,7 +1483,7 @@ class MetadataEngineSource(Source):
         def normalize_term_number(title):
             numbers = {"one": "1", "two": "2", "three": "3", "four": "4"}
             return re.sub(
-                r"\\bterm\\s+(one|two|three|four)\\b",
+                r"\bterm\s+(one|two|three|four)\b",
                 lambda match: "term " + numbers[match.group(1)],
                 title,
             )
