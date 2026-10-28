@@ -180,7 +180,7 @@ class InstalledPluginTests(unittest.TestCase):
                 "Space Opera",
             ],
             "tags": ["goodreads", "audiobooks", "metadata-engine:goodreads"],
-            "description": "Source: Goodreads\\nTime has passed. Goodreads is mentioned in prose.",
+            "description": "Source: Goodreads\nTime has passed. Goodreads is mentioned in prose.",
         }
         metadata = self.plugin._to_metadata(row, 0)
         self.assertEqual(
