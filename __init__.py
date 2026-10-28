@@ -1490,6 +1490,21 @@ class MetadataEngineSource(Source):
 
         left_title = normalize_term_number(left_title)
         right_title = normalize_term_number(right_title)
+        # Apple audiobook titles encode the series in a different explicit form.
+        # Only accept the form when both the series and position agree.
+        term_pattern = r"^(.+?):\\s*(.+?)\\s+-\\s+term\\s+(\\d+(?:\\.\\d+)?)$"
+        audio_pattern = (
+            r"^(.+?):\\s*(.+?),\\s*book\\s+(\\d+(?:\\.\\d+)?)"
+            r"(?:\\s*\\(unabridged\\))?$"
+        )
+        for term_title, audio_title in (
+            (left_title, right_title),
+            (right_title, left_title),
+        ):
+            term = re.fullmatch(term_pattern, term_title)
+            audio = re.fullmatch(audio_pattern, audio_title)
+            if term and audio and term.groups() == audio.groups():
+                return True
         for long_title, short_title, series_row in (
             (left_title, right_title, right),
             (right_title, left_title, left),
