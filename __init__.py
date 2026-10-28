@@ -26,7 +26,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 11)
+    version = (1, 1, 12)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -303,35 +303,16 @@ class MetadataEngineSource(Source):
                     len(found),
                 )
                 for winner in rows:
-                    if not requested_match(winner) or self._text(
-                        winner.get("description")
-                    ):
+                    if not requested_match(winner):
                         continue
                     for donor in found:
-                        description = self._text(donor.get("description"))
-                        if not description:
-                            continue
-                        shared = False
-                        conflict = False
-                        for key in ("isbn", "asin"):
-                            left = self._text(winner.get(key))
-                            right = self._text(donor.get(key))
-                            if left and right:
-                                left = re.sub(r"[\s-]+", "", left).upper()
-                                right = re.sub(r"[\s-]+", "", right).upper()
-                                if left != right:
-                                    conflict = True
-                                    break
-                                shared = True
-                        if not conflict and (
-                            shared or self._work_description_matches(winner, donor)
-                        ):
-                            winner["description"] = description
-                            log.info(
-                                "Metadata Engine: description supplied by provider=%r",
-                                provider_id,
-                            )
-                            break
+                        before = self._text(winner.get("description"))
+                        if self._merge_metadata(winner, donor):
+                            if not before and self._text(winner.get("description")):
+                                log.info(
+                                    "Metadata Engine: description supplied by provider=%r",
+                                    provider_id,
+                                )
                 if not any(
                     requested_match(row) and not self._text(row.get("description"))
                     for row in self._dedupe(rows)
@@ -683,7 +664,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.11",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.12",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -829,14 +810,76 @@ class MetadataEngineSource(Source):
         return bool(left_authors and left_authors == right_authors)
 
     @classmethod
-    def _dedupe(cls, rows):
-        """Keep ranked identity fields and fill missing content from duplicates.
+    def _compatible_identifiers(cls, left, right):
+        """Reject explicitly conflicting edition identifiers."""
+        for key in ("isbn", "asin"):
+            a, b = cls._text(left.get(key)), cls._text(right.get(key))
+            if a and b and re.sub(r"[\s-]+", "", a).upper() != re.sub(
+                r"[\s-]+", "", b
+            ).upper():
+                return False
+        return True
 
-        Only rows with the same existing edition/source key contribute content.
-        Never overwrite a populated description or cover with an empty value.
-        Cover downloading separately retains every URL for transport fallback.
-        """
-        best = {}
+    @classmethod
+    def _same_edition(cls, left, right):
+        """Accept a shared edition identifier or the same provider record."""
+        if not cls._compatible_identifiers(left, right):
+            return False
+        for key in ("isbn", "asin"):
+            a, b = cls._text(left.get(key)), cls._text(right.get(key))
+            if a and b and re.sub(r"[\s-]+", "", a).upper() == re.sub(
+                r"[\s-]+", "", b
+            ).upper():
+                return True
+        return bool(
+            cls._text(left.get("source"))
+            and cls._text(left.get("source_id"))
+            and str(left["source"]).casefold() == str(right.get("source") or "").casefold()
+            and str(left["source_id"]).casefold() == str(right.get("source_id") or "").casefold()
+        )
+
+    @classmethod
+    def _merge_metadata(cls, winner, donor):
+        """Fill missing work or edition fields from a compatible provider result."""
+        if not cls._compatible_identifiers(winner, donor):
+            return False
+        edition = cls._same_edition(winner, donor)
+        work = cls._work_description_matches(winner, donor)
+        if not edition and not work:
+            return False
+
+        for field in ("description", "series"):
+            if not winner.get(field) or (isinstance(winner[field], str) and not winner[field].strip()):
+                value = donor.get(field)
+                if value and (not isinstance(value, str) or value.strip()):
+                    winner[field] = value
+        # Genre lists describe the work; preserve order and remove duplicates.
+        genres = cls._list(winner.get("genres")) + cls._list(donor.get("genres"))
+        if genres:
+            winner["genres"] = list(dict.fromkeys(genres))
+
+        if edition:
+            for field in ("authors", "publisher", "published_year", "language", "isbn", "asin", "cover_url"):
+                value = donor.get(field)
+                if not winner.get(field) and value:
+                    winner[field] = value
+        elif (
+            cls._text(winner.get("title")) == cls._text(donor.get("title"))
+            and tuple(a.casefold() for a in cls._list(winner.get("authors")))
+            == tuple(a.casefold() for a in cls._list(donor.get("authors")))
+            and not cls._text(winner.get("cover_url"))
+            and cls._text(donor.get("cover_url"))
+        ):
+            # Preserve the existing cross-provider cover behavior for exact work
+            # titles and author ordering when identifiers do not conflict.
+            winner["cover_url"] = donor["cover_url"]
+        return True
+
+    @classmethod
+    def _dedupe(cls, rows):
+        """Retain ranked candidates and enrich only compatible matching records."""
+        best = []
+        groups = {}
         for original in sorted(
             rows, key=lambda row: float(row.get("confidence") or 0), reverse=True
         ):
@@ -857,54 +900,20 @@ class MetadataEngineSource(Source):
                     str(row.get("title") or "").casefold(),
                     tuple(a.casefold() for a in cls._list(row.get("authors"))),
                 )
-            old = best.get(key)
-            if old is None:
-                best[key] = row
+            group = groups.setdefault(key, [])
+            existing = next(
+                (item for item in group if cls._compatible_identifiers(item, row)), None
+            )
+            if existing is None:
+                group.append(row)
+                best.append(row)
             else:
-                for field in ("description", "cover_url"):
-                    if not cls._text(old.get(field)) and cls._text(row.get(field)):
-                        old[field] = row[field]
-        for winner in best.values():
-            authors = tuple(a.casefold() for a in cls._list(winner.get("authors")))
-            if not authors:
-                continue
+                cls._merge_metadata(existing, row)
+
+        for winner in best:
             for donor in sorted(
                 rows, key=lambda row: float(row.get("confidence") or 0), reverse=True
             ):
-                if cls._work_description_matches(winner, donor):
-                    conflict = any(
-                        winner.get(key)
-                        and donor.get(key)
-                        and str(winner[key]).replace("-", "").replace(" ", "").upper()
-                        != str(donor[key]).replace("-", "").replace(" ", "").upper()
-                        for key in ("isbn", "asin")
-                    )
-                    if (
-                        not conflict
-                        and not cls._text(winner.get("description"))
-                        and cls._text(donor.get("description"))
-                    ):
-                        winner["description"] = cls._text(donor.get("description"))
-                if cls._text(winner.get("title")) != cls._text(donor.get("title")):
-                    continue
-                if authors != tuple(
-                    a.casefold() for a in cls._list(donor.get("authors"))
-                ):
-                    continue
-                if any(
-                    winner.get(key)
-                    and donor.get(key)
-                    and str(winner[key]).replace("-", "").replace(" ", "").upper()
-                    != str(donor[key]).replace("-", "").replace(" ", "").upper()
-                    for key in ("isbn", "asin")
-                ):
-                    continue
-                for field in ("description", "cover_url"):
-                    if not cls._text(winner.get(field)) and cls._text(donor.get(field)):
-                        winner[field] = donor[field]
-                winner["genres"] = list(
-                    dict.fromkeys(
-                        cls._list(winner.get("genres")) + cls._list(donor.get("genres"))
-                    )
-                )
-        return list(best.values())
+                cls._merge_metadata(winner, donor)
+        return best
+
