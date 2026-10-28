@@ -1479,6 +1479,17 @@ class MetadataEngineSource(Source):
             return False
         if left_title == right_title:
             return True
+
+        def normalize_term_number(title):
+            numbers = {"one": "1", "two": "2", "three": "3", "four": "4"}
+            return re.sub(
+                r"\\bterm\\s+(one|two|three|four)\\b",
+                lambda match: "term " + numbers[match.group(1)],
+                title,
+            )
+
+        left_title = normalize_term_number(left_title)
+        right_title = normalize_term_number(right_title)
         for long_title, short_title, series_row in (
             (left_title, right_title, right),
             (right_title, left_title, left),
