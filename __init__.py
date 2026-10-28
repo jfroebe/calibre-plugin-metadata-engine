@@ -1423,6 +1423,8 @@ class MetadataEngineSource(Source):
                 if field == "isbn" and value and not cls._canonical_isbn(value):
                     continue
                 current = winner.get(field)
+                if field == "isbn" and current and not cls._canonical_isbn(current):
+                    current = None
                 if (
                     not current or (isinstance(current, str) and not current.strip())
                 ) and value:
