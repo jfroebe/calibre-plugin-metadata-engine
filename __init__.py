@@ -292,6 +292,9 @@ class MetadataEngineSource(Source):
             return "Metadata Engine identify failed: %s" % exc
 
     def _matches_requested(self, row, title, authors, identifiers):
+        """Reject ID matches that contradict the requested title or contributors."""
+        if not self._identity_consistent({"title": title, "authors": authors}, row):
+            return False
         matched_identifier = False
         for key, aliases in (
             ("asin", ("asin",)),
@@ -376,8 +379,10 @@ class MetadataEngineSource(Source):
                         actual = re.sub(
                             r"[\s-]+", "", self._text(candidate.get(kind)) or ""
                         ).upper()
-                        if actual == value and self._compatible_identifiers(
-                            anchor, candidate
+                        if (
+                            actual == value
+                            and self._compatible_identifiers(anchor, candidate)
+                            and self._identity_consistent(anchor, candidate)
                         ):
                             accepted.append(candidate)
                     rows.extend(accepted)
@@ -1034,9 +1039,21 @@ class MetadataEngineSource(Source):
         return True
 
     @classmethod
+    def _identity_consistent(cls, left, right):
+        """Reject contradictory titles or known contributor sets even with a shared ID."""
+        left_title, _, _ = cls._work_title(left.get("title"))
+        right_title, _, _ = cls._work_title(right.get("title"))
+        if left_title and right_title and left_title != right_title:
+            return False
+        if cls._list(left.get("authors")) and cls._list(right.get("authors")):
+            if not cls._work_description_matches(left, right):
+                return False
+        return True
+
+    @classmethod
     def _same_edition(cls, left, right):
         """Accept a shared edition identifier or the same provider record."""
-        if not cls._compatible_identifiers(left, right):
+        if not cls._compatible_identifiers(left, right) or not cls._identity_consistent(left, right):
             return False
         for key in ("isbn", "asin"):
             a, b = cls._text(left.get(key)), cls._text(right.get(key))
@@ -1058,7 +1075,7 @@ class MetadataEngineSource(Source):
     @classmethod
     def _merge_metadata(cls, winner, donor):
         """Fill missing work or edition fields from a compatible provider result."""
-        if not cls._compatible_identifiers(winner, donor):
+        if not cls._compatible_identifiers(winner, donor) or not cls._identity_consistent(winner, donor):
             return False
         edition = cls._same_edition(winner, donor)
         work = cls._work_description_matches(winner, donor)
@@ -1132,7 +1149,7 @@ class MetadataEngineSource(Source):
                 )
             group = groups.setdefault(key, [])
             existing = next(
-                (item for item in group if cls._compatible_identifiers(item, row)), None
+                (item for item in group if cls._compatible_identifiers(item, row) and cls._identity_consistent(item, row)), None
             )
             if existing is None:
                 group.append(row)
