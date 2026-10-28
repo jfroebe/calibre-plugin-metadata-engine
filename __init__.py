@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 18)
+    version = (1, 1, 19)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -920,14 +920,18 @@ class MetadataEngineSource(Source):
 
         excluded = {normalize_label(value) for value in excluded}
         tags = self._list(row.get("genres")) + self._list(row.get("tags"))
-        mi.tags = list(
-            dict.fromkeys(
-                tag
-                for tag in tags
-                if normalize_label(tag) not in excluded
-                and not tag.casefold().strip().startswith("metadata-engine:")
-            )
-        )
+        unique_tags = []
+        seen_tags = set()
+        for tag in tags:
+            if normalize_label(tag) in excluded or tag.casefold().strip().startswith(
+                "metadata-engine:"
+            ):
+                continue
+            identity = " ".join(unicodedata.normalize("NFKC", tag).casefold().split())
+            if identity not in seen_tags:
+                seen_tags.add(identity)
+                unique_tags.append(tag)
+        mi.tags = unique_tags
 
         if row.get("isbn") and self._canonical_isbn(row["isbn"]):
             mi.set_identifier("isbn", self._text(row["isbn"]))
@@ -1054,7 +1058,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.18",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.19",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
