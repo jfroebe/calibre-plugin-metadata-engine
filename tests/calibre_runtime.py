@@ -1375,6 +1375,28 @@ class InstalledPluginTests(unittest.TestCase):
             )
             self.assertTrue(queue.empty())
 
+    def test_cover_recovery_is_bounded_and_does_not_follow_new_ids(self):
+        """Visit each initial provider ID at most once and ignore derived IDs."""
+        rows = [
+            {"title": "Example", "authors": ["A Writer"], "source": "goodreads",
+             "source_id": str(number), "cover_url": None}
+            for number in (1, 1, 2, 3, 4, 5)
+        ]
+        def search(provider, query, *args, **kwargs):
+            value = query.split(":")[-1]
+            return [{"title": "Example", "authors": ["A Writer"], "source": "goodreads",
+                     "source_id": value, "cover_url": "https://example.test/" + value,
+                     "extra": {"goodreads_id": value, "new_id": "999"}}]
+        with patch.object(self.plugin, "_search", side_effect=search) as mocked:
+            found = self.plugin._recover_cover_records(
+                self.log, self.abort, ["goodreads"], rows, "Example", ["A Writer"], {}, 5
+            )
+        self.assertEqual(len(found), 4)
+        self.assertEqual(mocked.call_count, 4)
+        queries = [call.args[1] for call in mocked.call_args_list]
+        self.assertEqual(queries, ["goodreads:1", "goodreads:2", "goodreads:3", "goodreads:4"])
+        self.assertNotIn("goodreads:999", queries)
+
     def test_known_wrong_edition_cover_is_not_used(self):
         """A supplied ISBN mismatch cannot become a fallback cover."""
         self.plugin.prefs["plugin_ids"] = "wrong-edition"
@@ -1461,6 +1483,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 53:
+    if result.testsRun != 54:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
