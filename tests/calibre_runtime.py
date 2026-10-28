@@ -702,6 +702,41 @@ class InstalledPluginTests(unittest.TestCase):
                           if row["source"] == "a")
             self.assertFalse(result.get("description"))
 
+    def test_identifier_followup_is_single_hop_and_rejects_wrong_edition(self):
+        """Query each compatible source once without traversing newly found IDs."""
+        initial = {"source": "one", "title": "Anthology", "authors": ["A Writer"],
+                   "asin": "B012345678"}
+        response = [
+            {"title": "Anthology", "authors": ["A Writer"], "asin": "B012345678",
+             "isbn": "9781234567897", "description": "Matched"},
+            {"title": "Anthology", "authors": ["A Writer"], "asin": "B999999999",
+             "description": "Wrong edition"},
+        ]
+        with patch.object(self.plugin, "_search", return_value=response) as search:
+            rows = self.plugin._expand_identifiers(
+                self.log, self.abort, ["asintojson", "isbnlab", "open_library"],
+                [initial], "Anthology", "Anthology", ["A Writer"], {}, 5,
+            )
+        self.assertEqual([call.args[0] for call in search.call_args_list],
+                         ["asintojson", "isbnlab"])
+        self.assertTrue(all(call.args[3] == {"asin": "B012345678"}
+                            for call in search.call_args_list))
+        self.assertTrue(all(row.get("asin") != "B999999999" for row in rows))
+        self.assertEqual(len(rows), 3)
+
+    def test_identifier_followup_uses_discovered_isbn_without_repeating_asin(self):
+        """An exact ASIN match can seed an ISBN lookup without repeating the ASIN."""
+        initial = {"source": "one", "title": "Anthology", "authors": ["A Writer"],
+                   "asin": "B012345678", "isbn": "9781234567897"}
+        with patch.object(self.plugin, "_search", return_value=[]) as search:
+            self.plugin._expand_identifiers(
+                self.log, self.abort, ["asintojson", "open_library"], [initial],
+                "Anthology", "Anthology", ["A Writer"], {"mobi-asin": "B012345678"}, 5,
+            )
+        self.assertEqual(search.call_count, 1)
+        self.assertEqual(search.call_args.args[0], "open_library")
+        self.assertEqual(search.call_args.args[3], {"isbn": "9781234567897"})
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -834,6 +869,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 36:
+    if result.testsRun != 38:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
