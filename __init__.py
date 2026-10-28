@@ -179,9 +179,16 @@ class MetadataEngineSource(Source):
                                 )
                                 retried_providers.add(provider_id)
                         if (
-                            not found and title and len(self._list(authors)) > 1
-                            and provider_id in {
-                                "goodreads", "google_books", "hardcover", "open_library", "itunes"
+                            not found
+                            and title
+                            and len(self._list(authors)) > 1
+                            and provider_id
+                            in {
+                                "goodreads",
+                                "google_books",
+                                "hardcover",
+                                "open_library",
+                                "itunes",
                             }
                         ):
                             short_title = self._search_title(title)
@@ -192,20 +199,30 @@ class MetadataEngineSource(Source):
                                 if person is None and provider_id in retried_providers:
                                     continue
                                 retry = self._search(
-                                    provider_id, short_title, [person] if person else None,
-                                    {}, timeout,
-                                    **({"metadata_type": media_type} if media_type else {})
+                                    provider_id,
+                                    short_title,
+                                    [person] if person else None,
+                                    {},
+                                    timeout,
+                                    **(
+                                        {"metadata_type": media_type}
+                                        if media_type
+                                        else {}
+                                    ),
                                 )
                                 if person is None:
                                     retried_providers.add(provider_id)
                                 target = {"title": title, "authors": authors}
                                 matching = [
-                                    item for item in retry
+                                    item
+                                    for item in retry
                                     if self._work_description_matches(target, item)
                                 ]
                                 log.info(
                                     "Metadata Engine: contributor search provider=%s candidates=%d matches=%d",
-                                    provider_id, len(retry), len(matching),
+                                    provider_id,
+                                    len(retry),
+                                    len(matching),
                                 )
                                 if matching:
                                     found.extend(matching)
@@ -236,7 +253,15 @@ class MetadataEngineSource(Source):
                                 break
 
             rows = self._expand_identifiers(
-                log, abort, provider_ids, rows, query, title, authors, identifiers, timeout
+                log,
+                abort,
+                provider_ids,
+                rows,
+                query,
+                title,
+                authors,
+                identifiers,
+                timeout,
             )
             rows = self._recover_descriptions(
                 log,
@@ -288,29 +313,50 @@ class MetadataEngineSource(Source):
             )
         )
 
-
     def _expand_identifiers(
-        self, log, abort, provider_ids, rows, query, title, authors, identifiers, timeout
+        self,
+        log,
+        abort,
+        provider_ids,
+        rows,
+        query,
+        title,
+        authors,
+        identifiers,
+        timeout,
     ):
         """Query compatible sources once for identifiers from initial matching results."""
         support = {
             "asin": {"asintojson", "isbnlab", "audible", "audnexus"},
-            "isbn": {"isbnlab", "goodreads", "google_books", "hardcover",
-                     "open_library", "internet_archive", "new_york_times_books"},
+            "isbn": {
+                "isbnlab",
+                "goodreads",
+                "google_books",
+                "hardcover",
+                "open_library",
+                "internet_archive",
+                "new_york_times_books",
+            },
         }
-        initial = {"asin": self._identifier(identifiers, "asin"),
-                   "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10")}
+        initial = {
+            "asin": self._identifier(identifiers, "asin"),
+            "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
+        }
         seeds = []
         for row in rows:
             if not self._matches_requested(row, title, authors, identifiers):
                 continue
             for kind in ("isbn", "asin"):
                 value = re.sub(r"[\s-]+", "", self._text(row.get(kind)) or "").upper()
-                pattern = r"(?:\d{13}|\d{9}[\dX])" if kind == "isbn" else r"[A-Z0-9]{10}"
+                pattern = (
+                    r"(?:\d{13}|\d{9}[\dX])" if kind == "isbn" else r"[A-Z0-9]{10}"
+                )
                 if not re.fullmatch(pattern, value):
                     continue
                 original = re.sub(r"[\s-]+", "", initial[kind] or "").upper()
-                if value != original and not any(x[0] == kind and x[1] == value for x in seeds):
+                if value != original and not any(
+                    x[0] == kind and x[1] == value for x in seeds
+                ):
                     seeds.append((kind, value, row))
         # Freeze the initial identifier set: follow-up results cannot trigger
         # nested lookups. Bound expansion even for large multi-edition searches.
@@ -322,21 +368,31 @@ class MetadataEngineSource(Source):
                 if provider not in support[kind]:
                     continue
                 try:
-                    found = self._search(provider, query or value, authors, {kind: value}, timeout)
+                    found = self._search(
+                        provider, query or value, authors, {kind: value}, timeout
+                    )
                     accepted = []
                     for candidate in found:
-                        actual = re.sub(r"[\s-]+", "", self._text(candidate.get(kind)) or "").upper()
-                        if actual == value and self._compatible_identifiers(anchor, candidate):
+                        actual = re.sub(
+                            r"[\s-]+", "", self._text(candidate.get(kind)) or ""
+                        ).upper()
+                        if actual == value and self._compatible_identifiers(
+                            anchor, candidate
+                        ):
                             accepted.append(candidate)
                     rows.extend(accepted)
                     log.info(
                         "Metadata Engine: identifier follow-up provider=%s kind=%s accepted=%d",
-                        provider, kind, len(accepted),
+                        provider,
+                        kind,
+                        len(accepted),
                     )
                 except Exception as exc:
                     log.error(
                         "Metadata Engine identifier follow-up provider %s kind %s failed: %s",
-                        provider, kind, exc,
+                        provider,
+                        kind,
+                        exc,
                     )
         return rows
 
