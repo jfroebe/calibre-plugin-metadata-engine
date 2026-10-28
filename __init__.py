@@ -749,17 +749,29 @@ class MetadataEngineSource(Source):
             )
 
             target = {"title": title, "authors": authors}
-            rows = [
-                r
-                for r in rows
-                if r.get("cover_url")
-                and self._cover_identifier_score(r, identifiers)
-                and self._identity_consistent(target, r)
-                and (
-                    self._cover_identifier_score(r, identifiers) > 1
-                    or (title and authors and self._work_description_matches(target, r))
-                )
-            ]
+            eligible = []
+            missing_cover = rejected_identity = 0
+            for row in rows:
+                if not row.get("cover_url"):
+                    missing_cover += 1
+                    continue
+                score = self._cover_identifier_score(row, identifiers)
+                if (
+                    not score
+                    or not self._identity_consistent(target, row)
+                    or not (
+                        score > 1
+                        or (title and authors and self._work_description_matches(target, row))
+                    )
+                ):
+                    rejected_identity += 1
+                    continue
+                eligible.append(row)
+            log.info(
+                "Metadata Engine cover: records=%d missing_cover=%d rejected_identity=%d eligible=%d",
+                len(rows), missing_cover, rejected_identity, len(eligible),
+            )
+            rows = eligible
             rows.sort(
                 key=lambda x: (
                     self._cover_identifier_score(x, identifiers),
