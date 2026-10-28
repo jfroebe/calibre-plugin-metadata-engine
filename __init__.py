@@ -880,7 +880,7 @@ class MetadataEngineSource(Source):
         if row.get("publisher"):
             mi.publisher = self._text(row["publisher"])
         if row.get("description"):
-            description = self._text(row["description"])
+            description = self._text(row["description"]) or ""
             # Remove explicit source-attribution lines, not names in prose.
             description = re.sub(
                 r"(?im)^\s*(?:metadata )?source\s*:\s*(?:amazon(?:\.com)?|audible|goodreads|hardcover|itunes|apple books|open library|google books|isbnlab|asintojson)\s*$",
