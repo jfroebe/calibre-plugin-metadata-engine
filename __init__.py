@@ -310,8 +310,11 @@ class MetadataEngineSource(Source):
             ("openlibrary", ("openlibrary",)),
         ):
             wanted = self._identifier(identifiers, *aliases)
-            if key in {"lccn", "goodreads"}:
-                actual = self._text(extra.get("goodreads_id" if key == "goodreads" else key))
+            if key in {"lccn", "goodreads", "openlibrary"}:
+                extra_key = {"goodreads": "goodreads_id", "openlibrary": "open_library_edition_id", "lccn": "lccn"}[key]
+                actual = self._text(extra.get(extra_key))
+                if key == "openlibrary" and not actual:
+                    actual = self._text(extra.get("open_library_work_id"))
                 if key == "goodreads" and not actual and row.get("source") == "goodreads":
                     actual = self._text(row.get("source_id"))
             else:
@@ -343,9 +346,9 @@ class MetadataEngineSource(Source):
             "openlibrary": {"open_library"},
         }
         aliases = {"asin": ("asin",), "isbn": ("isbn", "isbn13", "isbn10"),
-                   "lccn": ("lccn",), "goodreads": ("goodreads",)}
+                   "lccn": ("lccn",), "goodreads": ("goodreads",), "openlibrary": ("openlibrary",)}
         patterns = {"asin": r"[A-Z0-9]{10}", "isbn": r"(?:\d{13}|\d{9}[\dX])",
-                    "lccn": r"[A-Z0-9]{4,20}", "goodreads": r"\d{1,16}"}
+                    "lccn": r"[A-Z0-9]{4,20}", "goodreads": r"\d{1,16}", "openlibrary": r"OL\d+[MW]"}
 
         def normalize(value):
             return re.sub(r"[\s-]+", "", self._text(value) or "").upper()
