@@ -908,6 +908,7 @@ class MetadataEngineSource(Source):
             "google books",
             "isbnlab",
             "asintojson",
+            "cleaned",
             "kindle store",
             "kindle ebooks",
             "kindle e-books",
