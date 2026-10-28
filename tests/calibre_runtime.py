@@ -985,12 +985,26 @@ class InstalledPluginTests(unittest.TestCase):
         """Follow only exact source-verified library catalog identifiers."""
         for scheme, value in (("lccn", "93005405"), ("oclc", "28419896")):
             with self.subTest(scheme=scheme):
-                result = {"source": "open_library", "title": "Zen speaks",
-                          "authors": ["Zhizhong Cai"], "extra": {scheme: value}}
-                with patch.object(self.plugin, "_search", return_value=[result]) as search:
+                result = {
+                    "source": "open_library",
+                    "title": "Zen speaks",
+                    "authors": ["Zhizhong Cai"],
+                    "extra": {scheme: value},
+                }
+                with patch.object(
+                    self.plugin, "_search", return_value=[result]
+                ) as search:
                     rows = self.plugin._expand_identifiers(
-                        self.log, self.abort, ["open_library"], [], "Zen speaks",
-                        "Zen speaks", ["Zhizhong Cai"], {scheme: value}, 5)
+                        self.log,
+                        self.abort,
+                        ["open_library"],
+                        [],
+                        "Zen speaks",
+                        "Zen speaks",
+                        ["Zhizhong Cai"],
+                        {scheme: value},
+                        5,
+                    )
                 self.assertEqual(search.call_args.args[1], scheme.upper() + ":" + value)
                 self.assertEqual(rows, [result])
 
