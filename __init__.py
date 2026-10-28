@@ -385,7 +385,14 @@ class MetadataEngineSource(Source):
                 value = value_for(row, kind)
                 if not value or not re.fullmatch(patterns[kind], value):
                     continue
-                if kind in {"isbn", "asin"} and value == initial[kind]:
+                if kind == "isbn" and not self._canonical_isbn(value):
+                    log.warning("Metadata Engine: ignoring invalid ISBN from provider=%s", row.get("source"))
+                    continue
+                equivalent = (
+                    self._canonical_isbn(value) == self._canonical_isbn(initial[kind])
+                    if kind == "isbn" and initial[kind] else value == initial[kind]
+                )
+                if kind in {"isbn", "asin"} and equivalent:
                     continue
                 if not any(item[0] == kind and item[1] == value for item in seeds):
                     seeds.append((kind, value, row))
@@ -407,10 +414,15 @@ class MetadataEngineSource(Source):
                     accepted = []
                     for candidate in found:
                         candidate_values = {value_for(candidate, kind)}
+                        if kind == "isbn":
+                            candidate_values = {self._canonical_isbn(item) for item in candidate_values}
+                            compare_value = self._canonical_isbn(value)
+                        else:
+                            compare_value = value
                         if kind == "openlibrary":
                             candidate_extra = candidate.get("extra") if isinstance(candidate.get("extra"), dict) else {}
                             candidate_values.add(normalize(candidate_extra.get("open_library_work_id")))
-                        if value not in candidate_values:
+                        if compare_value not in candidate_values:
                             continue
                         if not self._matches_requested(candidate, title, authors, identifiers):
                             continue
