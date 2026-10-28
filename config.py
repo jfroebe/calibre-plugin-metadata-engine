@@ -146,10 +146,6 @@ class ConfigWidget(QWidget):
         self.per_plugin_limit.setSuffix(" per provider")
         behavior_form.addRow("Provider request limit:", self.per_plugin_limit)
 
-        self.include_source_tag = QCheckBox(
-            "Add metadata-engine source name to Calibre tags"
-        )
-        behavior_form.addRow("", self.include_source_tag)
         outer.addWidget(behavior)
 
         note = QLabel(
@@ -180,7 +176,6 @@ class ConfigWidget(QWidget):
         self.verify_ssl.setChecked(bool(p.get("verify_ssl", True)))
         self.max_results.setValue(int(p.get("max_results", 20) or 20))
         self.per_plugin_limit.setValue(int(p.get("per_plugin_limit", 10) or 10))
-        self.include_source_tag.setChecked(bool(p.get("include_source_tag", False)))
 
         selected = [
             x.strip()
@@ -206,7 +201,6 @@ class ConfigWidget(QWidget):
         p["verify_ssl"] = self.verify_ssl.isChecked()
         p["max_results"] = self.max_results.value()
         p["per_plugin_limit"] = self.per_plugin_limit.value()
-        p["include_source_tag"] = self.include_source_tag.isChecked()
         p["plugin_ids"] = (
             ",".join(self._checked())
             if self.provider_mode.currentData() == "selected"

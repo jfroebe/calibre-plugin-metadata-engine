@@ -135,7 +135,7 @@ class InstalledPluginTests(unittest.TestCase):
                     )
                 if expected.get("description"):
                     self.assertEqual(actual.comments, expected["description"])
-                self.assertIn(
+                self.assertNotIn(
                     "metadata-engine:fixture", [tag.casefold() for tag in actual.tags]
                 )
 
@@ -153,7 +153,7 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(metadata.tags, ["Romance", "Anthologies"])
         self.plugin.prefs["include_source_tag"] = True
         metadata = self.plugin._to_metadata(row, 0)
-        self.assertIn("metadata-engine:hardcover", metadata.tags)
+        self.assertEqual(metadata.tags, ["Romance", "Anthologies"])
         self.plugin.prefs["include_source_tag"] = False
         apple = {
             "title": "City of Demons",
@@ -165,6 +165,30 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(
             self.plugin._to_metadata(apple, 0).tags,
             ["Paranormal Romance", "books"],
+        )
+
+    def test_store_and_source_labels_are_not_subjects_or_description(self):
+        """Keep subjects and synopsis while discarding source and storefront markers."""
+        row = {
+            "title": "A Specter and an Invasion",
+            "source": "goodreads",
+            "genres": [
+                "Kindle Store",
+                "Kindle eBooks",
+                "Science Fiction & Fantasy",
+                "Science Fiction",
+                "Space Opera",
+            ],
+            "tags": ["goodreads", "audiobooks", "metadata-engine:goodreads"],
+            "description": "Source: Goodreads\nTime has passed. Goodreads is mentioned in prose.",
+        }
+        metadata = self.plugin._to_metadata(row, 0)
+        self.assertEqual(
+            metadata.tags,
+            ["Science Fiction & Fantasy", "Science Fiction", "Space Opera"],
+        )
+        self.assertEqual(
+            metadata.comments, "Time has passed. Goodreads is mentioned in prose."
         )
 
     def test_ebook_enriches_matching_book_not_different_author(self):
@@ -1244,6 +1268,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 49:
+    if result.testsRun != 50:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)

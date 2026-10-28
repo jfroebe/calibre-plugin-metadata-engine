@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 15)
+    version = (1, 1, 16)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -98,13 +98,6 @@ class MetadataEngineSource(Source):
             True,
             "Verify HTTPS certificates",
             "Verify TLS certificates for HTTPS connections.",
-        ),
-        Option(
-            "include_source_tag",
-            "bool",
-            False,
-            "Add source tag",
-            "Add metadata-engine:<source> to Calibre tags.",
         ),
     )
 
@@ -887,21 +880,48 @@ class MetadataEngineSource(Source):
         if row.get("publisher"):
             mi.publisher = self._text(row["publisher"])
         if row.get("description"):
-            mi.comments = self._text(row["description"])
+            description = self._text(row["description"]) or ""
+            # Remove explicit source-attribution lines, not names in prose.
+            description = re.sub(
+                r"(?im)^\s*(?:metadata )?source\s*:\s*(?:amazon(?:\.com)?|audible|goodreads|hardcover|itunes|apple books|open library|google books|isbnlab|asintojson)\s*$",
+                "",
+                description,
+            ).strip()
+            if description:
+                mi.comments = description
         if row.get("language"):
             mi.languages = [self._text(row["language"])]
 
-        provider_tags = self._list(row.get("tags"))
-        source_name = str(row.get("source") or "").casefold()
-        if source_name in {"hardcover", "itunes"}:
-            # These providers inject their source name into their own tag list.
-            provider_tags = [
-                tag for tag in provider_tags if tag.casefold() != source_name
-            ]
-        tags = self._list(row.get("genres")) + provider_tags
-        if self.prefs.get("include_source_tag", False) and row.get("source"):
-            tags.append("metadata-engine:%s" % self._text(row["source"]))
-        mi.tags = list(dict.fromkeys(tags))
+        # Provider names, shop navigation and format labels are not subjects.
+        source = (self._text(row.get("source")) or "").casefold()
+        excluded = {
+            "amazon",
+            "amazon.com",
+            "audible",
+            "audiobook",
+            "audiobooks",
+            "goodreads",
+            "hardcover",
+            "itunes",
+            "apple books",
+            "open library",
+            "google books",
+            "isbnlab",
+            "asintojson",
+            "kindle store",
+            "kindle ebooks",
+            "kindle e-books",
+        }
+        excluded.add(source)
+        tags = self._list(row.get("genres")) + self._list(row.get("tags"))
+        mi.tags = list(
+            dict.fromkeys(
+                tag
+                for tag in tags
+                if tag.casefold().strip() not in excluded
+                and not tag.casefold().strip().startswith("metadata-engine:")
+            )
+        )
 
         if row.get("isbn") and self._canonical_isbn(row["isbn"]):
             mi.set_identifier("isbn", self._text(row["isbn"]))
@@ -1028,7 +1048,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.15",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.16",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
