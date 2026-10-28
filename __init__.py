@@ -286,11 +286,7 @@ class MetadataEngineSource(Source):
             ):
                 continue
             # Avoid issuing the same title-only request twice.
-            if (
-                not authors
-                and not identifiers
-                and query.strip() == short_title
-            ):
+            if not authors and not identifiers and query.strip() == short_title:
                 continue
             try:
                 kwargs = {"metadata_type": "books"} if provider_id == "itunes" else {}
