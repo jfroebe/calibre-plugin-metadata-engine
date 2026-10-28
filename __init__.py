@@ -722,6 +722,41 @@ class MetadataEngineSource(Source):
                                 metadata_type="books",
                             )
                         )
+                    if (
+                        title
+                        and len(self._list(authors)) > 1
+                        and provider_id in {"goodreads", "google_books", "hardcover", "open_library", "itunes"}
+                        and not any(
+                            self._work_description_matches(
+                                {"title": title, "authors": authors}, item
+                            )
+                            for item in provider_rows
+                        )
+                    ):
+                        for person in [None, *self._list(authors)[:3]]:
+                            if abort.is_set():
+                                return None
+                            retry = self._search(
+                                provider_id,
+                                self._search_title(title),
+                                [person] if person else None,
+                                {},
+                                timeout,
+                                **({"metadata_type": "books"} if provider_id == "itunes" else {}),
+                            )
+                            matching = [
+                                item for item in retry
+                                if self._work_description_matches(
+                                    {"title": title, "authors": authors}, item
+                                )
+                            ]
+                            log.info(
+                                "Metadata Engine cover retry provider=%s candidates=%d matches=%d",
+                                provider_id, len(retry), len(matching),
+                            )
+                            if matching:
+                                provider_rows.extend(matching)
+                                break
                     rows.extend(provider_rows)
                     cover_count = sum(
                         1 for row in provider_rows if row.get("cover_url")
