@@ -281,7 +281,9 @@ class MetadataEngineSource(Source):
             if abort.is_set():
                 return rows
             # These providers only support identifiers, already used above.
-            if provider_id in {"asintojson", "isbnlab"} or provider_id in (retried_providers or set()):
+            if provider_id in {"asintojson", "isbnlab"} or provider_id in (
+                retried_providers or set()
+            ):
                 continue
             # Avoid issuing the same title-only request twice.
             if (
