@@ -952,6 +952,13 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertTrue(self.plugin._same_edition(left, same))
         invalid = {"title": "Example", "isbn": "9780306406158"}
         self.assertFalse(self.plugin._same_edition(invalid, invalid))
+        self.assertFalse(self.plugin._canonical_isbn("4006381333931"))
+        self.assertNotIn("isbn", self.plugin._to_metadata(invalid, 0).get_identifiers())
+        winner = {"title": "Example", "authors": ["A Writer"], "asin": "B012345678",
+                  "isbn": "9780306406158"}
+        donor = dict(winner, isbn="9780306406157")
+        self.assertTrue(self.plugin._merge_metadata(winner, donor))
+        self.assertEqual(winner["isbn"], "9780306406157")
 
     def test_open_library_work_id_lookup_checks_work_and_edition(self):
         """A work ID remains usable even when the response also has an edition ID."""
