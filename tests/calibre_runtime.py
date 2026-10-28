@@ -1443,8 +1443,10 @@ class InstalledPluginTests(unittest.TestCase):
         ):
             self.assertFalse(self.plugin._work_description_matches(target, wrong))
         queue = Queue()
+
         def search(provider, query, authors, *args, **kwargs):
             return [] if authors and len(authors) > 1 else [row]
+
         with (
             patch.object(
                 self.plugin, "_configured_provider_ids", return_value=["goodreads"]
