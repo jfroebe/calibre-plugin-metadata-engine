@@ -301,12 +301,20 @@ class MetadataEngineSource(Source):
         if not self._identity_consistent({"title": title, "authors": authors}, row):
             return False
         matched_identifier = False
+        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
         for key, aliases in (
             ("asin", ("asin",)),
             ("isbn", ("isbn", "isbn13", "isbn10")),
+            ("lccn", ("lccn",)),
+            ("goodreads", ("goodreads",)),
         ):
             wanted = self._identifier(identifiers, *aliases)
-            actual = self._text(row.get(key))
+            if key in {"lccn", "goodreads"}:
+                actual = self._text(extra.get("goodreads_id" if key == "goodreads" else key))
+                if key == "goodreads" and not actual and row.get("source") == "goodreads":
+                    actual = self._text(row.get("source_id"))
+            else:
+                actual = self._text(row.get(key))
             if wanted and actual:
                 normalized_wanted = re.sub(r"[\s-]+", "", wanted).upper()
                 normalized_actual = re.sub(r"[\s-]+", "", actual).upper()
