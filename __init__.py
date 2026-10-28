@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import ssl
+import unicodedata
 from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -1109,7 +1110,9 @@ class MetadataEngineSource(Source):
     @classmethod
     def _work_title(cls, value):
         """Extract a numbered series suffix only for matching book works."""
-        title = (cls._text(value) or "").casefold()
+        title = unicodedata.normalize("NFKC", cls._text(value) or "").casefold()
+        title = title.translate(str.maketrans({"’": "'", "‘": "'", "–": "-", "—": "-"}))
+        title = " ".join(title.split())
         match = re.fullmatch(
             r"(.+?)\s+\((.+?)\s+(?:book\s*|#)(\d+(?:\.\d+)?)\)",
             title,
