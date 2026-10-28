@@ -913,6 +913,7 @@ class MetadataEngineSource(Source):
             "kindle e-books",
         }
         excluded.add(source)
+
         def normalize_label(value):
             return re.sub(r"[-_\s]+", " ", value.casefold()).strip()
 
