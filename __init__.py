@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 19)
+    version = (1, 1, 20)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -55,7 +55,7 @@ class MetadataEngineSource(Source):
     has_html_comments = False
     supports_gzip_transfer_encoding = True
     cached_cover_url_is_reliable = False
-    can_get_multiple_covers = False
+    can_get_multiple_covers = True
     # Calibre otherwise discards ISBN-less matches whenever this source also
     # returns an ISBN-bearing result, even if that result is a different book.
     prefer_results_with_isbn = False
@@ -679,13 +679,7 @@ class MetadataEngineSource(Source):
         timeout=30,
         get_best_cover=False,
     ):
-        """Queue the first valid cover from cached or newly searched candidate URLs.
-
-        Rank searched candidates by identifier match and confidence, skip failed or
-        non-image downloads, and honor abort between operations. Queue (self, bytes)
-        on success and return None; get_best_cover is accepted for Calibre API
-        compatibility but does not alter this implementation's selection.
-        """
+        """Queue matching covers ranked by edition evidence and image dimensions."""
         identifiers = identifiers or {}
         candidates = []
 
@@ -717,6 +711,17 @@ class MetadataEngineSource(Source):
                     provider_rows = self._search(
                         provider_id, query, authors, identifiers, timeout
                     )
+                    if provider_id == "itunes":
+                        provider_rows.extend(
+                            self._search(
+                                provider_id,
+                                query,
+                                authors,
+                                identifiers,
+                                timeout,
+                                metadata_type="books",
+                            )
+                        )
                     rows.extend(provider_rows)
                     cover_count = sum(
                         1 for row in provider_rows if row.get("cover_url")
@@ -737,10 +742,17 @@ class MetadataEngineSource(Source):
                         exc,
                     )
 
+            target = {"title": title, "authors": authors}
             rows = [
                 r
                 for r in rows
-                if r.get("cover_url") and self._cover_identifier_score(r, identifiers)
+                if r.get("cover_url")
+                and self._cover_identifier_score(r, identifiers)
+                and self._identity_consistent(target, r)
+                and (
+                    self._cover_identifier_score(r, identifiers) > 1
+                    or (title and authors and self._work_description_matches(target, r))
+                )
             ]
             rows.sort(
                 key=lambda x: (
@@ -751,34 +763,73 @@ class MetadataEngineSource(Source):
             )
             candidates.extend(rows)
 
+        from urllib.parse import urlsplit
+
+        from qt.core import QImage
+
         seen_urls = set()
-        for row in candidates:
+        covers = []
+        # Bound network work while still allowing several sources and sizes.
+        for row in candidates[:12]:
             if abort.is_set():
                 return None
             url = self._text(row.get("cover_url"))
-            if not url or url in seen_urls:
+            if not url:
                 continue
-            seen_urls.add(url)
+            urls = [url]
+            host = (urlsplit(url).hostname or "").casefold()
+            if host == "mzstatic.com" or host.endswith(".mzstatic.com"):
+                larger = re.sub(r"/\d+x\d+bb(?=\.)", "/2200x2200bb", url)
+                if larger != url:
+                    urls.insert(0, larger)
+            for candidate_url in urls:
+                if candidate_url in seen_urls:
+                    continue
+                seen_urls.add(candidate_url)
+                try:
+                    data = self._http_bytes(candidate_url, min(timeout, 10))
+                    if not self._looks_like_image(data):
+                        raise ValueError("downloaded content is not a recognized image")
+                    image = QImage.fromData(data)
+                    if image.isNull() or image.width() <= 0 or image.height() <= 0:
+                        raise ValueError("downloaded image cannot be decoded")
+                    score = self._cover_identifier_score(row, identifiers)
+                    covers.append(
+                        (
+                            score,
+                            image.width() * image.height(),
+                            row,
+                            candidate_url,
+                            data,
+                        )
+                    )
+                    log.info(
+                        "Metadata Engine cover candidate source=%s size=%dx%d identifier_score=%d",
+                        self._text(row.get("source")) or "unknown",
+                        image.width(),
+                        image.height(),
+                        score,
+                    )
+                    # Keep the original as fallback if an enlarged URL fails.
+                    break
+                except Exception as exc:
+                    log.error(
+                        "Metadata Engine cover candidate failed source=%r url=%s error=%s",
+                        row.get("source"),
+                        candidate_url,
+                        exc,
+                    )
 
-            try:
-                data = self._http_bytes(url, timeout)
-                if not self._looks_like_image(data):
-                    raise ValueError("downloaded content is not a recognized image")
+        if covers:
+            covers.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            for score, pixels, row, url, data in covers:
+                if abort.is_set():
+                    return None
                 result_queue.put((self, data))
-                self._remember_cover(row)
-                log.info(
-                    "Metadata Engine cover selected from %s: %s",
-                    self._text(row.get("source")) or "unknown",
-                    url,
-                )
-                return None
-            except Exception as exc:
-                log.error(
-                    "Metadata Engine cover candidate failed source=%r url=%s error=%s",
-                    row.get("source"),
-                    url,
-                    exc,
-                )
+                if get_best_cover:
+                    break
+            self._remember_cover(covers[0][2])
+            return None
 
         if candidates:
             log.error(
@@ -1058,7 +1109,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.19",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.20",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
