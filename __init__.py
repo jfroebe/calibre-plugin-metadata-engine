@@ -178,6 +178,38 @@ class MetadataEngineSource(Source):
                                     provider_id, short_title, None, {}, timeout
                                 )
                                 retried_providers.add(provider_id)
+                        if (
+                            not found and title and len(self._list(authors)) > 1
+                            and provider_id in {
+                                "goodreads", "google_books", "hardcover", "open_library", "itunes"
+                            }
+                        ):
+                            short_title = self._search_title(title)
+                            variants = [None, *self._list(authors)[:3]]
+                            for person in variants:
+                                if abort.is_set():
+                                    return None
+                                if person is None and provider_id in retried_providers:
+                                    continue
+                                retry = self._search(
+                                    provider_id, short_title, [person] if person else None,
+                                    {}, timeout,
+                                    **({"metadata_type": media_type} if media_type else {})
+                                )
+                                if person is None:
+                                    retried_providers.add(provider_id)
+                                target = {"title": title, "authors": authors}
+                                matching = [
+                                    item for item in retry
+                                    if self._work_description_matches(target, item)
+                                ]
+                                log.info(
+                                    "Metadata Engine: contributor search provider=%s candidates=%d matches=%d",
+                                    provider_id, len(retry), len(matching),
+                                )
+                                if matching:
+                                    found.extend(matching)
+                                    break
                         rows.extend(found)
                     except Exception as exc:
                         log.error(
