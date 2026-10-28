@@ -1442,6 +1442,22 @@ class InstalledPluginTests(unittest.TestCase):
                 target, dict(row, title="F*ck Off: Term Two (Other Academy #2)")
             )
         )
+        apple = {
+            "title": "F*ck Off: Knox Academy, Book 2 (Unabridged)",
+            "authors": ["Crystal North", "Jaye Pratt"],
+            "cover_url": "https://example.test/cover.jpg",
+        }
+        self.assertTrue(self.plugin._work_description_matches(target, apple))
+        self.assertFalse(
+            self.plugin._work_description_matches(
+                target, dict(apple, title="F*ck Off: Knox Academy, Book 1 (Unabridged)")
+            )
+        )
+        self.assertFalse(
+            self.plugin._work_description_matches(
+                target, dict(apple, title="F*ck Off: Other Academy, Book 2 (Unabridged)")
+            )
+        )
         image = png(800, 1200)
         queue = Queue()
         with (
