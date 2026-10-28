@@ -3,10 +3,10 @@
   "qualification_status": "qualified",
   "scope": "calibre-integration",
   "repository": "jfroebe/metadata-engine-docker",
-  "run_id": 40699281816,
-  "workflow_sha": "fec7abe4a51f1ca6df6b246fbd5c76d250282c55",
-  "source_sha": "64f156355bdb35d4aece69287f5bf74dc61dd016",
-  "zip_sha256": "74b0fe0d767d6295a39033cbb86a0299c8bb7796d51778f305b6bc725050e9ba",
+  "run_id": 40702833216,
+  "workflow_sha": "b3e4aa29a55844c9694d2af0c9b937653884a727",
+  "source_sha": "bc18454bcedd07d79f97f3676fe39dc793be1603",
+  "zip_sha256": "30819b55a2c9fc8623b7e76a636787b8ddef858bc5441a9cfceea721d5c5503f",
   "components": {
     "engine": {
       "repository": "jfroebe/metadata-engine",
