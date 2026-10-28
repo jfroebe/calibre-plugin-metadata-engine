@@ -793,7 +793,9 @@ class MetadataEngineSource(Source):
         raw = row.get("series")
         item = raw[0] if isinstance(raw, list) and raw else raw
         if isinstance(item, dict):
-            name = cls._text(item.get("name") or item.get("title") or item.get("series"))
+            name = cls._text(
+                item.get("name") or item.get("title") or item.get("series")
+            )
             number = item.get("index", item.get("position", item.get("number")))
             try:
                 number = float(number) if number is not None else None
@@ -822,7 +824,11 @@ class MetadataEngineSource(Source):
         right_series, right_number = cls._series_identity(donor)
         if left_series and right_series and left_series != right_series:
             return False
-        if left_number is not None and right_number is not None and left_number != right_number:
+        if (
+            left_number is not None
+            and right_number is not None
+            and left_number != right_number
+        ):
             return False
 
         def authors(row):
@@ -840,9 +846,11 @@ class MetadataEngineSource(Source):
         """Reject explicitly conflicting edition identifiers."""
         for key in ("isbn", "asin"):
             a, b = cls._text(left.get(key)), cls._text(right.get(key))
-            if a and b and re.sub(r"[\s-]+", "", a).upper() != re.sub(
-                r"[\s-]+", "", b
-            ).upper():
+            if (
+                a
+                and b
+                and re.sub(r"[\s-]+", "", a).upper() != re.sub(r"[\s-]+", "", b).upper()
+            ):
                 return False
         return True
 
@@ -853,15 +861,19 @@ class MetadataEngineSource(Source):
             return False
         for key in ("isbn", "asin"):
             a, b = cls._text(left.get(key)), cls._text(right.get(key))
-            if a and b and re.sub(r"[\s-]+", "", a).upper() == re.sub(
-                r"[\s-]+", "", b
-            ).upper():
+            if (
+                a
+                and b
+                and re.sub(r"[\s-]+", "", a).upper() == re.sub(r"[\s-]+", "", b).upper()
+            ):
                 return True
         return bool(
             cls._text(left.get("source"))
             and cls._text(left.get("source_id"))
-            and str(left["source"]).casefold() == str(right.get("source") or "").casefold()
-            and str(left["source_id"]).casefold() == str(right.get("source_id") or "").casefold()
+            and str(left["source"]).casefold()
+            == str(right.get("source") or "").casefold()
+            and str(left["source_id"]).casefold()
+            == str(right.get("source_id") or "").casefold()
         )
 
     @classmethod
@@ -875,7 +887,9 @@ class MetadataEngineSource(Source):
             return False
 
         for field in ("description", "series"):
-            if not winner.get(field) or (isinstance(winner[field], str) and not winner[field].strip()):
+            if not winner.get(field) or (
+                isinstance(winner[field], str) and not winner[field].strip()
+            ):
                 value = donor.get(field)
                 if value and (not isinstance(value, str) or value.strip()):
                     winner[field] = value
@@ -885,10 +899,20 @@ class MetadataEngineSource(Source):
             winner["genres"] = list(dict.fromkeys(genres))
 
         if edition:
-            for field in ("authors", "publisher", "published_year", "language", "isbn", "asin", "cover_url"):
+            for field in (
+                "authors",
+                "publisher",
+                "published_year",
+                "language",
+                "isbn",
+                "asin",
+                "cover_url",
+            ):
                 value = donor.get(field)
                 current = winner.get(field)
-                if (not current or (isinstance(current, str) and not current.strip())) and value:
+                if (
+                    not current or (isinstance(current, str) and not current.strip())
+                ) and value:
                     winner[field] = value
         elif (
             cls._text(winner.get("title")) == cls._text(donor.get("title"))
@@ -943,4 +967,3 @@ class MetadataEngineSource(Source):
             ):
                 cls._merge_metadata(winner, donor)
         return best
-
