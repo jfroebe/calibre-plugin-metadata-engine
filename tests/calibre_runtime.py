@@ -830,8 +830,14 @@ class InstalledPluginTests(unittest.TestCase):
 
     def test_same_identifier_with_conflicting_title_or_authors_is_rejected(self):
         """A source's reused ISBN or ASIN must not override contradictory evidence."""
-        primary = {"title": "Example", "authors": ["A Writer"], "isbn": "9781234567897",
-                   "source": "a", "source_id": "1", "confidence": 1}
+        primary = {
+            "title": "Example",
+            "authors": ["A Writer"],
+            "isbn": "9781234567897",
+            "source": "a",
+            "source_id": "1",
+            "confidence": 1,
+        }
         for changed in ({"title": "Unrelated"}, {"authors": ["Other Writer"]}):
             donor = dict(primary, source="b", source_id="2", description="Wrong")
             donor.update(changed)
@@ -841,10 +847,18 @@ class InstalledPluginTests(unittest.TestCase):
 
     def test_edition_details_are_corroborating_not_standalone_identity(self):
         """Two large same-format discrepancies prevent an unsafe edition merge."""
-        base = {"title": "Example", "authors": ["A Writer"], "isbn": "9781234567897",
-                "published_year": "2000", "extra": {"format": "paperback", "page_count": 200}}
-        changed = dict(base, published_year="2015",
-                       extra={"format": "paperback", "page_count": 600})
+        base = {
+            "title": "Example",
+            "authors": ["A Writer"],
+            "isbn": "9781234567897",
+            "published_year": "2000",
+            "extra": {"format": "paperback", "page_count": 200},
+        }
+        changed = dict(
+            base,
+            published_year="2015",
+            extra={"format": "paperback", "page_count": 600},
+        )
         self.assertFalse(self.plugin._identity_consistent(base, changed))
         one_discrepancy = dict(changed, published_year="2000")
         self.assertTrue(self.plugin._identity_consistent(base, one_discrepancy))
@@ -853,32 +867,75 @@ class InstalledPluginTests(unittest.TestCase):
 
     def test_catalog_ids_are_preserved_but_dewey_is_not_an_identity(self):
         """Expose source identifiers while never merging on a classification number."""
-        book = {"title": "One", "authors": ["A Writer"], "source": "library",
-                "extra": {"lccn": "2025001234", "oclc": "123456",
-                          "dewey_decimal": "813.54", "goodreads_id": "12345",
-                          "open_library_edition_id": "OL123M"}}
+        book = {
+            "title": "One",
+            "authors": ["A Writer"],
+            "source": "library",
+            "extra": {
+                "lccn": "2025001234",
+                "oclc": "123456",
+                "dewey_decimal": "813.54",
+                "goodreads_id": "12345",
+                "open_library_edition_id": "OL123M",
+            },
+        }
         result = self.plugin._to_metadata(book, 0).get_identifiers()
-        for kind, value in (("lccn", "2025001234"), ("oclc", "123456"),
-                            ("dewey", "813.54"), ("goodreads", "12345"),
-                            ("openlibrary", "OL123M")):
+        for kind, value in (
+            ("lccn", "2025001234"),
+            ("oclc", "123456"),
+            ("dewey", "813.54"),
+            ("goodreads", "12345"),
+            ("openlibrary", "OL123M"),
+        ):
             self.assertEqual(result[kind], value)
-        unrelated = dict(book, title="Two", source="other", extra={"dewey_decimal": "813.54"})
+        unrelated = dict(
+            book, title="Two", source="other", extra={"dewey_decimal": "813.54"}
+        )
         self.assertFalse(self.plugin._same_edition(book, unrelated))
 
     def test_catalog_id_followups_are_verified_and_not_recursive(self):
         """Follow Goodreads and LCCN IDs while rejecting misleading records."""
-        rows = [{"title": "Example", "authors": ["A Writer"], "source": "base",
-                 "extra": {"goodreads_id": "12345", "lccn": "2025001234"}}]
+        rows = [
+            {
+                "title": "Example",
+                "authors": ["A Writer"],
+                "source": "base",
+                "extra": {"goodreads_id": "12345", "lccn": "2025001234"},
+            }
+        ]
+
         def lookup(provider, query, authors, identifiers, timeout, **kwargs):
             if provider == "goodreads":
-                return [{"title": "Wrong", "authors": ["A Writer"], "source": "goodreads",
-                         "source_id": "12345", "extra": {"goodreads_id": "12345"}}]
-            return [{"title": "Example", "authors": ["A Writer"], "source": "loc_json_yaml",
-                     "extra": {"lccn": "2025001234", "oclc": "new-id"}}]
+                return [
+                    {
+                        "title": "Wrong",
+                        "authors": ["A Writer"],
+                        "source": "goodreads",
+                        "source_id": "12345",
+                        "extra": {"goodreads_id": "12345"},
+                    }
+                ]
+            return [
+                {
+                    "title": "Example",
+                    "authors": ["A Writer"],
+                    "source": "loc_json_yaml",
+                    "extra": {"lccn": "2025001234", "oclc": "new-id"},
+                }
+            ]
+
         with patch.object(self.plugin, "_search", side_effect=lookup) as search:
             output = self.plugin._expand_identifiers(
-                self.log, self.abort, ["goodreads", "loc_json_yaml"], rows,
-                "Example", "Example", ["A Writer"], {}, 5)
+                self.log,
+                self.abort,
+                ["goodreads", "loc_json_yaml"],
+                rows,
+                "Example",
+                "Example",
+                ["A Writer"],
+                {},
+                5,
+            )
         self.assertEqual(search.call_count, 2)
         self.assertEqual(len(output), 2)
         self.assertTrue(all(row["title"] == "Example" for row in output))
@@ -886,7 +943,9 @@ class InstalledPluginTests(unittest.TestCase):
     def test_isbn_checksum_and_equivalent_formats(self):
         """Reject invalid ISBNs and recognize equivalent ISBN-10 and ISBN-13."""
         self.assertEqual(self.plugin._canonical_isbn("0-306-40615-2"), "9780306406157")
-        self.assertEqual(self.plugin._canonical_isbn("978-0-306-40615-7"), "9780306406157")
+        self.assertEqual(
+            self.plugin._canonical_isbn("978-0-306-40615-7"), "9780306406157"
+        )
         self.assertFalse(self.plugin._canonical_isbn("9780306406158"))
         left = {"title": "Example", "isbn": "0306406152"}
         same = {"title": "Example", "isbn": "9780306406157"}
@@ -896,13 +955,28 @@ class InstalledPluginTests(unittest.TestCase):
 
     def test_open_library_work_id_lookup_checks_work_and_edition(self):
         """A work ID remains usable even when the response also has an edition ID."""
-        result = {"title": "Example", "authors": ["A Writer"], "source": "open_library",
-                  "source_id": "OL123M", "extra": {"open_library_work_id": "OL456W",
-                  "open_library_edition_id": "OL123M"}}
+        result = {
+            "title": "Example",
+            "authors": ["A Writer"],
+            "source": "open_library",
+            "source_id": "OL123M",
+            "extra": {
+                "open_library_work_id": "OL456W",
+                "open_library_edition_id": "OL123M",
+            },
+        }
         with patch.object(self.plugin, "_search", return_value=[result]) as search:
             rows = self.plugin._expand_identifiers(
-                self.log, self.abort, ["open_library"], [], "Example", "Example",
-                ["A Writer"], {"openlibrary": "OL456W"}, 5)
+                self.log,
+                self.abort,
+                ["open_library"],
+                [],
+                "Example",
+                "Example",
+                ["A Writer"],
+                {"openlibrary": "OL456W"},
+                5,
+            )
         self.assertEqual(search.call_count, 1)
         self.assertEqual(search.call_args.args[1], "OL456W")
         self.assertEqual(rows, [result])
