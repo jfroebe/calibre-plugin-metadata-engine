@@ -212,17 +212,26 @@ class MetadataEngineSource(Source):
     ):
         """Retry configured title-search providers for an incomplete matching work."""
         def requested_match(row):
-            for key, aliases in (("asin", ("asin",)), ("isbn", ("isbn", "isbn13", "isbn10"))):
+            matched_identifier = False
+            for key, aliases in (
+                ("asin", ("asin",)),
+                ("isbn", ("isbn", "isbn13", "isbn10")),
+            ):
                 wanted = self._identifier(identifiers, *aliases)
                 actual = self._text(row.get(key))
                 if wanted and actual:
-                    normalize = lambda value: re.sub(r"[\s-]+", "", value).upper()
-                    if normalize(wanted) != normalize(actual):
+                    normalized_wanted = re.sub(r"[\s-]+", "", wanted).upper()
+                    normalized_actual = re.sub(r"[\s-]+", "", actual).upper()
+                    if normalized_wanted != normalized_actual:
                         return False
-                    return True
-            return bool(title and authors and self._work_description_matches(
-                {"title": title, "authors": authors}, row
-            ))
+                    matched_identifier = True
+            return matched_identifier or bool(
+                title
+                and authors
+                and self._work_description_matches(
+                    {"title": title, "authors": authors}, row
+                )
+            )
 
         matches = [row for row in self._dedupe(rows) if requested_match(row)]
         missing = [row for row in matches if not self._text(row.get("description"))]
@@ -252,8 +261,8 @@ class MetadataEngineSource(Source):
                     provider_id, len(found),
                 )
                 rows.extend(found)
-                if any(
-                    requested_match(row) and self._text(row.get("description"))
+                if not any(
+                    requested_match(row) and not self._text(row.get("description"))
                     for row in self._dedupe(rows)
                 ):
                     log.info("Metadata Engine: matching description recovered")
