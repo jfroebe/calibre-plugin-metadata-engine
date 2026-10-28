@@ -1029,17 +1029,39 @@ class InstalledPluginTests(unittest.TestCase):
 
     def test_identifier_followup_has_request_budget(self):
         """Bound provider calls even when a book has several identifiers."""
-        row = {"source": "origin", "title": "Example", "authors": ["A Writer"],
-               "isbn": "9780306406157", "asin": "B012345678",
-               "extra": {"goodreads_id": "12345", "lccn": "93005405"}}
-        providers = ["isbnlab", "goodreads", "google_books", "hardcover", "open_library",
-                     "internet_archive", "new_york_times_books", "asintojson",
-                     "audible", "audnexus", "loc_json_yaml"]
+        row = {
+            "source": "origin",
+            "title": "Example",
+            "authors": ["A Writer"],
+            "isbn": "9780306406157",
+            "asin": "B012345678",
+            "extra": {"goodreads_id": "12345", "lccn": "93005405"},
+        }
+        providers = [
+            "isbnlab",
+            "goodreads",
+            "google_books",
+            "hardcover",
+            "open_library",
+            "internet_archive",
+            "new_york_times_books",
+            "asintojson",
+            "audible",
+            "audnexus",
+            "loc_json_yaml",
+        ]
         with patch.object(self.plugin, "_search", return_value=[]) as search:
             with self.assertLogs(self.log, level="WARNING") as logs:
                 self.plugin._expand_identifiers(
-                    self.log, self.abort, providers, [row], "Example", "Example",
-                    ["A Writer"], {}, 5,
+                    self.log,
+                    self.abort,
+                    providers,
+                    [row],
+                    "Example",
+                    "Example",
+                    ["A Writer"],
+                    {},
+                    5,
                 )
         self.assertEqual(search.call_count, 12)
         self.assertIn("stopped at 12 requests", " ".join(logs.output))
