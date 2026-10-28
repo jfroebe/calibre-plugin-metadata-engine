@@ -499,7 +499,9 @@ class MetadataEngineSource(Source):
                 if pair in visited:
                     continue
                 if len(visited) >= 12:
-                    log.warning("Metadata Engine: identifier follow-up stopped at 12 requests")
+                    log.warning(
+                        "Metadata Engine: identifier follow-up stopped at 12 requests"
+                    )
                     return rows
                 visited.add(pair)
                 try:
