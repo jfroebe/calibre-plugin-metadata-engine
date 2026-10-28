@@ -401,6 +401,10 @@ class MetadataEngineSource(Source):
                             not self._compatible_identifiers(anchor, candidate)
                             or not self._identity_consistent(anchor, candidate)
                         ):
+                            log.warning(
+                                "Metadata Engine: rejected conflicting identity evidence provider=%s kind=%s",
+                                provider, kind,
+                            )
                             continue
                         accepted.append(candidate)
                     rows.extend(accepted)
@@ -1068,11 +1072,47 @@ class MetadataEngineSource(Source):
         return True
 
     @classmethod
+    def _edition_evidence_conflicts(cls, left, right):
+        """Detect strong, corroborated contradictions for the same known format."""
+        def evidence(row):
+            extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+            raw_format = str(extra.get("physical_format") or extra.get("format") or "").casefold()
+            if "audio" in raw_format:
+                kind = "audio"
+            elif any(word in raw_format for word in ("kindle", "ebook", "e-book")):
+                kind = "ebook"
+            elif any(word in raw_format for word in ("hardcover", "hardback", "paperback", "print")):
+                kind = "print"
+            else:
+                kind = ""
+            try:
+                pages = int(extra.get("page_count") or row.get("page_count") or 0)
+                year = int(str(row.get("published_year") or "")[:4])
+            except (TypeError, ValueError):
+                return kind, 0, 0
+            return kind, pages, year
+
+        left_kind, left_pages, left_year = evidence(left)
+        right_kind, right_pages, right_year = evidence(right)
+        if not left_kind or left_kind != right_kind or not all(
+            (left_pages, right_pages, left_year, right_year)
+        ):
+            return False
+        # One field can legitimately vary between providers. Require two large
+        # disagreements before treating the edition evidence as contradictory.
+        return (
+            abs(left_year - right_year) > 5
+            and abs(left_pages - right_pages) > max(100, 0.3 * max(left_pages, right_pages))
+        )
+
+    @classmethod
     def _identity_consistent(cls, left, right):
         """Reject contradictory titles or known contributor sets even with a shared ID."""
         left_title, _, _ = cls._work_title(left.get("title"))
         right_title, _, _ = cls._work_title(right.get("title"))
         if left_title and right_title and left_title != right_title:
+            return False
+        if cls._edition_evidence_conflicts(left, right):
             return False
         left_series, left_number = cls._series_identity(left)
         right_series, right_number = cls._series_identity(right)
