@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 21)
+    version = (1, 1, 22)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -722,6 +722,55 @@ class MetadataEngineSource(Source):
                                 metadata_type="books",
                             )
                         )
+                    if (
+                        title
+                        and len(self._list(authors)) > 1
+                        and provider_id
+                        in {
+                            "goodreads",
+                            "google_books",
+                            "hardcover",
+                            "open_library",
+                            "itunes",
+                        }
+                        and not any(
+                            self._work_description_matches(
+                                {"title": title, "authors": authors}, item
+                            )
+                            for item in provider_rows
+                        )
+                    ):
+                        for person in [None, *self._list(authors)[:3]]:
+                            if abort.is_set():
+                                return None
+                            retry = self._search(
+                                provider_id,
+                                self._search_title(title),
+                                [person] if person else None,
+                                {},
+                                timeout,
+                                **(
+                                    {"metadata_type": "books"}
+                                    if provider_id == "itunes"
+                                    else {}
+                                ),
+                            )
+                            matching = [
+                                item
+                                for item in retry
+                                if self._work_description_matches(
+                                    {"title": title, "authors": authors}, item
+                                )
+                            ]
+                            log.info(
+                                "Metadata Engine cover retry provider=%s candidates=%d matches=%d",
+                                provider_id,
+                                len(retry),
+                                len(matching),
+                            )
+                            if matching:
+                                provider_rows.extend(matching)
+                                break
                     rows.extend(provider_rows)
                     cover_count = sum(
                         1 for row in provider_rows if row.get("cover_url")
@@ -1079,6 +1128,9 @@ class MetadataEngineSource(Source):
             "apple books",
             "open library",
             "google books",
+            "storygraph",
+            "trigger warning database",
+            "content warnings",
             "isbnlab",
             "asintojson",
             "cleaned",
@@ -1178,6 +1230,15 @@ class MetadataEngineSource(Source):
                 extras.append("Duration: %dh %02dm" % (hours, minutes))
             except Exception:
                 pass
+        for field, label in (
+            ("trigger_warnings", "Trigger warnings"),
+            ("parental_warnings", "Parental warnings"),
+        ):
+            warnings = self._list(row.get(field))
+            existing = (mi.comments or "").casefold()
+            missing = [value for value in warnings if value.casefold() not in existing]
+            if missing:
+                extras.append(label + ": " + "; ".join(dict.fromkeys(missing)))
         if extras:
             mi.comments = (mi.comments or "") + "\n\n" + "\n".join(extras)
         return mi
@@ -1243,7 +1304,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.21",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.22",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -1410,11 +1471,42 @@ class MetadataEngineSource(Source):
         return name, number if number is not None else title_number
 
     @classmethod
+    def _work_titles_compatible(cls, left, right):
+        """Match an inserted series name only when another record names that series."""
+        left_title, _, _ = cls._work_title(left.get("title"))
+        right_title, _, _ = cls._work_title(right.get("title"))
+        if not left_title or not right_title:
+            return False
+        if left_title == right_title:
+            return True
+        for long_title, short_title, series_row in (
+            (left_title, right_title, right),
+            (right_title, left_title, left),
+        ):
+            long_parts = long_title.split(": ", 1)
+            short_parts = short_title.split(": ", 1)
+            if (
+                len(long_parts) != 2
+                or len(short_parts) != 2
+                or long_parts[0] != short_parts[0]
+            ):
+                continue
+            marker = " - " + short_parts[1]
+            if not long_parts[1].endswith(marker):
+                continue
+            inserted = long_parts[1][: -len(marker)].strip()
+            series, _ = cls._series_identity(series_row)
+            series = re.sub(r"\s+(?:trilogy|series)$", "", series).strip()
+            if inserted and series and inserted == series:
+                return True
+        return False
+
+    @classmethod
     def _work_description_matches(cls, winner, donor):
         """Require matching work title, compatible contributors and series."""
-        left, left_series, left_number = cls._work_title(winner.get("title"))
-        right, right_series, right_number = cls._work_title(donor.get("title"))
-        if not left or left != right:
+        _, left_series, left_number = cls._work_title(winner.get("title"))
+        _, right_series, right_number = cls._work_title(donor.get("title"))
+        if not cls._work_titles_compatible(winner, donor):
             return False
         if (
             left_series
@@ -1577,7 +1669,7 @@ class MetadataEngineSource(Source):
         """Reject contradictory titles or known contributor sets even with a shared ID."""
         left_title, _, _ = cls._work_title(left.get("title"))
         right_title, _, _ = cls._work_title(right.get("title"))
-        if left_title and right_title and left_title != right_title:
+        if left_title and right_title and not cls._work_titles_compatible(left, right):
             return False
         if cls._edition_evidence_conflicts(left, right):
             return False
@@ -1659,8 +1751,8 @@ class MetadataEngineSource(Source):
                 value = donor.get(field)
                 if value and (not isinstance(value, str) or value.strip()):
                     winner[field] = value
-        # Subjects can be supplied in either provider field.
-        for field in ("genres", "tags"):
+        # Merge work-level subjects and warning labels from compatible records.
+        for field in ("genres", "tags", "trigger_warnings", "parental_warnings"):
             values = cls._list(winner.get(field)) + cls._list(donor.get(field))
             if values:
                 winner[field] = list(dict.fromkeys(values))
