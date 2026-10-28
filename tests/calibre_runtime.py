@@ -667,7 +667,9 @@ class InstalledPluginTests(unittest.TestCase):
     def test_anthology_matches_partial_author_lists_and_editor(self):
         """Enrich ebook and audiobook results using verified contributor subsets."""
         full = {
-            "source": "book", "source_id": "1", "title": "An Anthology",
+            "source": "book",
+            "source_id": "1",
+            "title": "An Anthology",
             "authors": ["A. Writer", "B. Writer"],
             "contributors": [{"name": "E. Editor", "role": "editor"}],
             "confidence": 1,
@@ -676,62 +678,122 @@ class InstalledPluginTests(unittest.TestCase):
             for author in ("A. Writer", "E. Editor"):
                 with self.subTest(media=media, author=author):
                     donor = {
-                        "source": "other", "source_id": "2", "title": "An Anthology",
-                        "authors": [author], "metadata_type": media,
+                        "source": "other",
+                        "source_id": "2",
+                        "title": "An Anthology",
+                        "authors": [author],
+                        "metadata_type": media,
                         "description": "Anthology description",
                     }
-                    result = next(row for row in self.plugin._dedupe([full, donor])
-                                  if row["source"] == "book")
+                    result = next(
+                        row
+                        for row in self.plugin._dedupe([full, donor])
+                        if row["source"] == "book"
+                    )
                     self.assertEqual(result["description"], "Anthology description")
                     self.assertEqual(result["authors"], ["A. Writer", "B. Writer"])
 
     def test_anthology_rejects_conflicting_or_unrelated_contributors(self):
         """A coincidental overlapping author must not connect different lists."""
-        base = {"source": "a", "source_id": "1", "title": "An Anthology",
-                "authors": ["A Writer", "B Writer"], "asin": "B012345678"}
+        base = {
+            "source": "a",
+            "source_id": "1",
+            "title": "An Anthology",
+            "authors": ["A Writer", "B Writer"],
+            "asin": "B012345678",
+        }
         for donor in (
             {"authors": ["A Writer", "C Writer"]},
             {"authors": ["Other Writer"]},
             {"authors": ["A Writer"], "asin": "B999999999"},
-            {"authors": ["A Writer"], "series": [{"name": "Series", "index": 2}],
-             "title": "Different Anthology"},
+            {
+                "authors": ["A Writer"],
+                "series": [{"name": "Series", "index": 2}],
+                "title": "Different Anthology",
+            },
         ):
-            donor = dict({"source": "b", "source_id": "2", "title": "An Anthology",
-                          "description": "Wrong description"}, **donor)
-            result = next(row for row in self.plugin._dedupe([base, donor])
-                          if row["source"] == "a")
+            donor = dict(
+                {
+                    "source": "b",
+                    "source_id": "2",
+                    "title": "An Anthology",
+                    "description": "Wrong description",
+                },
+                **donor,
+            )
+            result = next(
+                row
+                for row in self.plugin._dedupe([base, donor])
+                if row["source"] == "a"
+            )
             self.assertFalse(result.get("description"))
 
     def test_identifier_followup_is_single_hop_and_rejects_wrong_edition(self):
         """Query each compatible source once without traversing newly found IDs."""
-        initial = {"source": "one", "title": "Anthology", "authors": ["A Writer"],
-                   "asin": "B012345678"}
+        initial = {
+            "source": "one",
+            "title": "Anthology",
+            "authors": ["A Writer"],
+            "asin": "B012345678",
+        }
         response = [
-            {"title": "Anthology", "authors": ["A Writer"], "asin": "B012345678",
-             "isbn": "9781234567897", "description": "Matched"},
-            {"title": "Anthology", "authors": ["A Writer"], "asin": "B999999999",
-             "description": "Wrong edition"},
+            {
+                "title": "Anthology",
+                "authors": ["A Writer"],
+                "asin": "B012345678",
+                "isbn": "9781234567897",
+                "description": "Matched",
+            },
+            {
+                "title": "Anthology",
+                "authors": ["A Writer"],
+                "asin": "B999999999",
+                "description": "Wrong edition",
+            },
         ]
         with patch.object(self.plugin, "_search", return_value=response) as search:
             rows = self.plugin._expand_identifiers(
-                self.log, self.abort, ["asintojson", "isbnlab", "open_library"],
-                [initial], "Anthology", "Anthology", ["A Writer"], {}, 5,
+                self.log,
+                self.abort,
+                ["asintojson", "isbnlab", "open_library"],
+                [initial],
+                "Anthology",
+                "Anthology",
+                ["A Writer"],
+                {},
+                5,
             )
-        self.assertEqual([call.args[0] for call in search.call_args_list],
-                         ["asintojson", "isbnlab"])
-        self.assertTrue(all(call.args[3] == {"asin": "B012345678"}
-                            for call in search.call_args_list))
+        self.assertEqual(
+            [call.args[0] for call in search.call_args_list], ["asintojson", "isbnlab"]
+        )
+        self.assertTrue(
+            all(
+                call.args[3] == {"asin": "B012345678"} for call in search.call_args_list
+            )
+        )
         self.assertTrue(all(row.get("asin") != "B999999999" for row in rows))
         self.assertEqual(len(rows), 3)
 
     def test_identifier_followup_uses_discovered_isbn_without_repeating_asin(self):
         """An exact ASIN match can seed an ISBN lookup without repeating the ASIN."""
-        initial = {"source": "one", "title": "Anthology", "authors": ["A Writer"],
-                   "asin": "B012345678", "isbn": "9781234567897"}
+        initial = {
+            "source": "one",
+            "title": "Anthology",
+            "authors": ["A Writer"],
+            "asin": "B012345678",
+            "isbn": "9781234567897",
+        }
         with patch.object(self.plugin, "_search", return_value=[]) as search:
             self.plugin._expand_identifiers(
-                self.log, self.abort, ["asintojson", "open_library"], [initial],
-                "Anthology", "Anthology", ["A Writer"], {"mobi-asin": "B012345678"}, 5,
+                self.log,
+                self.abort,
+                ["asintojson", "open_library"],
+                [initial],
+                "Anthology",
+                "Anthology",
+                ["A Writer"],
+                {"mobi-asin": "B012345678"},
+                5,
             )
         self.assertEqual(search.call_count, 1)
         self.assertEqual(search.call_args.args[0], "open_library")
@@ -740,19 +802,31 @@ class InstalledPluginTests(unittest.TestCase):
     def test_multi_author_lookup_tries_individual_contributors(self):
         """Recover an anthology listed by one contributor when a combined query misses."""
         self.plugin.prefs["plugin_ids"] = "hardcover"
+
         def lookup(provider, query, authors, identifiers, timeout, **kwargs):
             if authors == ["B Writer"]:
-                return [{"source": "hardcover", "source_id": "result",
-                         "title": "An Anthology", "authors": ["B Writer"],
-                         "description": "Anthology synopsis", "confidence": 0.9}]
+                return [
+                    {
+                        "source": "hardcover",
+                        "source_id": "result",
+                        "title": "An Anthology",
+                        "authors": ["B Writer"],
+                        "description": "Anthology synopsis",
+                        "confidence": 0.9,
+                    }
+                ]
             return []
+
         with patch.object(self.plugin, "_search", side_effect=lookup) as search:
-            results = self.identify(title="An Anthology",
-                                    authors=["A Writer", "B Writer", "C Writer"])
+            results = self.identify(
+                title="An Anthology", authors=["A Writer", "B Writer", "C Writer"]
+            )
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].comments, "Anthology synopsis")
-        self.assertEqual([call.args[2] for call in search.call_args_list],
-                         [["A Writer", "B Writer", "C Writer"], None, ["A Writer"], ["B Writer"]])
+        self.assertEqual(
+            [call.args[2] for call in search.call_args_list],
+            [["A Writer", "B Writer", "C Writer"], None, ["A Writer"], ["B Writer"]],
+        )
 
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
