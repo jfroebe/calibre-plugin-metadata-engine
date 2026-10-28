@@ -44,6 +44,11 @@ class MetadataEngineSource(Source):
             "series_index",
             "identifier:isbn",
             "identifier:asin",
+            "identifier:goodreads",
+            "identifier:lccn",
+            "identifier:oclc",
+            "identifier:dewey",
+            "identifier:openlibrary",
         ]
     )
     has_html_comments = False
@@ -716,6 +721,21 @@ class MetadataEngineSource(Source):
         if row.get("asin"):
             mi.set_identifier("asin", self._text(row["asin"]))
 
+        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+        for scheme, keys in (
+            ("goodreads", ("goodreads_id",)),
+            ("lccn", ("lccn",)),
+            ("oclc", ("oclc", "oclc_numbers")),
+            ("dewey", ("dewey_decimal", "dewey_decimal_class")),
+            ("openlibrary", ("open_library_edition_id", "open_library_work_id")),
+        ):
+            value = next(
+                (self._list(extra.get(key))[0] for key in keys if self._list(extra.get(key))),
+                None,
+            )
+            if value:
+                mi.set_identifier(scheme, value)
+
         source = self._text(row.get("source"))
         source_id = self._text(row.get("source_id"))
         if source and source_id:
@@ -1099,6 +1119,17 @@ class MetadataEngineSource(Source):
         genres = cls._list(winner.get("genres")) + cls._list(donor.get("genres"))
         if genres:
             winner["genres"] = list(dict.fromkeys(genres))
+
+        winner_extra = dict(winner.get("extra") or {})
+        donor_extra = donor.get("extra") if isinstance(donor.get("extra"), dict) else {}
+        extra_fields = ["open_library_work_id", "dewey_decimal", "dewey_decimal_class"]
+        if edition:
+            extra_fields += ["goodreads_id", "lccn", "oclc", "oclc_numbers", "open_library_edition_id"]
+        for key in extra_fields:
+            if not winner_extra.get(key) and donor_extra.get(key):
+                winner_extra[key] = donor_extra[key]
+        if winner_extra:
+            winner["extra"] = winner_extra
 
         if edition:
             for field in (
