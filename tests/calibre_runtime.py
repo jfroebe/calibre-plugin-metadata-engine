@@ -59,7 +59,13 @@ class InstalledPluginTests(unittest.TestCase):
             "authors": [],
             "series": [{"name": "Legacy of the Lost", "position": 3}],
             "asin": "B08CK7H7P2",
-            "genres": ["Kindle Store", "Kindle eBooks", "Science Fiction & Fantasy", "Science Fiction", "Space Opera"],
+            "genres": [
+                "Kindle Store",
+                "Kindle eBooks",
+                "Science Fiction & Fantasy",
+                "Science Fiction",
+                "Space Opera",
+            ],
             "source": "amazon",
             "confidence": 0.99,
             "metadata_type": "book",
@@ -90,9 +96,13 @@ class InstalledPluginTests(unittest.TestCase):
                 authors=authors,
                 identifiers={},
             )
-        self.assertEqual(len(results), 1, "Matching provider records must form one result")
+        self.assertEqual(
+            len(results), 1, "Matching provider records must form one result"
+        )
         match = results[0]
-        self.assertEqual(match.tags, ["Science Fiction & Fantasy", "Science Fiction", "Space Opera"])
+        self.assertEqual(
+            match.tags, ["Science Fiction & Fantasy", "Science Fiction", "Space Opera"]
+        )
         self.assertEqual(match.title, "A Specter and an Invasion")
         self.assertEqual(match.authors, authors)
         self.assertEqual(match.series, "Legacy of the Lost")
