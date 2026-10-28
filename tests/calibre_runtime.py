@@ -664,6 +664,44 @@ class InstalledPluginTests(unittest.TestCase):
         original = next(row for row in result if row.get("asin") == "B012345678")
         self.assertNotIn("description", original)
 
+    def test_anthology_matches_partial_author_lists_and_editor(self):
+        """Enrich ebook and audiobook results using verified contributor subsets."""
+        full = {
+            "source": "book", "source_id": "1", "title": "An Anthology",
+            "authors": ["A. Writer", "B. Writer"],
+            "contributors": [{"name": "E. Editor", "role": "editor"}],
+            "confidence": 1,
+        }
+        for media in ("books", "audiobooks"):
+            for author in ("A. Writer", "E. Editor"):
+                with self.subTest(media=media, author=author):
+                    donor = {
+                        "source": "other", "source_id": "2", "title": "An Anthology",
+                        "authors": [author], "metadata_type": media,
+                        "description": "Anthology description",
+                    }
+                    result = next(row for row in self.plugin._dedupe([full, donor])
+                                  if row["source"] == "book")
+                    self.assertEqual(result["description"], "Anthology description")
+                    self.assertEqual(result["authors"], ["A. Writer", "B. Writer"])
+
+    def test_anthology_rejects_conflicting_or_unrelated_contributors(self):
+        """A coincidental overlapping author must not connect different lists."""
+        base = {"source": "a", "source_id": "1", "title": "An Anthology",
+                "authors": ["A Writer", "B Writer"], "asin": "B012345678"}
+        for donor in (
+            {"authors": ["A Writer", "C Writer"]},
+            {"authors": ["Other Writer"]},
+            {"authors": ["A Writer"], "asin": "B999999999"},
+            {"authors": ["A Writer"], "series": [{"name": "Series", "index": 2}],
+             "title": "Different Anthology"},
+        ):
+            donor = dict({"source": "b", "source_id": "2", "title": "An Anthology",
+                          "description": "Wrong description"}, **donor)
+            result = next(row for row in self.plugin._dedupe([base, donor])
+                          if row["source"] == "a")
+            self.assertFalse(result.get("description"))
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -796,6 +834,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 34:
+    if result.testsRun != 36:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
