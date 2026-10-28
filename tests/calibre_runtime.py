@@ -219,6 +219,26 @@ class InstalledPluginTests(unittest.TestCase):
             metadata.comments, "Time has passed. Goodreads is mentioned in prose."
         )
 
+    def test_subjects_deduplicated_after_calibre_cleanup(self):
+        """Collapse mixed-case subject duplicates without discarding distinct subjects."""
+        row = {
+            "title": "Tired as F*ck",
+            "authors": ["Caroline Dooner"],
+            "source": "open_library",
+            "genres": ["Books", "Psychology", "Self-Improvement"],
+            "tags": ["books", " BOOKS ", "psychology", "Open-Library", "Cleaned",
+                     "Self Improvement", "Health, Mind & Body"],
+        }
+        metadata = self.plugin._to_metadata(row, 0)
+        self.plugin.clean_downloaded_metadata(metadata)
+        normalized = [" ".join(tag.casefold().split()) for tag in metadata.tags]
+        self.assertEqual(normalized.count("books"), 1, repr(metadata.tags))
+        self.assertEqual(normalized.count("psychology"), 1, repr(metadata.tags))
+        self.assertIn("Self-Improvement", metadata.tags)
+        self.assertIn("Self Improvement", metadata.tags)
+        self.assertNotIn("Open-Library", metadata.tags)
+        self.assertNotIn("Cleaned", metadata.tags)
+
     def test_ebook_enriches_matching_book_not_different_author(self):
         """Merge rich ebook details only into the same title and author."""
         rows = [
@@ -1296,6 +1316,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 50:
+    if result.testsRun != 51:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
