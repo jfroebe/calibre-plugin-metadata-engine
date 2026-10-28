@@ -1241,25 +1241,59 @@ class InstalledPluginTests(unittest.TestCase):
         """Rank matching cover sizes and reject wrong-title or wrong-edition images."""
         isbn = "9780547928227"
         rows = [
-            {"title": "The Hobbit", "authors": ["J. R. R. Tolkien"], "isbn": isbn,
-             "source": "one", "cover_url": "https://example.test/small.png", "confidence": 0.99},
-            {"title": "The Hobbit", "authors": ["J. R. R. Tolkien"], "isbn": isbn,
-             "source": "two", "cover_url": "https://example.test/large.png", "confidence": 0.8},
-            {"title": "Different Book", "authors": ["J. R. R. Tolkien"], "isbn": isbn,
-             "source": "bad", "cover_url": "https://example.test/wrong.png"},
+            {
+                "title": "The Hobbit",
+                "authors": ["J. R. R. Tolkien"],
+                "isbn": isbn,
+                "source": "one",
+                "cover_url": "https://example.test/small.png",
+                "confidence": 0.99,
+            },
+            {
+                "title": "The Hobbit",
+                "authors": ["J. R. R. Tolkien"],
+                "isbn": isbn,
+                "source": "two",
+                "cover_url": "https://example.test/large.png",
+                "confidence": 0.8,
+            },
+            {
+                "title": "Different Book",
+                "authors": ["J. R. R. Tolkien"],
+                "isbn": isbn,
+                "source": "bad",
+                "cover_url": "https://example.test/wrong.png",
+            },
         ]
-        images = {"https://example.test/small.png": png(265, 400),
-                  "https://example.test/large.png": png(1200, 1800)}
+        images = {
+            "https://example.test/small.png": png(265, 400),
+            "https://example.test/large.png": png(1200, 1800),
+        }
         queue = Queue()
         with (
-            patch.object(self.plugin, "_configured_provider_ids", return_value=["test"]),
+            patch.object(
+                self.plugin, "_configured_provider_ids", return_value=["test"]
+            ),
             patch.object(self.plugin, "_search", return_value=rows),
-            patch.object(self.plugin, "_http_bytes", side_effect=lambda url, timeout: images[url]),
+            patch.object(
+                self.plugin, "_http_bytes", side_effect=lambda url, timeout: images[url]
+            ),
         ):
-            self.plugin.download_cover(self.log, queue, self.abort,
-                title="The Hobbit", authors=["J. R. R. Tolkien"], identifiers={"isbn": isbn})
-        self.assertEqual([item[1] for item in list(queue.queue)],
-                         [images["https://example.test/large.png"], images["https://example.test/small.png"]])
+            self.plugin.download_cover(
+                self.log,
+                queue,
+                self.abort,
+                title="The Hobbit",
+                authors=["J. R. R. Tolkien"],
+                identifiers={"isbn": isbn},
+            )
+        self.assertEqual(
+            [item[1] for item in list(queue.queue)],
+            [
+                images["https://example.test/large.png"],
+                images["https://example.test/small.png"],
+            ],
+        )
 
     def test_known_wrong_edition_cover_is_not_used(self):
         """A supplied ISBN mismatch cannot become a fallback cover."""
