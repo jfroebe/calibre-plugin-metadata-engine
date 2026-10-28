@@ -75,6 +75,7 @@ class InstalledPluginTests(unittest.TestCase):
             "authors": ["Chris J. Pike", "M. D. Cooper", "Jill Cooper"],
             "source": "goodreads",
             "source_id": "55033599",
+            "series": [],
             "description": "President Finley threatens the remaining free nations.",
             "confidence": 0.90,
             "metadata_type": "book",
