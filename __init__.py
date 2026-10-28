@@ -1208,6 +1208,23 @@ class MetadataEngineSource(Source):
                 )
                 if left_id and right_id and left_id != right_id:
                     return False
+        left_extra = left.get("extra") if isinstance(left.get("extra"), dict) else {}
+        right_extra = right.get("extra") if isinstance(right.get("extra"), dict) else {}
+        for keys in (
+            ("lccn",), ("oclc", "oclc_numbers"), ("goodreads_id",),
+            ("open_library_edition_id",), ("open_library_work_id",),
+        ):
+            values = []
+            for extra in (left_extra, right_extra):
+                ids = set()
+                for key in keys:
+                    ids.update(
+                        re.sub(r"[\s-]+", "", item).upper()
+                        for item in cls._list(extra.get(key))
+                    )
+                values.append(ids)
+            if values[0] and values[1] and not values[0].intersection(values[1]):
+                return False
         return True
 
     @classmethod
