@@ -26,7 +26,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 10)
+    version = (1, 1, 11)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -150,6 +150,7 @@ class MetadataEngineSource(Source):
                 timeout, abort
             )
             rows = []
+            retried_providers = set()
             for provider_id in provider_ids:
                 media_types = (None, "books") if provider_id == "itunes" else (None,)
                 for media_type in media_types:
@@ -176,6 +177,7 @@ class MetadataEngineSource(Source):
                                 found = self._search(
                                     provider_id, short_title, None, {}, timeout
                                 )
+                                retried_providers.add(provider_id)
                         rows.extend(found)
                     except Exception as exc:
                         log.error(
@@ -195,6 +197,18 @@ class MetadataEngineSource(Source):
                     ):
                         row["authors"] = self._list(authors)
 
+            rows = self._recover_descriptions(
+                log,
+                abort,
+                provider_ids,
+                rows,
+                query,
+                title,
+                authors,
+                identifiers,
+                timeout,
+                retried_providers,
+            )
             rows = self._dedupe(rows)
             rows.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
@@ -210,6 +224,130 @@ class MetadataEngineSource(Source):
         except Exception as exc:
             log.exception("Metadata Engine identify failed")
             return "Metadata Engine identify failed: %s" % exc
+
+    def _recover_descriptions(
+        self,
+        log,
+        abort,
+        provider_ids,
+        rows,
+        query,
+        title,
+        authors,
+        identifiers,
+        timeout,
+        retried_providers=None,
+    ):
+        """Retry configured title-search providers for an incomplete matching work."""
+
+        def requested_match(row):
+            matched_identifier = False
+            for key, aliases in (
+                ("asin", ("asin",)),
+                ("isbn", ("isbn", "isbn13", "isbn10")),
+            ):
+                wanted = self._identifier(identifiers, *aliases)
+                actual = self._text(row.get(key))
+                if wanted and actual:
+                    normalized_wanted = re.sub(r"[\s-]+", "", wanted).upper()
+                    normalized_actual = re.sub(r"[\s-]+", "", actual).upper()
+                    if normalized_wanted != normalized_actual:
+                        return False
+                    matched_identifier = True
+            return matched_identifier or bool(
+                title
+                and authors
+                and self._work_description_matches(
+                    {"title": title, "authors": authors}, row
+                )
+            )
+
+        matches = [row for row in self._dedupe(rows) if requested_match(row)]
+        missing = [row for row in matches if not self._text(row.get("description"))]
+        if not missing:
+            return rows
+        candidate = missing[0]
+        short_title, _, _ = self._work_title(candidate.get("title"))
+        if not short_title or not self._list(candidate.get("authors")):
+            log.warning(
+                "Metadata Engine: matching result has no description; insufficient title or author data for recovery"
+            )
+            return rows
+
+        log.info(
+            "Metadata Engine: matching result has no description; trying configured sources"
+        )
+        for provider_id in provider_ids:
+            if abort.is_set():
+                return rows
+            # These providers only support identifiers, already used above.
+            if provider_id in {"asintojson", "isbnlab"} or provider_id in (
+                retried_providers or set()
+            ):
+                continue
+            # Avoid issuing the same title-only request twice.
+            if (
+                not authors
+                and not identifiers
+                and query.strip().casefold() == short_title
+            ):
+                continue
+            try:
+                kwargs = {"metadata_type": "books"} if provider_id == "itunes" else {}
+                found = self._search(
+                    provider_id, short_title, None, {}, timeout, **kwargs
+                )
+                log.info(
+                    "Metadata Engine: description retry provider=%r candidates=%d",
+                    provider_id,
+                    len(found),
+                )
+                for winner in rows:
+                    if not requested_match(winner) or self._text(
+                        winner.get("description")
+                    ):
+                        continue
+                    for donor in found:
+                        description = self._text(donor.get("description"))
+                        if not description:
+                            continue
+                        shared = False
+                        conflict = False
+                        for key in ("isbn", "asin"):
+                            left = self._text(winner.get(key))
+                            right = self._text(donor.get(key))
+                            if left and right:
+                                left = re.sub(r"[\s-]+", "", left).upper()
+                                right = re.sub(r"[\s-]+", "", right).upper()
+                                if left != right:
+                                    conflict = True
+                                    break
+                                shared = True
+                        if not conflict and (
+                            shared or self._work_description_matches(winner, donor)
+                        ):
+                            winner["description"] = description
+                            log.info(
+                                "Metadata Engine: description supplied by provider=%r",
+                                provider_id,
+                            )
+                            break
+                if not any(
+                    requested_match(row) and not self._text(row.get("description"))
+                    for row in self._dedupe(rows)
+                ):
+                    log.info("Metadata Engine: matching description recovered")
+                    return rows
+            except Exception as exc:
+                log.error(
+                    "Metadata Engine description retry provider %r failed: %s",
+                    provider_id,
+                    exc,
+                )
+        log.warning(
+            "Metadata Engine: matching result remains without a description after configured sources"
+        )
+        return rows
 
     def download_cover(
         self,
@@ -545,7 +683,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.10",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.11",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
