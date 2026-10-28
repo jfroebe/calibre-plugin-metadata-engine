@@ -197,6 +197,9 @@ class MetadataEngineSource(Source):
                     ):
                         row["authors"] = self._list(authors)
 
+            rows = self._expand_identifiers(
+                log, abort, provider_ids, rows, query, title, authors, identifiers, timeout
+            )
             rows = self._recover_descriptions(
                 log,
                 abort,
@@ -225,6 +228,80 @@ class MetadataEngineSource(Source):
             log.exception("Metadata Engine identify failed")
             return "Metadata Engine identify failed: %s" % exc
 
+    def _matches_requested(self, row, title, authors, identifiers):
+        matched_identifier = False
+        for key, aliases in (
+            ("asin", ("asin",)),
+            ("isbn", ("isbn", "isbn13", "isbn10")),
+        ):
+            wanted = self._identifier(identifiers, *aliases)
+            actual = self._text(row.get(key))
+            if wanted and actual:
+                normalized_wanted = re.sub(r"[\s-]+", "", wanted).upper()
+                normalized_actual = re.sub(r"[\s-]+", "", actual).upper()
+                if normalized_wanted != normalized_actual:
+                    return False
+                matched_identifier = True
+        return matched_identifier or bool(
+            title
+            and authors
+            and self._work_description_matches(
+                {"title": title, "authors": authors}, row
+            )
+        )
+
+
+    def _expand_identifiers(
+        self, log, abort, provider_ids, rows, query, title, authors, identifiers, timeout
+    ):
+        """Query compatible sources once for identifiers from initial matching results."""
+        support = {
+            "asin": {"asintojson", "isbnlab", "audible", "audnexus"},
+            "isbn": {"isbnlab", "goodreads", "google_books", "hardcover",
+                     "open_library", "internet_archive", "new_york_times_books"},
+        }
+        initial = {"asin": self._identifier(identifiers, "asin"),
+                   "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10")}
+        seeds = []
+        for row in rows:
+            if not self._matches_requested(row, title, authors, identifiers):
+                continue
+            for kind in ("isbn", "asin"):
+                value = re.sub(r"[\s-]+", "", self._text(row.get(kind)) or "").upper()
+                pattern = r"(?:\d{13}|\d{9}[\dX])" if kind == "isbn" else r"[A-Z0-9]{10}"
+                if not re.fullmatch(pattern, value):
+                    continue
+                original = re.sub(r"[\s-]+", "", initial[kind] or "").upper()
+                if value != original and not any(x[0] == kind and x[1] == value for x in seeds):
+                    seeds.append((kind, value, row))
+        # Freeze the initial identifier set: follow-up results cannot trigger
+        # nested lookups. Bound expansion even for large multi-edition searches.
+        seeds = seeds[:4]
+        for kind, value, anchor in seeds:
+            for provider in provider_ids:
+                if abort.is_set():
+                    return rows
+                if provider not in support[kind]:
+                    continue
+                try:
+                    found = self._search(provider, query or value, authors, {kind: value}, timeout)
+                    accepted = []
+                    for candidate in found:
+                        actual = re.sub(r"[\s-]+", "", self._text(candidate.get(kind)) or "").upper()
+                        if actual == value and self._compatible_identifiers(anchor, candidate):
+                            accepted.append(candidate)
+                    rows.extend(accepted)
+                    log.info(
+                        "Metadata Engine: identifier follow-up provider=%s kind=%s accepted=%d",
+                        provider, kind, len(accepted),
+                    )
+                except Exception as exc:
+                    log.error(
+                        "Metadata Engine identifier follow-up provider %s kind %s failed: %s",
+                        provider, kind, exc,
+                    )
+        return rows
+
     def _recover_descriptions(
         self,
         log,
@@ -241,26 +318,7 @@ class MetadataEngineSource(Source):
         """Retry configured title-search providers for an incomplete matching work."""
 
         def requested_match(row):
-            matched_identifier = False
-            for key, aliases in (
-                ("asin", ("asin",)),
-                ("isbn", ("isbn", "isbn13", "isbn10")),
-            ):
-                wanted = self._identifier(identifiers, *aliases)
-                actual = self._text(row.get(key))
-                if wanted and actual:
-                    normalized_wanted = re.sub(r"[\s-]+", "", wanted).upper()
-                    normalized_actual = re.sub(r"[\s-]+", "", actual).upper()
-                    if normalized_wanted != normalized_actual:
-                        return False
-                    matched_identifier = True
-            return matched_identifier or bool(
-                title
-                and authors
-                and self._work_description_matches(
-                    {"title": title, "authors": authors}, row
-                )
-            )
+            return self._matches_requested(row, title, authors, identifiers)
 
         matches = [row for row in self._dedupe(rows) if requested_match(row)]
         missing = [row for row in matches if not self._text(row.get("description"))]
