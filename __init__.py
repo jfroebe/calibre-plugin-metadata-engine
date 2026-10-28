@@ -725,7 +725,14 @@ class MetadataEngineSource(Source):
                     if (
                         title
                         and len(self._list(authors)) > 1
-                        and provider_id in {"goodreads", "google_books", "hardcover", "open_library", "itunes"}
+                        and provider_id
+                        in {
+                            "goodreads",
+                            "google_books",
+                            "hardcover",
+                            "open_library",
+                            "itunes",
+                        }
                         and not any(
                             self._work_description_matches(
                                 {"title": title, "authors": authors}, item
@@ -742,17 +749,24 @@ class MetadataEngineSource(Source):
                                 [person] if person else None,
                                 {},
                                 timeout,
-                                **({"metadata_type": "books"} if provider_id == "itunes" else {}),
+                                **(
+                                    {"metadata_type": "books"}
+                                    if provider_id == "itunes"
+                                    else {}
+                                ),
                             )
                             matching = [
-                                item for item in retry
+                                item
+                                for item in retry
                                 if self._work_description_matches(
                                     {"title": title, "authors": authors}, item
                                 )
                             ]
                             log.info(
                                 "Metadata Engine cover retry provider=%s candidates=%d matches=%d",
-                                provider_id, len(retry), len(matching),
+                                provider_id,
+                                len(retry),
+                                len(matching),
                             )
                             if matching:
                                 provider_rows.extend(matching)
