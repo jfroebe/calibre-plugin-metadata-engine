@@ -1027,6 +1027,23 @@ class InstalledPluginTests(unittest.TestCase):
                 self.assertEqual(search.call_args.args[1], scheme.upper() + ":" + value)
                 self.assertEqual(rows, [result])
 
+    def test_identifier_followup_has_request_budget(self):
+        """Bound provider calls even when a book has several identifiers."""
+        row = {"source": "origin", "title": "Example", "authors": ["A Writer"],
+               "isbn": "9780306406157", "asin": "B012345678",
+               "extra": {"goodreads_id": "12345", "lccn": "93005405"}}
+        providers = ["isbnlab", "goodreads", "google_books", "hardcover", "open_library",
+                     "internet_archive", "new_york_times_books", "asintojson",
+                     "audible", "audnexus", "loc_json_yaml"]
+        with patch.object(self.plugin, "_search", return_value=[]) as search:
+            with self.assertLogs(self.log, level="WARNING") as logs:
+                self.plugin._expand_identifiers(
+                    self.log, self.abort, providers, [row], "Example", "Example",
+                    ["A Writer"], {}, 5,
+                )
+        self.assertEqual(search.call_count, 12)
+        self.assertIn("stopped at 12 requests", " ".join(logs.output))
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -1159,6 +1176,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 47:
+    if result.testsRun != 48:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
