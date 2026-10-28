@@ -561,19 +561,41 @@ class InstalledPluginTests(unittest.TestCase):
 
     def test_merge_metadata_from_multiple_sources(self):
         """Combine work and exact-edition fields while preserving existing values."""
-        primary = {"source": "store", "source_id": "a", "asin": "B012345678",
-                   "title": "Example", "authors": ["A. Writer"], "confidence": 1.0,
-                   "publisher": "Original publisher"}
-        work = {"source": "catalog", "source_id": "b", "title": "Example",
-                "authors": ["A. Writer"], "description": "Work description",
-                "series": [{"name": "Example Series", "index": 3}],
-                "genres": ["Science Fiction"], "publisher": "Other edition publisher"}
-        edition = {"source": "identifier", "source_id": "c", "title": "Example",
-                   "authors": ["A. Writer"], "asin": "B012345678",
-                   "isbn": "9781234567897", "publisher": "Different publisher",
-                   "published_year": "2021", "language": "eng"}
-        combined = next(row for row in self.plugin._dedupe([primary, work, edition])
-                        if row.get("source") == "store")
+        primary = {
+            "source": "store",
+            "source_id": "a",
+            "asin": "B012345678",
+            "title": "Example",
+            "authors": ["A. Writer"],
+            "confidence": 1.0,
+            "publisher": "Original publisher",
+        }
+        work = {
+            "source": "catalog",
+            "source_id": "b",
+            "title": "Example",
+            "authors": ["A. Writer"],
+            "description": "Work description",
+            "series": [{"name": "Example Series", "index": 3}],
+            "genres": ["Science Fiction"],
+            "publisher": "Other edition publisher",
+        }
+        edition = {
+            "source": "identifier",
+            "source_id": "c",
+            "title": "Example",
+            "authors": ["A. Writer"],
+            "asin": "B012345678",
+            "isbn": "9781234567897",
+            "publisher": "Different publisher",
+            "published_year": "2021",
+            "language": "eng",
+        }
+        combined = next(
+            row
+            for row in self.plugin._dedupe([primary, work, edition])
+            if row.get("source") == "store"
+        )
         self.assertEqual(combined["description"], "Work description")
         self.assertEqual(combined["publisher"], "Original publisher")
         self.assertEqual(combined["published_year"], "2021")
@@ -581,19 +603,36 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(combined["isbn"], "9781234567897")
         self.assertIn("Science Fiction", combined["genres"])
         metadata = self.plugin._to_metadata(combined, 0)
-        self.assertEqual((metadata.series, metadata.series_index), ("Example Series", 3))
+        self.assertEqual(
+            (metadata.series, metadata.series_index), ("Example Series", 3)
+        )
         self.assertNotIn("description", primary)
 
     def test_work_only_match_does_not_supply_edition_fields(self):
         """A shared title and authors do not establish edition-specific values."""
-        base = {"source": "store", "source_id": "1", "title": "Example",
-                "authors": ["A Writer"], "asin": "B012345678", "confidence": 1}
-        donor = {"source": "catalog", "source_id": "2", "title": "Example",
-                 "authors": ["A Writer"], "publisher": "Other edition",
-                 "published_year": "2021", "isbn": "9781234567897",
-                 "description": "Work description"}
-        result = next(row for row in self.plugin._dedupe([base, donor])
-                      if row.get("source") == "store")
+        base = {
+            "source": "store",
+            "source_id": "1",
+            "title": "Example",
+            "authors": ["A Writer"],
+            "asin": "B012345678",
+            "confidence": 1,
+        }
+        donor = {
+            "source": "catalog",
+            "source_id": "2",
+            "title": "Example",
+            "authors": ["A Writer"],
+            "publisher": "Other edition",
+            "published_year": "2021",
+            "isbn": "9781234567897",
+            "description": "Work description",
+        }
+        result = next(
+            row
+            for row in self.plugin._dedupe([base, donor])
+            if row.get("source") == "store"
+        )
         self.assertEqual(result["description"], "Work description")
         self.assertNotIn("publisher", result)
         self.assertNotIn("published_year", result)
@@ -601,14 +640,25 @@ class InstalledPluginTests(unittest.TestCase):
 
     def test_conflicting_identifiers_and_series_are_not_merged(self):
         """Never combine conflicting editions or different numbered works."""
-        base = {"source": "store", "source_id": "1", "title": "Example",
-                "authors": ["A Writer"], "isbn": "9781234567897",
-                "asin": "B012345678", "series": [{"name": "Series", "index": 3}],
-                "confidence": 1}
+        base = {
+            "source": "store",
+            "source_id": "1",
+            "title": "Example",
+            "authors": ["A Writer"],
+            "isbn": "9781234567897",
+            "asin": "B012345678",
+            "series": [{"name": "Series", "index": 3}],
+            "confidence": 1,
+        }
         wrong_id = dict(base, asin="B999999999", description="Wrong edition")
-        wrong_series = {"source": "other", "source_id": "3", "title": "Example",
-                        "authors": ["A Writer"], "series": [{"name": "Series", "index": 2}],
-                        "description": "Different book"}
+        wrong_series = {
+            "source": "other",
+            "source_id": "3",
+            "title": "Example",
+            "authors": ["A Writer"],
+            "series": [{"name": "Series", "index": 2}],
+            "description": "Different book",
+        }
         result = self.plugin._dedupe([base, wrong_id, wrong_series])
         self.assertEqual(len(result), 3)
         original = next(row for row in result if row.get("asin") == "B012345678")
