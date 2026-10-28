@@ -1492,10 +1492,10 @@ class MetadataEngineSource(Source):
         right_title = normalize_term_number(right_title)
         # Apple audiobook titles encode the series in a different explicit form.
         # Only accept the form when both the series and position agree.
-        term_pattern = r"^(.+?):\\s*(.+?)\\s+-\\s+term\\s+(\\d+(?:\\.\\d+)?)$"
+        term_pattern = r"^(.+?):\s*(.+?)\s+-\s+term\s+(\d+(?:\.\d+)?)$"
         audio_pattern = (
-            r"^(.+?):\\s*(.+?),\\s*book\\s+(\\d+(?:\\.\\d+)?)"
-            r"(?:\\s*\\(unabridged\\))?$"
+            r"^(.+?):\s*(.+?),\s*book\s+(\d+(?:\.\d+)?)"
+            r"(?:\s*\(unabridged\))?$"
         )
         for term_title, audio_title in (
             (left_title, right_title),
