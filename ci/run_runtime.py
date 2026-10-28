@@ -352,10 +352,10 @@ def main() -> None:
                         or books[0]["isbn"] != "9780547928227"
                     ):
                         raise AssertionError("Library metadata differs from fixture")
-                    if "metadata-engine:calibre_fixture" not in [
+                    if "metadata-engine:calibre_fixture" in [
                         tag.casefold() for tag in books[0]["tags"]
                     ]:
-                        raise AssertionError("Library source provenance missing")
+                        raise AssertionError("Library tags contain a source marker")
                     metadata["engine_integration"] = "passed"
             command(
                 [tools["calibre-customize"], "-r", "Metadata Engine"],
