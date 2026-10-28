@@ -196,6 +196,7 @@ class InstalledPluginTests(unittest.TestCase):
                 "goodreads",
                 "audiobooks",
                 "metadata-engine:goodreads",
+                "Cleaned",
                 "Open-Library",
                 "open_library",
                 "OPEN LIBRARY",
