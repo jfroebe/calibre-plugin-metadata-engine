@@ -322,11 +322,12 @@ class MetadataEngineSource(Source):
             else:
                 actual = self._text(row.get(key))
             if wanted and actual:
-                normalized_wanted = re.sub(r"[\s-]+", "", wanted).upper()
-                normalized_actual = re.sub(r"[\s-]+", "", actual).upper()
-                if normalized_wanted != normalized_actual:
+                normalized_wanted = self._canonical_isbn(wanted) if key == "isbn" else re.sub(r"[\s-]+", "", wanted).upper()
+                normalized_actual = self._canonical_isbn(actual) if key == "isbn" else re.sub(r"[\s-]+", "", actual).upper()
+                if normalized_wanted and normalized_actual and normalized_wanted != normalized_actual:
                     return False
-                matched_identifier = True
+                if normalized_wanted and normalized_wanted == normalized_actual:
+                    matched_identifier = True
         return matched_identifier or bool(
             title
             and authors
@@ -1075,16 +1076,33 @@ class MetadataEngineSource(Source):
         )
 
     @classmethod
+    def _canonical_isbn(cls, value):
+        """Return a validated ISBN-13 identity, or an empty string for invalid ISBNs."""
+        raw = re.sub(r"[\s-]+", "", cls._text(value) or "").upper()
+        if re.fullmatch(r"\d{9}[\dX]", raw):
+            digits = [10 if char == "X" else int(char) for char in raw]
+            if sum((10 - index) * digit for index, digit in enumerate(digits)) % 11:
+                return ""
+            stem = "978" + raw[:9]
+            check = (-sum(int(char) * (1 if index % 2 == 0 else 3)
+                          for index, char in enumerate(stem))) % 10
+            return stem + str(check)
+        if re.fullmatch(r"\d{13}", raw):
+            if sum(int(char) * (1 if index % 2 == 0 else 3)
+                   for index, char in enumerate(raw)) % 10 == 0:
+                return raw
+        return ""
+
+    @classmethod
     def _compatible_identifiers(cls, left, right):
         """Reject explicitly conflicting edition identifiers."""
         for key in ("isbn", "asin"):
             a, b = cls._text(left.get(key)), cls._text(right.get(key))
-            if (
-                a
-                and b
-                and re.sub(r"[\s-]+", "", a).upper() != re.sub(r"[\s-]+", "", b).upper()
-            ):
-                return False
+            if a and b:
+                left_id = cls._canonical_isbn(a) if key == "isbn" else re.sub(r"[\s-]+", "", a).upper()
+                right_id = cls._canonical_isbn(b) if key == "isbn" else re.sub(r"[\s-]+", "", b).upper()
+                if left_id and right_id and left_id != right_id:
+                    return False
         return True
 
     @classmethod
@@ -1148,11 +1166,12 @@ class MetadataEngineSource(Source):
             return False
         for key in ("isbn", "asin"):
             a, b = cls._text(left.get(key)), cls._text(right.get(key))
-            if (
-                a
-                and b
-                and re.sub(r"[\s-]+", "", a).upper() == re.sub(r"[\s-]+", "", b).upper()
-            ):
+            if key == "isbn":
+                a, b = cls._canonical_isbn(a), cls._canonical_isbn(b)
+            else:
+                a = re.sub(r"[\s-]+", "", a or "").upper()
+                b = re.sub(r"[\s-]+", "", b or "").upper()
+            if a and b and a == b:
                 return True
         return bool(
             cls._text(left.get("source"))
@@ -1234,7 +1253,7 @@ class MetadataEngineSource(Source):
         ):
             row = dict(original)
             if row.get("isbn"):
-                key = ("isbn", str(row["isbn"]).replace("-", "").replace(" ", ""))
+                key = ("isbn", cls._canonical_isbn(row["isbn"]) or str(row["isbn"]))
             elif row.get("asin"):
                 key = ("asin", str(row["asin"]).upper())
             elif row.get("source") and row.get("source_id"):
@@ -1251,7 +1270,7 @@ class MetadataEngineSource(Source):
                 )
             group = groups.setdefault(key, [])
             existing = next(
-                (item for item in group if cls._compatible_identifiers(item, row) and cls._identity_consistent(item, row)), None
+                (item for item in group if (cls._same_edition(item, row) or (cls._compatible_identifiers(item, row) and cls._work_description_matches(item, row)))), None
             )
             if existing is None:
                 group.append(row)
