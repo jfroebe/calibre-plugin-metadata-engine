@@ -1188,7 +1188,7 @@ class MetadataEngineSource(Source):
         title_name, title_series, title_number = cls._work_title(row.get("title"))
         del title_name
         raw = row.get("series")
-        item = raw[0] if isinstance(raw, list) and raw else raw
+        item = (raw[0] if raw else None) if isinstance(raw, list) else raw
         if isinstance(item, dict):
             name = cls._text(
                 item.get("name") or item.get("title") or item.get("series")
