@@ -486,6 +486,7 @@ class MetadataEngineSource(Source):
                 "Metadata Engine: identifier follow-up limited to 4 of %d discovered IDs",
                 len(seeds),
             )
+        visited = set()
         for kind, value, anchor in seeds[:4]:
             for provider in provider_ids:
                 if abort.is_set():
@@ -494,6 +495,13 @@ class MetadataEngineSource(Source):
                     continue
                 if anchor and provider == anchor.get("source"):
                     continue
+                pair = (provider, kind, value)
+                if pair in visited:
+                    continue
+                if len(visited) >= 12:
+                    log.warning("Metadata Engine: identifier follow-up stopped at 12 requests")
+                    return rows
+                visited.add(pair)
                 try:
                     if kind in {"isbn", "asin"}:
                         found = self._search(
