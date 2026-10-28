@@ -1451,8 +1451,8 @@ class MetadataEngineSource(Source):
     @classmethod
     def _work_description_matches(cls, winner, donor):
         """Require matching work title, compatible contributors and series."""
-        left, left_series, left_number = cls._work_title(winner.get("title"))
-        right, right_series, right_number = cls._work_title(donor.get("title"))
+        _, left_series, left_number = cls._work_title(winner.get("title"))
+        _, right_series, right_number = cls._work_title(donor.get("title"))
         if not cls._work_titles_compatible(winner, donor):
             return False
         if (
