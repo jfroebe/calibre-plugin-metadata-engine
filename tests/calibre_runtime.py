@@ -403,7 +403,7 @@ class InstalledPluginTests(unittest.TestCase):
             if path == "/plugins/goodreads/search"
         ]
         self.assertEqual(len(searches), 2)
-        self.assertEqual(searches[-1]["query"], ["a specter and an invasion"])
+        self.assertEqual(searches[-1]["query"], ["A Specter and an Invasion"])
         self.assertNotIn("author", searches[-1])
 
     def test_series_title_fallback_is_conservative(self):
