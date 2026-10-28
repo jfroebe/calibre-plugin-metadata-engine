@@ -883,6 +883,30 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(len(output), 2)
         self.assertTrue(all(row["title"] == "Example" for row in output))
 
+    def test_isbn_checksum_and_equivalent_formats(self):
+        """Reject invalid ISBNs and recognize equivalent ISBN-10 and ISBN-13."""
+        self.assertEqual(self.plugin._canonical_isbn("0-306-40615-2"), "9780306406157")
+        self.assertEqual(self.plugin._canonical_isbn("978-0-306-40615-7"), "9780306406157")
+        self.assertFalse(self.plugin._canonical_isbn("9780306406158"))
+        left = {"title": "Example", "isbn": "0306406152"}
+        same = {"title": "Example", "isbn": "9780306406157"}
+        self.assertTrue(self.plugin._same_edition(left, same))
+        invalid = {"title": "Example", "isbn": "9780306406158"}
+        self.assertFalse(self.plugin._same_edition(invalid, invalid))
+
+    def test_open_library_work_id_lookup_checks_work_and_edition(self):
+        """A work ID remains usable even when the response also has an edition ID."""
+        result = {"title": "Example", "authors": ["A Writer"], "source": "open_library",
+                  "source_id": "OL123M", "extra": {"open_library_work_id": "OL456W",
+                  "open_library_edition_id": "OL123M"}}
+        with patch.object(self.plugin, "_search", return_value=[result]) as search:
+            rows = self.plugin._expand_identifiers(
+                self.log, self.abort, ["open_library"], [], "Example", "Example",
+                ["A Writer"], {"openlibrary": "OL456W"}, 5)
+        self.assertEqual(search.call_count, 1)
+        self.assertEqual(search.call_args.args[1], "OL456W")
+        self.assertEqual(rows, [result])
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -1015,6 +1039,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 43:
+    if result.testsRun != 45:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
