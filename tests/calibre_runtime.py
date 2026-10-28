@@ -1426,11 +1426,15 @@ class InstalledPluginTests(unittest.TestCase):
         row = {
             "title": "F*ck You: Term One (Knox Academy Trilogy #1)",
             "authors": ["Crystal North", "Jaye Cox"],
-            "source": "goodreads", "source_id": "53133034",
-            "series": [], "cover_url": "https://example.test/cover.jpg",
+            "source": "goodreads",
+            "source_id": "53133034",
+            "series": [],
+            "cover_url": "https://example.test/cover.jpg",
         }
-        target = {"title": "F*ck You: Knox Academy - Term One",
-                  "authors": ["Jaye Cox", "Crystal North"]}
+        target = {
+            "title": "F*ck You: Knox Academy - Term One",
+            "authors": ["Jaye Cox", "Crystal North"],
+        }
         self.assertTrue(self.plugin._work_description_matches(target, row))
         for wrong in (
             dict(row, title="F*ck You: Term Two (Knox Academy Trilogy #2)"),
@@ -1440,31 +1444,54 @@ class InstalledPluginTests(unittest.TestCase):
             self.assertFalse(self.plugin._work_description_matches(target, wrong))
         queue = Queue()
         with (
-            patch.object(self.plugin, "_configured_provider_ids", return_value=["goodreads"]),
+            patch.object(
+                self.plugin, "_configured_provider_ids", return_value=["goodreads"]
+            ),
             patch.object(self.plugin, "_search", return_value=[row]),
             patch.object(self.plugin, "_http_bytes", return_value=image),
         ):
-            self.plugin.download_cover(self.log, queue, self.abort, **target, identifiers={})
+            self.plugin.download_cover(
+                self.log, queue, self.abort, **target, identifiers={}
+            )
         self.assertFalse(queue.empty())
         self.assertEqual(queue.get_nowait()[1], image)
 
     def test_trigger_warnings_merge_only_from_matching_book(self):
         """Show verified warning labels once without copying unrelated warnings."""
-        book = {"title": "Example", "authors": ["A Writer"], "source": "books",
-                "description": "Book synopsis.", "confidence": 1}
-        warning = {"title": "Example", "authors": ["A Writer"], "source": "storygraph",
-                   "trigger_warnings": ["Violence", "Abuse"], "parental_warnings": ["Sexual content"]}
-        wrong = {"title": "Example", "authors": ["Other Writer"], "source": "other",
-                 "trigger_warnings": ["Wrong book warning"]}
+        book = {
+            "title": "Example",
+            "authors": ["A Writer"],
+            "source": "books",
+            "description": "Book synopsis.",
+            "confidence": 1,
+        }
+        warning = {
+            "title": "Example",
+            "authors": ["A Writer"],
+            "source": "storygraph",
+            "trigger_warnings": ["Violence", "Abuse"],
+            "parental_warnings": ["Sexual content"],
+        }
+        wrong = {
+            "title": "Example",
+            "authors": ["Other Writer"],
+            "source": "other",
+            "trigger_warnings": ["Wrong book warning"],
+        }
         merged = self.plugin._dedupe([book, warning, wrong])
         metadata = self.plugin._to_metadata(merged[0], 0)
         self.assertIn("Book synopsis.", metadata.comments)
         self.assertIn("Trigger warnings: Violence; Abuse", metadata.comments)
         self.assertIn("Parental warnings: Sexual content", metadata.comments)
         self.assertNotIn("Wrong book warning", metadata.comments)
-        existing = dict(book, description="Trigger warnings: Violence\\n\\nBook synopsis.",
-                        trigger_warnings=["Violence"])
-        self.assertEqual(self.plugin._to_metadata(existing, 0).comments.count("Violence"), 1)
+        existing = dict(
+            book,
+            description="Trigger warnings: Violence\\n\\nBook synopsis.",
+            trigger_warnings=["Violence"],
+        )
+        self.assertEqual(
+            self.plugin._to_metadata(existing, 0).comments.count("Violence"), 1
+        )
 
     def test_known_wrong_edition_cover_is_not_used(self):
         """A supplied ISBN mismatch cannot become a fallback cover."""
