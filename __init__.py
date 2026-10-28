@@ -761,7 +761,11 @@ class MetadataEngineSource(Source):
                     or not self._identity_consistent(target, row)
                     or not (
                         score > 1
-                        or (title and authors and self._work_description_matches(target, row))
+                        or (
+                            title
+                            and authors
+                            and self._work_description_matches(target, row)
+                        )
                     )
                 ):
                     rejected_identity += 1
@@ -769,7 +773,10 @@ class MetadataEngineSource(Source):
                 eligible.append(row)
             log.info(
                 "Metadata Engine cover: records=%d missing_cover=%d rejected_identity=%d eligible=%d",
-                len(rows), missing_cover, rejected_identity, len(eligible),
+                len(rows),
+                missing_cover,
+                rejected_identity,
+                len(eligible),
             )
             rows = eligible
             rows.sort(
@@ -858,14 +865,27 @@ class MetadataEngineSource(Source):
         return None
 
     def _recover_cover_records(
-        self, log, abort, provider_ids, initial_rows, title, authors, identifiers, timeout
+        self,
+        log,
+        abort,
+        provider_ids,
+        initial_rows,
+        title,
+        authors,
+        identifiers,
+        timeout,
     ):
         """Follow bounded provider IDs once, accepting only verified cover records."""
         # Each entry describes an explicitly supported provider's direct lookup.
         # Follow-ups use only the frozen initial input; results are never recursed.
         strategies = (
-            ("goodreads", ("goodreads", "metadata_engine_goodreads"),
-             "goodreads_id", r"\d{1,16}", "goodreads:"),
+            (
+                "goodreads",
+                ("goodreads", "metadata_engine_goodreads"),
+                "goodreads_id",
+                r"\d{1,16}",
+                "goodreads:",
+            ),
         )
         recovered = []
         target = {"title": title, "authors": authors}
@@ -880,7 +900,11 @@ class MetadataEngineSource(Source):
                     continue
                 extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
                 value = self._text(extra.get(extra_key) or row.get("source_id"))
-                if value and (not requested or value == requested) and self._identity_consistent(target, row):
+                if (
+                    value
+                    and (not requested or value == requested)
+                    and self._identity_consistent(target, row)
+                ):
                     ids.append(value)
             for value in list(dict.fromkeys(ids))[:4]:
                 if abort.is_set():
@@ -890,30 +914,51 @@ class MetadataEngineSource(Source):
                     continue
                 visited.add(pair)
                 if not re.fullmatch(pattern, value):
-                    log.warning("Metadata Engine cover: invalid provider ID provider=%s", provider)
+                    log.warning(
+                        "Metadata Engine cover: invalid provider ID provider=%s",
+                        provider,
+                    )
                     continue
                 try:
                     found = self._search(provider, prefix + value, None, {}, timeout)
                     accepted = 0
                     for row in found:
-                        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
-                        returned = self._text(extra.get(extra_key) or row.get("source_id"))
+                        extra = (
+                            row.get("extra")
+                            if isinstance(row.get("extra"), dict)
+                            else {}
+                        )
+                        returned = self._text(
+                            extra.get(extra_key) or row.get("source_id")
+                        )
                         if (
                             returned != value
                             or not self._identity_consistent(target, row)
                             or not self._cover_identifier_score(row, identifiers)
                         ):
-                            log.warning("Metadata Engine cover: rejected conflicting provider record provider=%s id=%s", provider, value)
+                            log.warning(
+                                "Metadata Engine cover: rejected conflicting provider record provider=%s id=%s",
+                                provider,
+                                value,
+                            )
                             continue
                         if row.get("cover_url"):
                             recovered.append(row)
                             accepted += 1
                     log.info(
                         "Metadata Engine cover: provider=%s id=%s records=%d with_cover=%d",
-                        provider, value, len(found), accepted,
+                        provider,
+                        value,
+                        len(found),
+                        accepted,
                     )
                 except Exception as exc:
-                    log.error("Metadata Engine cover: provider=%s id=%s lookup failed: %s", provider, value, exc)
+                    log.error(
+                        "Metadata Engine cover: provider=%s id=%s lookup failed: %s",
+                        provider,
+                        value,
+                        exc,
+                    )
         return recovered
 
     def _discover(self, timeout, abort):
