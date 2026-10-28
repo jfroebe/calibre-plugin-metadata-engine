@@ -192,13 +192,28 @@ class InstalledPluginTests(unittest.TestCase):
                 "Science Fiction",
                 "Space Opera",
             ],
-            "tags": ["goodreads", "audiobooks", "metadata-engine:goodreads"],
+            "tags": [
+                "goodreads",
+                "audiobooks",
+                "metadata-engine:goodreads",
+                "Cleaned",
+                "Open-Library",
+                "open_library",
+                "OPEN LIBRARY",
+                "Google-Books",
+                "Open Libraries",
+            ],
             "description": "Source: Goodreads\nTime has passed. Goodreads is mentioned in prose.",
         }
         metadata = self.plugin._to_metadata(row, 0)
         self.assertEqual(
             metadata.tags,
-            ["Science Fiction & Fantasy", "Science Fiction", "Space Opera"],
+            [
+                "Science Fiction & Fantasy",
+                "Science Fiction",
+                "Space Opera",
+                "Open Libraries",
+            ],
         )
         self.assertEqual(
             metadata.comments, "Time has passed. Goodreads is mentioned in prose."
