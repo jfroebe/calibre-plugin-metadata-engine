@@ -1436,7 +1436,11 @@ class MetadataEngineSource(Source):
         ):
             long_parts = long_title.split(": ", 1)
             short_parts = short_title.split(": ", 1)
-            if len(long_parts) != 2 or len(short_parts) != 2 or long_parts[0] != short_parts[0]:
+            if (
+                len(long_parts) != 2
+                or len(short_parts) != 2
+                or long_parts[0] != short_parts[0]
+            ):
                 continue
             marker = " - " + short_parts[1]
             if not long_parts[1].endswith(marker):
