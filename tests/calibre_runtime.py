@@ -981,6 +981,19 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(search.call_args.args[1], "OL456W")
         self.assertEqual(rows, [result])
 
+    def test_lccn_and_oclc_resolve_through_open_library(self):
+        """Follow only exact source-verified library catalog identifiers."""
+        for scheme, value in (("lccn", "93005405"), ("oclc", "28419896")):
+            with self.subTest(scheme=scheme):
+                result = {"source": "open_library", "title": "Zen speaks",
+                          "authors": ["Zhizhong Cai"], "extra": {scheme: value}}
+                with patch.object(self.plugin, "_search", return_value=[result]) as search:
+                    rows = self.plugin._expand_identifiers(
+                        self.log, self.abort, ["open_library"], [], "Zen speaks",
+                        "Zen speaks", ["Zhizhong Cai"], {scheme: value}, 5)
+                self.assertEqual(search.call_args.args[1], scheme.upper() + ":" + value)
+                self.assertEqual(rows, [result])
+
     def test_mixed_media_excludes_movies_from_metadata_and_covers(self):
         """A movie sharing the book ISBN must not replace its metadata or art."""
         self.plugin.prefs["plugin_ids"] = "mixed"
@@ -1113,6 +1126,6 @@ class InstalledPluginTests(unittest.TestCase):
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 45:
+    if result.testsRun != 46:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
     sys.exit(0 if result.wasSuccessful() else 1)
