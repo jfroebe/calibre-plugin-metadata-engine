@@ -313,7 +313,9 @@ class MetadataEngineSource(Source):
             if key in {"lccn", "goodreads", "openlibrary"}:
                 extra_key = {"goodreads": "goodreads_id", "openlibrary": "open_library_edition_id", "lccn": "lccn"}[key]
                 actual = self._text(extra.get(extra_key))
-                if key == "openlibrary" and not actual:
+                if key == "openlibrary" and wanted and wanted.upper().endswith("W"):
+                    actual = self._text(extra.get("open_library_work_id"))
+                elif key == "openlibrary" and not actual:
                     actual = self._text(extra.get("open_library_work_id"))
                 if key == "goodreads" and not actual and row.get("source") == "goodreads":
                     actual = self._text(row.get("source_id"))
@@ -403,7 +405,11 @@ class MetadataEngineSource(Source):
                         found = self._search(provider, lookup, None, {}, timeout)
                     accepted = []
                     for candidate in found:
-                        if value_for(candidate, kind) != value:
+                        candidate_values = {value_for(candidate, kind)}
+                        if kind == "openlibrary":
+                            candidate_extra = candidate.get("extra") if isinstance(candidate.get("extra"), dict) else {}
+                            candidate_values.add(normalize(candidate_extra.get("open_library_work_id")))
+                        if value not in candidate_values:
                             continue
                         if not self._matches_requested(candidate, title, authors, identifiers):
                             continue
