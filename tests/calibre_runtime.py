@@ -1420,6 +1420,39 @@ class InstalledPluginTests(unittest.TestCase):
         )
         self.assertNotIn("goodreads:999", queries)
 
+    def test_cover_matches_verified_spelled_series_number(self):
+        """Match the reported book without accepting a neighboring series entry."""
+        target = {
+            "title": "F*ck Off: Knox Academy - Term 2",
+            "authors": ["Crystal North", "Jaye Pratt"],
+        }
+        row = {
+            "title": "F*ck Off: Term Two (Knox Academy Trilogy #2)",
+            "authors": ["Crystal North", "Jaye Pratt", "Jaye Cox"],
+            "cover_url": "https://example.test/cover.jpg",
+        }
+        self.assertTrue(self.plugin._work_description_matches(target, row))
+        self.assertFalse(
+            self.plugin._work_description_matches(
+                target, dict(row, title="F*ck Off: Term One (Knox Academy Trilogy #1)")
+            )
+        )
+        self.assertFalse(
+            self.plugin._work_description_matches(
+                target, dict(row, title="F*ck Off: Term Two (Other Academy #2)")
+            )
+        )
+        image = png(800, 1200)
+        queue = Queue()
+        with (
+            patch.object(self.plugin, "_configured_provider_ids", return_value=["goodreads"]),
+            patch.object(self.plugin, "_search", return_value=[row]),
+            patch.object(self.plugin, "_http_bytes", return_value=image),
+        ):
+            self.plugin.download_cover(self.log, queue, self.abort, **target, identifiers={})
+        self.assertFalse(queue.empty())
+        self.assertEqual(queue.get_nowait()[1], image)
+
     def test_cover_matches_title_with_verified_series_inserted(self):
         """A series name inserted into the title must not hide a matching cover."""
         image = png(800, 1200)
