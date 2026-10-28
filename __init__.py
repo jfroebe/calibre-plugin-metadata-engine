@@ -1308,6 +1308,20 @@ class MetadataEngineSource(Source):
                 b = re.sub(r"[\s-]+", "", b or "").upper()
             if a and b and a == b:
                 return True
+        left_extra = left.get("extra") if isinstance(left.get("extra"), dict) else {}
+        right_extra = right.get("extra") if isinstance(right.get("extra"), dict) else {}
+        for keys in (("lccn",), ("oclc", "oclc_numbers"), ("goodreads_id",), ("open_library_edition_id",)):
+            values = []
+            for extra in (left_extra, right_extra):
+                identifiers = set()
+                for key in keys:
+                    identifiers.update(
+                        re.sub(r"[\s-]+", "", item).upper()
+                        for item in cls._list(extra.get(key))
+                    )
+                values.append(identifiers)
+            if values[0].intersection(values[1]):
+                return True
         return bool(
             cls._text(left.get("source"))
             and cls._text(left.get("source_id"))
