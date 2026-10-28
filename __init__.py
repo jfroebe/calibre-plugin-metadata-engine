@@ -306,17 +306,24 @@ class MetadataEngineSource(Source):
             ("asin", ("asin",)),
             ("isbn", ("isbn", "isbn13", "isbn10")),
             ("lccn", ("lccn",)),
+            ("oclc", ("oclc",)),
             ("goodreads", ("goodreads",)),
             ("openlibrary", ("openlibrary",)),
         ):
             wanted = self._identifier(identifiers, *aliases)
-            if key in {"lccn", "goodreads", "openlibrary"}:
+            if key in {"lccn", "oclc", "goodreads", "openlibrary"}:
                 extra_key = {
                     "goodreads": "goodreads_id",
                     "openlibrary": "open_library_edition_id",
                     "lccn": "lccn",
                 }[key]
-                actual = self._text(extra.get(extra_key))
+                candidates = self._list(extra.get(extra_key))
+                if key == "oclc":
+                    candidates += self._list(extra.get("oclc_numbers"))
+                normalized_requested = re.sub(r"[\s-]+", "", wanted or "").upper()
+                actual = next((item for item in candidates if re.sub(r"[\s-]+", "", item).upper() == normalized_requested), None) if wanted else None
+                if not actual and candidates:
+                    actual = candidates[0]
                 if key == "openlibrary" and wanted and wanted.upper().endswith("W"):
                     actual = self._text(extra.get("open_library_work_id"))
                 elif key == "openlibrary" and not actual:
@@ -380,7 +387,8 @@ class MetadataEngineSource(Source):
                 "internet_archive",
                 "new_york_times_books",
             },
-            "lccn": {"loc_json_yaml"},
+            "lccn": {"loc_json_yaml", "open_library"},
+            "oclc": {"open_library"},
             "goodreads": {"goodreads"},
             "openlibrary": {"open_library"},
         }
@@ -412,8 +420,10 @@ class MetadataEngineSource(Source):
                 value = extra.get("open_library_edition_id") or extra.get(
                     "open_library_work_id"
                 )
+            elif kind == "oclc":
+                value = extra.get("oclc") or next(iter(self._list(extra.get("oclc_numbers"))), None)
             else:
-                value = extra.get("lccn")
+                value = next(iter(self._list(extra.get("lccn"))), None)
             if kind == "goodreads" and not value and row.get("source") == "goodreads":
                 value = row.get("source_id")
             return normalize(value)
@@ -424,14 +434,14 @@ class MetadataEngineSource(Source):
         }
         seeds = []
         # Goodreads IDs and LCCNs are not sent on the initial generic search.
-        for kind in ("goodreads", "lccn", "openlibrary"):
+        for kind in ("goodreads", "lccn", "oclc", "openlibrary"):
             value = initial[kind]
             if value and re.fullmatch(patterns[kind], value):
                 seeds.append((kind, value, None))
         for row in rows:
             if not self._matches_requested(row, title, authors, identifiers):
                 continue
-            for kind in ("isbn", "asin", "goodreads", "lccn", "openlibrary"):
+            for kind in ("isbn", "asin", "goodreads", "lccn", "oclc", "openlibrary"):
                 value = value_for(row, kind)
                 if not value or not re.fullmatch(patterns[kind], value):
                     continue
@@ -466,6 +476,8 @@ class MetadataEngineSource(Source):
                         )
                     else:
                         lookup = "goodreads:" + value if kind == "goodreads" else value
+                        if provider == "open_library" and kind in {"lccn", "oclc"}:
+                            lookup = kind.upper() + ":" + value
                         found = self._search(provider, lookup, None, {}, timeout)
                     accepted = []
                     for candidate in found:
