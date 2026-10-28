@@ -858,7 +858,7 @@ class MetadataEngineSource(Source):
             tags.append("metadata-engine:%s" % self._text(row["source"]))
         mi.tags = list(dict.fromkeys(tags))
 
-        if row.get("isbn"):
+        if row.get("isbn") and self._canonical_isbn(row["isbn"]):
             mi.set_identifier("isbn", self._text(row["isbn"]))
         if row.get("asin"):
             mi.set_identifier("asin", self._text(row["asin"]))
@@ -1420,6 +1420,8 @@ class MetadataEngineSource(Source):
                 "cover_url",
             ):
                 value = donor.get(field)
+                if field == "isbn" and value and not cls._canonical_isbn(value):
+                    continue
                 current = winner.get(field)
                 if (
                     not current or (isinstance(current, str) and not current.strip())
