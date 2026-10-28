@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 20)
+    version = (1, 1, 21)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -742,6 +742,43 @@ class MetadataEngineSource(Source):
                         exc,
                     )
 
+            # Title searches can return a sparse Goodreads result whose direct
+            # book record has the cover. Follow only initial IDs, once each.
+            if "goodreads" in provider_ids:
+                ids = []
+                requested = self._identifier(identifiers, "goodreads", "metadata_engine_goodreads")
+                if requested:
+                    ids.append(requested)
+                for row in rows:
+                    if row.get("source") != "goodreads":
+                        continue
+                    extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+                    value = self._text(extra.get("goodreads_id") or row.get("source_id"))
+                    if value and self._identity_consistent({"title": title, "authors": authors}, row):
+                        ids.append(value)
+                for value in list(dict.fromkeys(ids))[:4]:
+                    if abort.is_set():
+                        return None
+                    if not re.fullmatch(r"\d{1,16}", value):
+                        log.warning("Metadata Engine cover: invalid Goodreads ID ignored")
+                        continue
+                    try:
+                        found = self._search("goodreads", "goodreads:" + value, None, {}, timeout)
+                        for row in found:
+                            extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+                            returned = self._text(extra.get("goodreads_id") or row.get("source_id"))
+                            if (
+                                returned == value
+                                and self._identity_consistent({"title": title, "authors": authors}, row)
+                                and self._cover_identifier_score(row, identifiers)
+                            ):
+                                rows.append(row)
+                            else:
+                                log.warning("Metadata Engine cover: rejected conflicting Goodreads record id=%s", value)
+                        log.info("Metadata Engine cover: Goodreads ID=%s returned %d record(s)", value, len(found))
+                    except Exception as exc:
+                        log.error("Metadata Engine cover: Goodreads ID=%s failed: %s", value, exc)
+
             target = {"title": title, "authors": authors}
             rows = [
                 r
@@ -1064,6 +1101,16 @@ class MetadataEngineSource(Source):
         url = self._text(row.get("cover_url"))
         if not url:
             return
+        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+        source = self._text(row.get("source"))
+        source_id = self._text(row.get("source_id"))
+        if source and source_id:
+            self._cover_urls[("metadata_engine_" + source.lower().replace(" ", "_"), source_id)] = url
+        goodreads_id = self._text(extra.get("goodreads_id"))
+        if not goodreads_id and source == "goodreads":
+            goodreads_id = source_id
+        if goodreads_id and re.fullmatch(r"\d{1,16}", goodreads_id):
+            self._cover_urls[("goodreads", goodreads_id)] = url
         for key in ("isbn", "asin", "source_id"):
             value = self._text(row.get(key))
             if value:
@@ -1109,7 +1156,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.20",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.21",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
