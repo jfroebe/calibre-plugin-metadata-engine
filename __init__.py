@@ -311,20 +311,40 @@ class MetadataEngineSource(Source):
         ):
             wanted = self._identifier(identifiers, *aliases)
             if key in {"lccn", "goodreads", "openlibrary"}:
-                extra_key = {"goodreads": "goodreads_id", "openlibrary": "open_library_edition_id", "lccn": "lccn"}[key]
+                extra_key = {
+                    "goodreads": "goodreads_id",
+                    "openlibrary": "open_library_edition_id",
+                    "lccn": "lccn",
+                }[key]
                 actual = self._text(extra.get(extra_key))
                 if key == "openlibrary" and wanted and wanted.upper().endswith("W"):
                     actual = self._text(extra.get("open_library_work_id"))
                 elif key == "openlibrary" and not actual:
                     actual = self._text(extra.get("open_library_work_id"))
-                if key == "goodreads" and not actual and row.get("source") == "goodreads":
+                if (
+                    key == "goodreads"
+                    and not actual
+                    and row.get("source") == "goodreads"
+                ):
                     actual = self._text(row.get("source_id"))
             else:
                 actual = self._text(row.get(key))
             if wanted and actual:
-                normalized_wanted = self._canonical_isbn(wanted) if key == "isbn" else re.sub(r"[\s-]+", "", wanted).upper()
-                normalized_actual = self._canonical_isbn(actual) if key == "isbn" else re.sub(r"[\s-]+", "", actual).upper()
-                if normalized_wanted and normalized_actual and normalized_wanted != normalized_actual:
+                normalized_wanted = (
+                    self._canonical_isbn(wanted)
+                    if key == "isbn"
+                    else re.sub(r"[\s-]+", "", wanted).upper()
+                )
+                normalized_actual = (
+                    self._canonical_isbn(actual)
+                    if key == "isbn"
+                    else re.sub(r"[\s-]+", "", actual).upper()
+                )
+                if (
+                    normalized_wanted
+                    and normalized_actual
+                    and normalized_wanted != normalized_actual
+                ):
                     return False
                 if normalized_wanted and normalized_wanted == normalized_actual:
                     matched_identifier = True
@@ -337,21 +357,47 @@ class MetadataEngineSource(Source):
         )
 
     def _expand_identifiers(
-        self, log, abort, provider_ids, rows, query, title, authors, identifiers, timeout
+        self,
+        log,
+        abort,
+        provider_ids,
+        rows,
+        query,
+        title,
+        authors,
+        identifiers,
+        timeout,
     ):
         """Follow initial edition and catalog IDs once through compatible providers."""
         support = {
             "asin": {"asintojson", "isbnlab", "audible", "audnexus"},
-            "isbn": {"isbnlab", "goodreads", "google_books", "hardcover",
-                     "open_library", "internet_archive", "new_york_times_books"},
+            "isbn": {
+                "isbnlab",
+                "goodreads",
+                "google_books",
+                "hardcover",
+                "open_library",
+                "internet_archive",
+                "new_york_times_books",
+            },
             "lccn": {"loc_json_yaml"},
             "goodreads": {"goodreads"},
             "openlibrary": {"open_library"},
         }
-        aliases = {"asin": ("asin",), "isbn": ("isbn", "isbn13", "isbn10"),
-                   "lccn": ("lccn",), "goodreads": ("goodreads",), "openlibrary": ("openlibrary",)}
-        patterns = {"asin": r"[A-Z0-9]{10}", "isbn": r"(?:\d{13}|\d{9}[\dX])",
-                    "lccn": r"[A-Z0-9]{4,20}", "goodreads": r"\d{1,16}", "openlibrary": r"OL\d+[MW]"}
+        aliases = {
+            "asin": ("asin",),
+            "isbn": ("isbn", "isbn13", "isbn10"),
+            "lccn": ("lccn",),
+            "goodreads": ("goodreads",),
+            "openlibrary": ("openlibrary",),
+        }
+        patterns = {
+            "asin": r"[A-Z0-9]{10}",
+            "isbn": r"(?:\d{13}|\d{9}[\dX])",
+            "lccn": r"[A-Z0-9]{4,20}",
+            "goodreads": r"\d{1,16}",
+            "openlibrary": r"OL\d+[MW]",
+        }
 
         def normalize(value):
             return re.sub(r"[\s-]+", "", self._text(value) or "").upper()
@@ -363,15 +409,19 @@ class MetadataEngineSource(Source):
             if kind == "goodreads":
                 value = extra.get("goodreads_id")
             elif kind == "openlibrary":
-                value = extra.get("open_library_edition_id") or extra.get("open_library_work_id")
+                value = extra.get("open_library_edition_id") or extra.get(
+                    "open_library_work_id"
+                )
             else:
                 value = extra.get("lccn")
             if kind == "goodreads" and not value and row.get("source") == "goodreads":
                 value = row.get("source_id")
             return normalize(value)
 
-        initial = {kind: normalize(self._identifier(identifiers, *keys))
-                   for kind, keys in aliases.items()}
+        initial = {
+            kind: normalize(self._identifier(identifiers, *keys))
+            for kind, keys in aliases.items()
+        }
         seeds = []
         # Goodreads IDs and LCCNs are not sent on the initial generic search.
         for kind in ("goodreads", "lccn", "openlibrary"):
@@ -386,11 +436,15 @@ class MetadataEngineSource(Source):
                 if not value or not re.fullmatch(patterns[kind], value):
                     continue
                 if kind == "isbn" and not self._canonical_isbn(value):
-                    log.warning("Metadata Engine: ignoring invalid ISBN from provider=%s", row.get("source"))
+                    log.warning(
+                        "Metadata Engine: ignoring invalid ISBN from provider=%s",
+                        row.get("source"),
+                    )
                     continue
                 equivalent = (
                     self._canonical_isbn(value) == self._canonical_isbn(initial[kind])
-                    if kind == "isbn" and initial[kind] else value == initial[kind]
+                    if kind == "isbn" and initial[kind]
+                    else value == initial[kind]
                 )
                 if kind in {"isbn", "asin"} and equivalent:
                     continue
@@ -407,7 +461,9 @@ class MetadataEngineSource(Source):
                     continue
                 try:
                     if kind in {"isbn", "asin"}:
-                        found = self._search(provider, query or value, authors, {kind: value}, timeout)
+                        found = self._search(
+                            provider, query or value, authors, {kind: value}, timeout
+                        )
                     else:
                         lookup = "goodreads:" + value if kind == "goodreads" else value
                         found = self._search(provider, lookup, None, {}, timeout)
@@ -415,16 +471,26 @@ class MetadataEngineSource(Source):
                     for candidate in found:
                         candidate_values = {value_for(candidate, kind)}
                         if kind == "isbn":
-                            candidate_values = {self._canonical_isbn(item) for item in candidate_values}
+                            candidate_values = {
+                                self._canonical_isbn(item) for item in candidate_values
+                            }
                             compare_value = self._canonical_isbn(value)
                         else:
                             compare_value = value
                         if kind == "openlibrary":
-                            candidate_extra = candidate.get("extra") if isinstance(candidate.get("extra"), dict) else {}
-                            candidate_values.add(normalize(candidate_extra.get("open_library_work_id")))
+                            candidate_extra = (
+                                candidate.get("extra")
+                                if isinstance(candidate.get("extra"), dict)
+                                else {}
+                            )
+                            candidate_values.add(
+                                normalize(candidate_extra.get("open_library_work_id"))
+                            )
                         if compare_value not in candidate_values:
                             continue
-                        if not self._matches_requested(candidate, title, authors, identifiers):
+                        if not self._matches_requested(
+                            candidate, title, authors, identifiers
+                        ):
                             continue
                         if anchor and (
                             not self._compatible_identifiers(anchor, candidate)
@@ -432,19 +498,24 @@ class MetadataEngineSource(Source):
                         ):
                             log.warning(
                                 "Metadata Engine: rejected conflicting identity evidence provider=%s kind=%s",
-                                provider, kind,
+                                provider,
+                                kind,
                             )
                             continue
                         accepted.append(candidate)
                     rows.extend(accepted)
                     log.info(
                         "Metadata Engine: identifier follow-up provider=%s kind=%s accepted=%d",
-                        provider, kind, len(accepted),
+                        provider,
+                        kind,
+                        len(accepted),
                     )
                 except Exception as exc:
                     log.error(
                         "Metadata Engine identifier follow-up provider %s kind %s failed: %s",
-                        provider, kind, exc,
+                        provider,
+                        kind,
+                        exc,
                     )
         return rows
 
@@ -772,7 +843,11 @@ class MetadataEngineSource(Source):
             ("openlibrary", ("open_library_edition_id", "open_library_work_id")),
         ):
             value = next(
-                (self._list(extra.get(key))[0] for key in keys if self._list(extra.get(key))),
+                (
+                    self._list(extra.get(key))[0]
+                    for key in keys
+                    if self._list(extra.get(key))
+                ),
                 None,
             )
             if value:
@@ -1096,12 +1171,22 @@ class MetadataEngineSource(Source):
             if sum((10 - index) * digit for index, digit in enumerate(digits)) % 11:
                 return ""
             stem = "978" + raw[:9]
-            check = (-sum(int(char) * (1 if index % 2 == 0 else 3)
-                          for index, char in enumerate(stem))) % 10
+            check = (
+                -sum(
+                    int(char) * (1 if index % 2 == 0 else 3)
+                    for index, char in enumerate(stem)
+                )
+            ) % 10
             return stem + str(check)
         if re.fullmatch(r"\d{13}", raw):
-            if sum(int(char) * (1 if index % 2 == 0 else 3)
-                   for index, char in enumerate(raw)) % 10 == 0:
+            if (
+                sum(
+                    int(char) * (1 if index % 2 == 0 else 3)
+                    for index, char in enumerate(raw)
+                )
+                % 10
+                == 0
+            ):
                 return raw
         return ""
 
@@ -1111,8 +1196,16 @@ class MetadataEngineSource(Source):
         for key in ("isbn", "asin"):
             a, b = cls._text(left.get(key)), cls._text(right.get(key))
             if a and b:
-                left_id = cls._canonical_isbn(a) if key == "isbn" else re.sub(r"[\s-]+", "", a).upper()
-                right_id = cls._canonical_isbn(b) if key == "isbn" else re.sub(r"[\s-]+", "", b).upper()
+                left_id = (
+                    cls._canonical_isbn(a)
+                    if key == "isbn"
+                    else re.sub(r"[\s-]+", "", a).upper()
+                )
+                right_id = (
+                    cls._canonical_isbn(b)
+                    if key == "isbn"
+                    else re.sub(r"[\s-]+", "", b).upper()
+                )
                 if left_id and right_id and left_id != right_id:
                     return False
         return True
@@ -1120,14 +1213,20 @@ class MetadataEngineSource(Source):
     @classmethod
     def _edition_evidence_conflicts(cls, left, right):
         """Detect strong, corroborated contradictions for the same known format."""
+
         def evidence(row):
             extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
-            raw_format = str(extra.get("physical_format") or extra.get("format") or "").casefold()
+            raw_format = str(
+                extra.get("physical_format") or extra.get("format") or ""
+            ).casefold()
             if "audio" in raw_format:
                 kind = "audio"
             elif any(word in raw_format for word in ("kindle", "ebook", "e-book")):
                 kind = "ebook"
-            elif any(word in raw_format for word in ("hardcover", "hardback", "paperback", "print")):
+            elif any(
+                word in raw_format
+                for word in ("hardcover", "hardback", "paperback", "print")
+            ):
                 kind = "print"
             else:
                 kind = ""
@@ -1140,15 +1239,16 @@ class MetadataEngineSource(Source):
 
         left_kind, left_pages, left_year = evidence(left)
         right_kind, right_pages, right_year = evidence(right)
-        if not left_kind or left_kind != right_kind or not all(
-            (left_pages, right_pages, left_year, right_year)
+        if (
+            not left_kind
+            or left_kind != right_kind
+            or not all((left_pages, right_pages, left_year, right_year))
         ):
             return False
         # One field can legitimately vary between providers. Require two large
         # disagreements before treating the edition evidence as contradictory.
-        return (
-            abs(left_year - right_year) > 5
-            and abs(left_pages - right_pages) > max(100, 0.3 * max(left_pages, right_pages))
+        return abs(left_year - right_year) > 5 and abs(left_pages - right_pages) > max(
+            100, 0.3 * max(left_pages, right_pages)
         )
 
     @classmethod
@@ -1164,7 +1264,11 @@ class MetadataEngineSource(Source):
         right_series, right_number = cls._series_identity(right)
         if left_series and right_series and left_series != right_series:
             return False
-        if left_number is not None and right_number is not None and left_number != right_number:
+        if (
+            left_number is not None
+            and right_number is not None
+            and left_number != right_number
+        ):
             return False
         if cls._list(left.get("authors")) and cls._list(right.get("authors")):
             if not cls._work_description_matches(left, right):
@@ -1174,7 +1278,9 @@ class MetadataEngineSource(Source):
     @classmethod
     def _same_edition(cls, left, right):
         """Accept a shared edition identifier or the same provider record."""
-        if not cls._compatible_identifiers(left, right) or not cls._identity_consistent(left, right):
+        if not cls._compatible_identifiers(left, right) or not cls._identity_consistent(
+            left, right
+        ):
             return False
         for key in ("isbn", "asin"):
             a, b = cls._text(left.get(key)), cls._text(right.get(key))
@@ -1197,7 +1303,9 @@ class MetadataEngineSource(Source):
     @classmethod
     def _merge_metadata(cls, winner, donor):
         """Fill missing work or edition fields from a compatible provider result."""
-        if not cls._compatible_identifiers(winner, donor) or not cls._identity_consistent(winner, donor):
+        if not cls._compatible_identifiers(
+            winner, donor
+        ) or not cls._identity_consistent(winner, donor):
             return False
         edition = cls._same_edition(winner, donor)
         work = cls._work_description_matches(winner, donor)
@@ -1220,7 +1328,13 @@ class MetadataEngineSource(Source):
         donor_extra = donor.get("extra") if isinstance(donor.get("extra"), dict) else {}
         extra_fields = ["open_library_work_id", "dewey_decimal", "dewey_decimal_class"]
         if edition:
-            extra_fields += ["goodreads_id", "lccn", "oclc", "oclc_numbers", "open_library_edition_id"]
+            extra_fields += [
+                "goodreads_id",
+                "lccn",
+                "oclc",
+                "oclc_numbers",
+                "open_library_edition_id",
+            ]
         for key in extra_fields:
             if not winner_extra.get(key) and donor_extra.get(key):
                 winner_extra[key] = donor_extra[key]
@@ -1282,7 +1396,18 @@ class MetadataEngineSource(Source):
                 )
             group = groups.setdefault(key, [])
             existing = next(
-                (item for item in group if (cls._same_edition(item, row) or (cls._compatible_identifiers(item, row) and cls._work_description_matches(item, row)))), None
+                (
+                    item
+                    for item in group
+                    if (
+                        cls._same_edition(item, row)
+                        or (
+                            cls._compatible_identifiers(item, row)
+                            and cls._work_description_matches(item, row)
+                        )
+                    )
+                ),
+                None,
             )
             if existing is None:
                 group.append(row)
