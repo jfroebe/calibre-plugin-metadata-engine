@@ -1298,43 +1298,81 @@ class InstalledPluginTests(unittest.TestCase):
     def test_sparse_goodreads_search_recovers_cover_by_verified_id(self):
         """A sparse title search must recover its matching Goodreads cover."""
         sparse = {
-            "title": "Prettiest Psycho", "authors": ["Crystal North"],
-            "source": "goodreads", "source_id": "191691219",
-            "series": [], "cover_url": None,
+            "title": "Prettiest Psycho",
+            "authors": ["Crystal North"],
+            "source": "goodreads",
+            "source_id": "191691219",
+            "series": [],
+            "cover_url": None,
         }
-        rich = dict(sparse, title="Prettiest Psycho (The Asylum, #1)",
-                    series=[{"name": "The Asylum", "position": "1"}],
-                    cover_url="https://example.test/psycho.jpg",
-                    extra={"goodreads_id": "191691219"})
+        rich = dict(
+            sparse,
+            title="Prettiest Psycho (The Asylum, #1)",
+            series=[{"name": "The Asylum", "position": "1"}],
+            cover_url="https://example.test/psycho.jpg",
+            extra={"goodreads_id": "191691219"},
+        )
         image = png(900, 1350)
+
         def search(provider, query, *args, **kwargs):
             return [dict(rich if query.startswith("goodreads:") else sparse)]
-        for identifiers in ({}, {"goodreads": "191691219"},
-                            {"metadata_engine_goodreads": "191691219"}):
+
+        for identifiers in (
+            {},
+            {"goodreads": "191691219"},
+            {"metadata_engine_goodreads": "191691219"},
+        ):
             self.plugin._cover_urls.clear()
             queue = Queue()
             with (
-                patch.object(self.plugin, "_configured_provider_ids", return_value=["goodreads"]),
+                patch.object(
+                    self.plugin, "_configured_provider_ids", return_value=["goodreads"]
+                ),
                 patch.object(self.plugin, "_search", side_effect=search),
                 patch.object(self.plugin, "_http_bytes", return_value=image),
             ):
-                self.plugin.download_cover(self.log, queue, self.abort,
-                    title="Prettiest Psycho", authors=["Crystal North"], identifiers=identifiers)
+                self.plugin.download_cover(
+                    self.log,
+                    queue,
+                    self.abort,
+                    title="Prettiest Psycho",
+                    authors=["Crystal North"],
+                    identifiers=identifiers,
+                )
             self.assertFalse(queue.empty(), repr(identifiers))
             self.assertEqual(queue.get_nowait()[1], image)
         self.plugin._cover_urls.clear()
         self.plugin._remember_cover(rich)
-        self.assertEqual(self.plugin._cached_cover({"goodreads": "191691219"}), rich["cover_url"])
-        self.assertEqual(self.plugin._cached_cover({"metadata_engine_goodreads": "191691219"}), rich["cover_url"])
+        self.assertEqual(
+            self.plugin._cached_cover({"goodreads": "191691219"}), rich["cover_url"]
+        )
+        self.assertEqual(
+            self.plugin._cached_cover({"metadata_engine_goodreads": "191691219"}),
+            rich["cover_url"],
+        )
         wrong = dict(rich, source_id="999", extra={"goodreads_id": "999"})
         with (
-            patch.object(self.plugin, "_configured_provider_ids", return_value=["goodreads"]),
-            patch.object(self.plugin, "_search", side_effect=lambda provider, query, *a, **k: [wrong] if query.startswith("goodreads:") else [sparse]),
+            patch.object(
+                self.plugin, "_configured_provider_ids", return_value=["goodreads"]
+            ),
+            patch.object(
+                self.plugin,
+                "_search",
+                side_effect=lambda provider, query, *a, **k: [wrong]
+                if query.startswith("goodreads:")
+                else [sparse],
+            ),
         ):
             self.plugin._cover_urls.clear()
             queue = Queue()
-            self.plugin.download_cover(self.log, queue, self.abort,
-                title="Prettiest Psycho", authors=["Crystal North"], identifiers={})
+            self.plugin.download_cover(
+                self.log,
+                queue,
+                self.abort,
+                title="Prettiest Psycho",
+                authors=["Crystal North"],
+                identifiers={},
+            )
             self.assertTrue(queue.empty())
 
     def test_known_wrong_edition_cover_is_not_used(self):
