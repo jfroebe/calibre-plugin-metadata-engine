@@ -271,7 +271,10 @@ class MetadataEngineSource(Source):
                         continue
                     for witness in verified:
                         if (
-                            self._identity_consistent(target, row)
+                            row.get("source")
+                            and witness.get("source")
+                            and row.get("source") != witness.get("source")
+                            and self._identity_consistent(target, row)
                             and self._identity_consistent(row, witness)
                             and self._compatible_identifiers(row, witness)
                         ):
