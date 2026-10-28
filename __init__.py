@@ -1454,10 +1454,11 @@ class MetadataEngineSource(Source):
                 value = donor.get(field)
                 if value and (not isinstance(value, str) or value.strip()):
                     winner[field] = value
-        # Genre lists describe the work; preserve order and remove duplicates.
-        genres = cls._list(winner.get("genres")) + cls._list(donor.get("genres"))
-        if genres:
-            winner["genres"] = list(dict.fromkeys(genres))
+        # Subjects can be supplied in either provider field.
+        for field in ("genres", "tags"):
+            values = cls._list(winner.get(field)) + cls._list(donor.get(field))
+            if values:
+                winner[field] = list(dict.fromkeys(values))
 
         winner_extra = dict(winner.get("extra") or {})
         donor_extra = donor.get("extra") if isinstance(donor.get("extra"), dict) else {}
