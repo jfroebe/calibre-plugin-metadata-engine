@@ -316,6 +316,7 @@ class MetadataEngineSource(Source):
                     "goodreads": "goodreads_id",
                     "openlibrary": "open_library_edition_id",
                     "lccn": "lccn",
+                    "oclc": "oclc",
                 }[key]
                 candidates = self._list(extra.get(extra_key))
                 if key == "oclc":
@@ -396,6 +397,7 @@ class MetadataEngineSource(Source):
             "asin": ("asin",),
             "isbn": ("isbn", "isbn13", "isbn10"),
             "lccn": ("lccn",),
+            "oclc": ("oclc",),
             "goodreads": ("goodreads",),
             "openlibrary": ("openlibrary",),
         }
@@ -403,6 +405,7 @@ class MetadataEngineSource(Source):
             "asin": r"[A-Z0-9]{10}",
             "isbn": r"(?:\d{13}|\d{9}[\dX])",
             "lccn": r"[A-Z0-9]{4,20}",
+            "oclc": r"\d{1,20}",
             "goodreads": r"\d{1,16}",
             "openlibrary": r"OL\d+[MW]",
         }
