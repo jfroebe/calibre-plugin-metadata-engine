@@ -26,7 +26,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 12)
+    version = (1, 1, 13)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -171,8 +171,8 @@ class MetadataEngineSource(Source):
                                 provider_id, query, authors, identifiers, timeout
                             )
                         if provider_id == "goodreads" and not found and title:
-                            short_title, _, _ = self._work_title(title)
-                            if short_title != str(title).strip().casefold():
+                            short_title = self._search_title(title)
+                            if short_title != str(title).strip():
                                 log.info("Retrying Goodreads with a shortened title")
                                 found = self._search(
                                     provider_id, short_title, None, {}, timeout
@@ -267,7 +267,7 @@ class MetadataEngineSource(Source):
         if not missing:
             return rows
         candidate = missing[0]
-        short_title, _, _ = self._work_title(candidate.get("title"))
+        short_title = self._search_title(candidate.get("title"))
         if not short_title or not self._list(candidate.get("authors")):
             log.warning(
                 "Metadata Engine: matching result has no description; insufficient title or author data for recovery"
@@ -289,7 +289,7 @@ class MetadataEngineSource(Source):
             if (
                 not authors
                 and not identifiers
-                and query.strip().casefold() == short_title
+                and query.strip() == short_title
             ):
                 continue
             try:
@@ -664,7 +664,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.12",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.13",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -770,6 +770,17 @@ class MetadataEngineSource(Source):
             return [x for x in (cls._text(v) for v in value) if x]
         value = cls._text(value)
         return [value] if value else []
+
+    @classmethod
+    def _search_title(cls, value):
+        """Remove a numbered series suffix without changing provider query case."""
+        title = cls._text(value) or ""
+        match = re.fullmatch(
+            r"(.+?)\s+\((.+?)\s+(?:book\s*|#)(\d+(?:\.\d+)?)\)",
+            title,
+            re.IGNORECASE,
+        )
+        return match.group(1).strip() if match else title
 
     @classmethod
     def _work_title(cls, value):
