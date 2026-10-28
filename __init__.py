@@ -714,7 +714,11 @@ class MetadataEngineSource(Source):
                     if provider_id == "itunes":
                         provider_rows.extend(
                             self._search(
-                                provider_id, query, authors, identifiers, timeout,
+                                provider_id,
+                                query,
+                                authors,
+                                identifiers,
+                                timeout,
                                 metadata_type="books",
                             )
                         )
@@ -789,18 +793,30 @@ class MetadataEngineSource(Source):
                     if image.isNull() or image.width() <= 0 or image.height() <= 0:
                         raise ValueError("downloaded image cannot be decoded")
                     score = self._cover_identifier_score(row, identifiers)
-                    covers.append((score, image.width() * image.height(), row, candidate_url, data))
+                    covers.append(
+                        (
+                            score,
+                            image.width() * image.height(),
+                            row,
+                            candidate_url,
+                            data,
+                        )
+                    )
                     log.info(
                         "Metadata Engine cover candidate source=%s size=%dx%d identifier_score=%d",
                         self._text(row.get("source")) or "unknown",
-                        image.width(), image.height(), score,
+                        image.width(),
+                        image.height(),
+                        score,
                     )
                     # Keep the original as fallback if an enlarged URL fails.
                     break
                 except Exception as exc:
                     log.error(
                         "Metadata Engine cover candidate failed source=%r url=%s error=%s",
-                        row.get("source"), candidate_url, exc,
+                        row.get("source"),
+                        candidate_url,
+                        exc,
                     )
 
         if covers:
