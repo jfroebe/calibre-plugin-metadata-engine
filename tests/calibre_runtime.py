@@ -1420,6 +1420,110 @@ class InstalledPluginTests(unittest.TestCase):
         )
         self.assertNotIn("goodreads:999", queries)
 
+    def test_structured_audio_series_merges_complete_work_metadata(self):
+        """Combine shortened titles only with corroborated series and contributors."""
+        apple = {
+            "source": "itunes",
+            "source_id": "123",
+            "title": "F*ck Off",
+            "authors": ["Crystal North", "Jaye Pratt"],
+            "series": [{"name": "Knox Academy", "position": 2}],
+            "genres": ["Romance"],
+            "cover_url": "https://example.test/large.jpg",
+            "confidence": 0.99,
+        }
+        goodreads = {
+            "source": "goodreads",
+            "source_id": "456",
+            "title": "F*ck Off: Term Two (Knox Academy Trilogy #2)",
+            "authors": ["Crystal North", "Jaye Pratt", "Jaye Cox"],
+            "description": "A complete synopsis.",
+            "genres": ["Romance", "Dark"],
+            "confidence": 0.9,
+        }
+        target = {
+            "title": "F*ck Off: Knox Academy - Term 2",
+            "authors": ["Crystal North", "Jaye Pratt"],
+        }
+        for left, right in ((target, apple), (apple, goodreads), (goodreads, apple)):
+            self.assertTrue(self.plugin._work_description_matches(left, right))
+        for rows in ([apple, goodreads], [goodreads, apple]):
+            merged = self.plugin._dedupe(rows)
+            self.assertEqual(len(merged), 1)
+            self.assertEqual(merged[0]["description"], "A complete synopsis.")
+            self.assertEqual(merged[0]["series"][0]["position"], 2)
+            self.assertEqual(set(merged[0]["genres"]), {"Romance", "Dark"})
+            self.assertEqual(merged[0]["cover_url"], apple["cover_url"])
+        for wrong in (
+            dict(apple, series=[]),
+            dict(apple, series=[{"name": "Knox Academy"}]),
+            dict(apple, series=[{"name": "Knox Academy", "position": 1}]),
+            dict(apple, series=[{"name": "Other Academy", "position": 2}]),
+            dict(apple, authors=["Unrelated Writer"]),
+        ):
+            with self.subTest(wrong=wrong):
+                self.assertFalse(self.plugin._work_description_matches(target, wrong))
+                self.assertEqual(len(self.plugin._dedupe([goodreads, wrong])), 2)
+        contradictory = dict(
+            apple,
+            title="F*ck Off: Knox Academy, Book 1 (Unabridged)",
+        )
+        self.assertFalse(self.plugin._work_description_matches(target, contradictory))
+
+    def test_cover_matches_verified_spelled_series_number(self):
+        """Match the reported book without accepting a neighboring series entry."""
+        target = {
+            "title": "F*ck Off: Knox Academy - Term 2",
+            "authors": ["Crystal North", "Jaye Pratt"],
+        }
+        row = {
+            "title": "F*ck Off: Term Two (Knox Academy Trilogy #2)",
+            "authors": ["Crystal North", "Jaye Pratt", "Jaye Cox"],
+            "cover_url": "https://example.test/cover.jpg",
+        }
+        self.assertTrue(self.plugin._work_description_matches(target, row))
+        self.assertFalse(
+            self.plugin._work_description_matches(
+                target, dict(row, title="F*ck Off: Term One (Knox Academy Trilogy #1)")
+            )
+        )
+        self.assertFalse(
+            self.plugin._work_description_matches(
+                target, dict(row, title="F*ck Off: Term Two (Other Academy #2)")
+            )
+        )
+        apple = {
+            "title": "F*ck Off: Knox Academy, Book 2 (Unabridged)",
+            "authors": ["Crystal North", "Jaye Pratt"],
+            "cover_url": "https://example.test/cover.jpg",
+        }
+        self.assertTrue(self.plugin._work_description_matches(target, apple))
+        self.assertFalse(
+            self.plugin._work_description_matches(
+                target, dict(apple, title="F*ck Off: Knox Academy, Book 1 (Unabridged)")
+            )
+        )
+        self.assertFalse(
+            self.plugin._work_description_matches(
+                target,
+                dict(apple, title="F*ck Off: Other Academy, Book 2 (Unabridged)"),
+            )
+        )
+        image = png(800, 1200)
+        queue = Queue()
+        with (
+            patch.object(
+                self.plugin, "_configured_provider_ids", return_value=["goodreads"]
+            ),
+            patch.object(self.plugin, "_search", return_value=[row]),
+            patch.object(self.plugin, "_http_bytes", return_value=image),
+        ):
+            self.plugin.download_cover(
+                self.log, queue, self.abort, **target, identifiers={}
+            )
+        self.assertFalse(queue.empty())
+        self.assertEqual(queue.get_nowait()[1], image)
+
     def test_cover_matches_title_with_verified_series_inserted(self):
         """A series name inserted into the title must not hide a matching cover."""
         image = png(800, 1200)
@@ -1583,7 +1687,10 @@ class InstalledPluginTests(unittest.TestCase):
 
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 56:
+    expected_tests = suite.countTestCases()
+    if expected_tests < 57:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    if result.testsRun != expected_tests or result.skipped:
+        raise RuntimeError("The real-Calibre regression suite did not run every test")
     sys.exit(0 if result.wasSuccessful() else 1)
