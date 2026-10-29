@@ -1455,7 +1455,8 @@ class InstalledPluginTests(unittest.TestCase):
         )
         self.assertFalse(
             self.plugin._work_description_matches(
-                target, dict(apple, title="F*ck Off: Other Academy, Book 2 (Unabridged)")
+                target,
+                dict(apple, title="F*ck Off: Other Academy, Book 2 (Unabridged)"),
             )
         )
         image = png(800, 1200)
