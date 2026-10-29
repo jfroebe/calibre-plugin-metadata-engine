@@ -1637,7 +1637,10 @@ class InstalledPluginTests(unittest.TestCase):
 
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledPluginTests)
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if result.testsRun != 56:
+    expected_tests = suite.countTestCases()
+    if expected_tests < 57:
         raise RuntimeError("The real-Calibre regression suite was not fully collected")
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    if result.testsRun != expected_tests or result.skipped:
+        raise RuntimeError("The real-Calibre regression suite did not run every test")
     sys.exit(0 if result.wasSuccessful() else 1)
