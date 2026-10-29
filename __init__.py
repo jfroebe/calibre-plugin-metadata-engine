@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 22)
+    version = (1, 1, 23)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1304,7 +1304,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.22",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.23",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -1470,6 +1470,51 @@ class MetadataEngineSource(Source):
         name = re.sub(r"^.+?\s+\d+\s*:\s*", "", name)
         return name, number if number is not None else title_number
 
+    @staticmethod
+    def _series_name_key(value):
+        """Normalize optional catalog series labels without altering displayed names."""
+        return re.sub(r"\s+(?:trilogy|series)$", "", value or "").strip()
+
+    @classmethod
+    def _series_work_key(cls, row):
+        """Require an explicit series and position before matching shortened titles."""
+        title, _, _ = cls._work_title(row.get("title"))
+        numbers = {"one": "1", "two": "2", "three": "3", "four": "4"}
+        title = re.sub(
+            r"\bterm\s+(one|two|three|four)\b",
+            lambda match: "term " + numbers[match.group(1)],
+            title,
+        )
+        series, position = cls._series_identity(row)
+        patterns = (
+            r"^(.+?):\s*(.+?)\s+-\s+term\s+(\d+(?:\.\d+)?)$",
+            r"^(.+?):\s*(.+?),\s*book\s+(\d+(?:\.\d+)?)"
+            r"(?:\s*\(unabridged\))?$",
+        )
+        for pattern in patterns:
+            match = re.fullmatch(pattern, title)
+            if not match:
+                continue
+            base, named_series, number = match.groups()
+            number = float(number)
+            if series and cls._series_name_key(series) != cls._series_name_key(
+                named_series
+            ):
+                return None
+            if position is not None and position != number:
+                return None
+            title, series, position = base, named_series, number
+            break
+        else:
+            term = re.fullmatch(r"(.+?):\s*term\s+(\d+(?:\.\d+)?)", title)
+            if term:
+                if position is None or position != float(term.group(2)):
+                    return None
+                title = term.group(1)
+        if not title or not series or position is None:
+            return None
+        return title, cls._series_name_key(series), position
+
     @classmethod
     def _work_titles_compatible(cls, left, right):
         """Match an inserted series name only when another record names that series."""
@@ -1478,6 +1523,10 @@ class MetadataEngineSource(Source):
         if not left_title or not right_title:
             return False
         if left_title == right_title:
+            return True
+        left_key = cls._series_work_key(left)
+        right_key = cls._series_work_key(right)
+        if left_key is not None and left_key == right_key:
             return True
 
         def normalize_term_number(title):
@@ -1537,12 +1586,19 @@ class MetadataEngineSource(Source):
         if (
             left_series
             and right_series
-            and (left_series != right_series or left_number != right_number)
+            and (
+                cls._series_name_key(left_series) != cls._series_name_key(right_series)
+                or left_number != right_number
+            )
         ):
             return False
         left_series, left_number = cls._series_identity(winner)
         right_series, right_number = cls._series_identity(donor)
-        if left_series and right_series and left_series != right_series:
+        if (
+            left_series
+            and right_series
+            and cls._series_name_key(left_series) != cls._series_name_key(right_series)
+        ):
             return False
         if (
             left_number is not None
@@ -1701,7 +1757,11 @@ class MetadataEngineSource(Source):
             return False
         left_series, left_number = cls._series_identity(left)
         right_series, right_number = cls._series_identity(right)
-        if left_series and right_series and left_series != right_series:
+        if (
+            left_series
+            and right_series
+            and cls._series_name_key(left_series) != cls._series_name_key(right_series)
+        ):
             return False
         if (
             left_number is not None
