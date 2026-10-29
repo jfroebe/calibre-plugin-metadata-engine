@@ -1461,11 +1461,15 @@ class InstalledPluginTests(unittest.TestCase):
         image = png(800, 1200)
         queue = Queue()
         with (
-            patch.object(self.plugin, "_configured_provider_ids", return_value=["goodreads"]),
+            patch.object(
+                self.plugin, "_configured_provider_ids", return_value=["goodreads"]
+            ),
             patch.object(self.plugin, "_search", return_value=[row]),
             patch.object(self.plugin, "_http_bytes", return_value=image),
         ):
-            self.plugin.download_cover(self.log, queue, self.abort, **target, identifiers={})
+            self.plugin.download_cover(
+                self.log, queue, self.abort, **target, identifiers={}
+            )
         self.assertFalse(queue.empty())
         self.assertEqual(queue.get_nowait()[1], image)
 
