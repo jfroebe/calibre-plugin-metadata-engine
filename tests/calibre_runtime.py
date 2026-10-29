@@ -1420,6 +1420,56 @@ class InstalledPluginTests(unittest.TestCase):
         )
         self.assertNotIn("goodreads:999", queries)
 
+    def test_structured_audio_series_merges_complete_work_metadata(self):
+        """Combine shortened titles only with corroborated series and contributors."""
+        apple = {
+            "source": "itunes",
+            "source_id": "123",
+            "title": "F*ck Off",
+            "authors": ["Crystal North", "Jaye Pratt"],
+            "series": [{"name": "Knox Academy", "position": 2}],
+            "genres": ["Romance"],
+            "cover_url": "https://example.test/large.jpg",
+            "confidence": 0.99,
+        }
+        goodreads = {
+            "source": "goodreads",
+            "source_id": "456",
+            "title": "F*ck Off: Term Two (Knox Academy Trilogy #2)",
+            "authors": ["Crystal North", "Jaye Pratt", "Jaye Cox"],
+            "description": "A complete synopsis.",
+            "genres": ["Romance", "Dark"],
+            "confidence": 0.9,
+        }
+        target = {
+            "title": "F*ck Off: Knox Academy - Term 2",
+            "authors": ["Crystal North", "Jaye Pratt"],
+        }
+        for left, right in ((target, apple), (apple, goodreads), (goodreads, apple)):
+            self.assertTrue(self.plugin._work_description_matches(left, right))
+        for rows in ([apple, goodreads], [goodreads, apple]):
+            merged = self.plugin._dedupe(rows)
+            self.assertEqual(len(merged), 1)
+            self.assertEqual(merged[0]["description"], "A complete synopsis.")
+            self.assertEqual(merged[0]["series"][0]["position"], 2)
+            self.assertEqual(set(merged[0]["genres"]), {"Romance", "Dark"})
+            self.assertEqual(merged[0]["cover_url"], apple["cover_url"])
+        for wrong in (
+            dict(apple, series=[]),
+            dict(apple, series=[{"name": "Knox Academy"}]),
+            dict(apple, series=[{"name": "Knox Academy", "position": 1}]),
+            dict(apple, series=[{"name": "Other Academy", "position": 2}]),
+            dict(apple, authors=["Unrelated Writer"]),
+        ):
+            with self.subTest(wrong=wrong):
+                self.assertFalse(self.plugin._work_description_matches(target, wrong))
+                self.assertEqual(len(self.plugin._dedupe([goodreads, wrong])), 2)
+        contradictory = dict(
+            apple,
+            title="F*ck Off: Knox Academy, Book 1 (Unabridged)",
+        )
+        self.assertFalse(self.plugin._work_description_matches(target, contradictory))
+
     def test_cover_matches_verified_spelled_series_number(self):
         """Match the reported book without accepting a neighboring series entry."""
         target = {
