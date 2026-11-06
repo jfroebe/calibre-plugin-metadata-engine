@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 23)
+    version = (1, 1, 24)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1120,6 +1120,9 @@ class MetadataEngineSource(Source):
             "amazon",
             "amazon.com",
             "audible",
+            "books",
+            "not mature",
+            "mature",
             "audiobook",
             "audiobooks",
             "goodreads",
@@ -1304,7 +1307,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.23",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.24",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
