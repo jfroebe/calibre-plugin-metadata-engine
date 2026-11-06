@@ -8,6 +8,7 @@ import re
 import ssl
 import unicodedata
 from datetime import datetime
+from html import escape
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -27,7 +28,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 29)
+    version = (1, 1, 30)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -52,7 +53,7 @@ class MetadataEngineSource(Source):
             "identifier:openlibrary",
         ]
     )
-    has_html_comments = False
+    has_html_comments = True
     supports_gzip_transfer_encoding = True
     cached_cover_url_is_reliable = False
     can_get_multiple_covers = True
@@ -1121,6 +1122,107 @@ class MetadataEngineSource(Source):
             return row
         return dict(row, series=[{"name": name, "position": float(position)}])
 
+    @staticmethod
+    def _format_description(description):
+        """Render clear plain-text lists without rewriting provider HTML or prose."""
+        if re.search(r"</?[a-z][^<>]*>", description, re.IGNORECASE):
+            return description
+
+        def render_list(kind, items, start=1):
+            attribute = f' start="{start}"' if kind == "ol" and start != 1 else ""
+            body = "".join(f"<li>{escape(item)}</li>" for item in items)
+            return f"<{kind}{attribute}>{body}</{kind}>"
+
+        def contents():
+            # Catalog records can concatenate a semicolon-delimited contents
+            # field and an abstract. Require consecutive explicit chapter labels.
+            entries = [part.strip() for part in description.split(";")]
+            front = {"foreword", "preface", "introduction", "prologue"}
+            i = 0
+            while i < len(entries) and entries[i].rstrip(".").casefold() in front:
+                i += 1
+            first = i
+            chapters = []
+            while i < len(entries):
+                chapter = re.fullmatch(
+                    r"Chapter\s+(\d{1,3}):\s*(.+)", entries[i], re.IGNORECASE
+                )
+                if not chapter or int(chapter[1]) != len(chapters) + 1:
+                    break
+                chapters.append(chapter[2])
+                i += 1
+            if len(chapters) < 2:
+                return None
+            back = []
+            while i < len(entries) and re.fullmatch(
+                r"Appendix\s+[A-Z0-9]+:.*|Find out more on\s+\S+|"
+                r"Acknowledg(?:e)?ments\.?|Index\.?|Bibliography\.?|Epilogue\.?",
+                entries[i],
+                re.IGNORECASE,
+            ):
+                back.append(entries[i].rstrip("."))
+                i += 1
+            blocks = ["<p><strong>Contents</strong></p>"]
+            if first:
+                blocks.append(render_list("ul", entries[:first]))
+            blocks.append(render_list("ol", chapters))
+            if back:
+                blocks.append(render_list("ul", back))
+            remainder = "; ".join(entries[i:]).strip()
+            if remainder:
+                blocks.append("<p>" + escape(remainder) + "</p>")
+            return "".join(blocks)
+
+        toc = contents()
+        if toc:
+            return toc
+
+        lines = description.splitlines()
+        blocks, prose = [], []
+        formatted = False
+
+        def flush_prose():
+            if prose:
+                blocks.append("<p>" + "<br>".join(map(escape, prose)) + "</p>")
+                prose.clear()
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            numbered = re.fullmatch(r"(\d{1,3})[.)]\s+(.+)", line)
+            bullet = re.fullmatch(r"[-*•–—]\s+(.+)", line)
+            if numbered or bullet:
+                j = i + 1
+                items = [numbered[2] if numbered else bullet[1]]
+                start = int(numbered[1]) if numbered else 1
+                while j < len(lines):
+                    candidate = lines[j].strip()
+                    if numbered:
+                        match = re.fullmatch(r"(\d{1,3})[.)]\s+(.+)", candidate)
+                        if not match or int(match[1]) != start + len(items):
+                            break
+                        items.append(match[2])
+                    else:
+                        match = re.fullmatch(r"[-*•–—]\s+(.+)", candidate)
+                        if not match:
+                            break
+                        items.append(match[1])
+                    j += 1
+                if len(items) >= 2:
+                    flush_prose()
+                    kind = "ol" if numbered else "ul"
+                    blocks.append(render_list(kind, items, start))
+                    formatted = True
+                    i = j
+                    continue
+            if line:
+                prose.append(line)
+            else:
+                flush_prose()
+            i += 1
+        flush_prose()
+        return "".join(blocks) if formatted else description
+
     def _to_metadata(self, row, relevance):
         if not self._book_media(row):
             return None
@@ -1159,7 +1261,7 @@ class MetadataEngineSource(Source):
                 description,
             ).strip()
             if description:
-                mi.comments = description
+                mi.comments = self._format_description(description)
         if row.get("language"):
             mi.languages = [self._text(row["language"])]
 
@@ -1366,7 +1468,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.29",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.30",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
