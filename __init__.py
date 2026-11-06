@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 26)
+    version = (1, 1, 27)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1232,8 +1232,17 @@ class MetadataEngineSource(Source):
                 except Exception:
                     pass
 
-        if not mi.series and inferred_series:
-            mi.series, mi.series_index = inferred_series
+        if not mi.series:
+            if inferred_series is None:
+                volume = re.fullmatch(
+                    r"(.+?)(?:\s*[:,–—-]\s*|\s+)Volume\s+(\d+(?:\.\d+)?)",
+                    title,
+                    re.IGNORECASE,
+                )
+                if volume:
+                    inferred_series = (volume[1].strip(), float(volume[2]))
+            if inferred_series:
+                mi.series, mi.series_index = inferred_series
 
         if row.get("cover_url"):
             mi.has_cached_cover = True
@@ -1325,7 +1334,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.26",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.27",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
