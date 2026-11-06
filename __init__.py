@@ -1029,9 +1029,9 @@ class MetadataEngineSource(Source):
     def _book_provider_ids(self, log, timeout, abort):
         """Check Google Books first through Metadata Engine's provider endpoint."""
         try:
-            selected = self._configured_provider_ids() or self._discover(
-                timeout, abort
-            )
+            selected = self._configured_provider_ids()
+            if not selected:
+                selected = self._discover(timeout, abort)
         except Exception as exc:
             log.error("Metadata Engine provider discovery failed: %s", exc)
             selected = []
