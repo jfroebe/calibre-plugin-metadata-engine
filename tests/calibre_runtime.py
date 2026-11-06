@@ -177,7 +177,7 @@ class InstalledPluginTests(unittest.TestCase):
         }
         self.assertEqual(
             self.plugin._to_metadata(apple, 0).tags,
-            ["Paranormal Romance", "books"],
+            ["Paranormal Romance"],
         )
 
     def test_store_and_source_labels_are_not_subjects_or_description(self):
@@ -219,6 +219,22 @@ class InstalledPluginTests(unittest.TestCase):
             metadata.comments, "Time has passed. Goodreads is mentioned in prose."
         )
 
+    def test_catalog_classifications_are_not_calibre_tags(self):
+        """Drop format and maturity markers even from cached provider rows."""
+        row = {
+            "title": "Example",
+            "source": "google_books",
+            "tags": ["books", "not_mature"],
+        }
+        self.assertEqual(self.plugin._to_metadata(row, 0).tags, [])
+        row["genres"] = ["Space Opera", "Mature Themes", "Books About Books"]
+        row["tags"] += ["NOT-MATURE", "mature", "space opera"]
+        metadata = self.plugin._to_metadata(row, 0)
+        self.plugin.clean_downloaded_metadata(metadata)
+        self.assertEqual(
+            metadata.tags, ["Space Opera", "Mature Themes", "Books About Books"]
+        )
+
     def test_subjects_deduplicated_after_calibre_cleanup(self):
         """Collapse mixed-case subject duplicates without discarding distinct subjects."""
         row = {
@@ -239,7 +255,7 @@ class InstalledPluginTests(unittest.TestCase):
         metadata = self.plugin._to_metadata(row, 0)
         self.plugin.clean_downloaded_metadata(metadata)
         normalized = [" ".join(tag.casefold().split()) for tag in metadata.tags]
-        self.assertEqual(normalized.count("books"), 1, repr(metadata.tags))
+        self.assertNotIn("books", normalized, repr(metadata.tags))
         self.assertEqual(normalized.count("psychology"), 1, repr(metadata.tags))
         self.assertIn("Self-Improvement", metadata.tags)
         self.assertIn("Self Improvement", metadata.tags)

@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 23)
+    version = (1, 1, 24)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1120,6 +1120,9 @@ class MetadataEngineSource(Source):
             "amazon",
             "amazon.com",
             "audible",
+            "books",
+            "not mature",
+            "mature",
             "audiobook",
             "audiobooks",
             "goodreads",
