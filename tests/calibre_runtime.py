@@ -322,6 +322,49 @@ class InstalledPluginTests(unittest.TestCase):
         ):
             self.assertEqual(self.plugin._format_description(unchanged), unchanged)
 
+    def test_catalog_parts_render_nested_contents_in_calibre(self):
+        """Preserve numbered parts and their unnumbered entries from the catalog."""
+        from calibre.library.comments import comments_to_html
+
+        description = (
+            "Acknowledgements -- Preface -- Introduction -- Pt. 1: Elements Of "
+            "Magic Spells: Spell-casting -- Key Concepts For Casting Magic Spells "
+            "-- Ritual Tools And Techniques -- Using This Book -- Pt. 2: The "
+            "Spells: Animal Spells -- Banishing Spells -- Better Business And "
+            "Professional Success Spells -- Cleansing Spells -- Courtcase Spells: "
+            "Legal Spells And Spells For Justice -- Death Spells: Death, Ghosts, "
+            "Necromancy, And Vampires -- Divination Spells -- Spells Of "
+            "Domination, Persuasion, And Influence -- Dream Spells: Dreams, "
+            "Insomnia, Nightmares, Astral Projection, And Witches' Flying Potions "
+            "-- The Evil Eye -- Fertility: Spells For Conception And Contraception "
+            "-- Fire Safety Spells -- Gamblers' Spells And Charms -- Happy Home "
+            "Spells -- Healing Spells -- Hexes And Their Antidotes -- Invisibility "
+            "And Transformation Spells -- Love Magic: Spells For Romance, True "
+            "Love, Seduction And Sex -- Luck And Success Spells -- Marriage And "
+            "Divorce Spells -- Money Spells : Spells For Wealth, Prosperity, And "
+            "Financial Stability -- Pregnancy And Childbirth Spells: Spells To "
+            "Protect Mothers And Infants -- Protection Spells -- Psychic Power "
+            "Spells -- Spells For Travelers -- Spirit Summoning Spells -- Theft, "
+            "Lost Objects, And Missing Persons -- Unblocking Spells -- Weather "
+            "Spells -- Youth, Beauty, And Longevity Spells -- Formulary -- Tables "
+            "-- Bibliography -- Botanical Classificaitons -- Index. Judika Illes. "
+            "Subtitle From Cover."
+        )
+        row = {
+            "title": "The Element Encyclopedia of 5000 Spells",
+            "description": description,
+        }
+        comments = comments_to_html(self.plugin._to_metadata(row, 0).comments)
+        self.assertIn("<ul><li>Acknowledgements</li><li>Preface</li>", comments)
+        self.assertIn(
+            "<ol><li>Elements Of Magic Spells<ul><li>Spell-casting</li>", comments
+        )
+        self.assertIn("</ul></li><li>The Spells<ul><li>Animal Spells</li>", comments)
+        self.assertIn("<li>Index</li></ul></li></ol>", comments)
+        self.assertTrue(comments.endswith("<p>Judika Illes. Subtitle From Cover.</p>"))
+        prose = "It looked promising -- I thought so -- until it fell apart."
+        self.assertEqual(self.plugin._format_description(prose), prose)
+
     def test_separate_subtitle_does_not_lose_same_edition_tags(self):
         """Merge the matching full title without merging an unrelated ISBN claim."""
         title = "Design Multi-Agent AI Systems Using MCP and A2A"
