@@ -625,10 +625,11 @@ class MetadataEngineSource(Source):
         def requested_match(row):
             return self._matches_requested(row, title, authors, identifiers)
 
+        def has_description(row):
+            return bool(self._usable_description(row.get("description")))
+
         matches = [row for row in self._dedupe(rows) if requested_match(row)]
-        missing = [
-            row for row in matches if not self._usable_description(row.get("description"))
-        ]
+        missing = [row for row in matches if not has_description(row)]
         if not missing:
             return rows
         candidate = missing[0]
@@ -667,15 +668,15 @@ class MetadataEngineSource(Source):
                     if not requested_match(winner):
                         continue
                     for donor in found:
-                        before = self._usable_description(winner.get("description"))
+                        before = has_description(winner)
                         if self._merge_metadata(winner, donor):
-                            if not before and self._usable_description(winner.get("description")):
+                            if not before and has_description(winner):
                                 log.info(
                                     "Metadata Engine: description supplied by provider=%r",
                                     provider_id,
                                 )
                 if not any(
-                    requested_match(row) and not self._usable_description(row.get("description"))
+                    requested_match(row) and not has_description(row)
                     for row in self._dedupe(rows)
                 ):
                     log.info("Metadata Engine: matching description recovered")
