@@ -8,7 +8,7 @@ import re
 import ssl
 import unicodedata
 from datetime import datetime
-from html import escape
+from html import escape, unescape
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -28,7 +28,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 31)
+    version = (1, 1, 32)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -625,8 +625,11 @@ class MetadataEngineSource(Source):
         def requested_match(row):
             return self._matches_requested(row, title, authors, identifiers)
 
+        def has_description(row):
+            return bool(self._usable_description(row.get("description")))
+
         matches = [row for row in self._dedupe(rows) if requested_match(row)]
-        missing = [row for row in matches if not self._text(row.get("description"))]
+        missing = [row for row in matches if not has_description(row)]
         if not missing:
             return rows
         candidate = missing[0]
@@ -665,15 +668,15 @@ class MetadataEngineSource(Source):
                     if not requested_match(winner):
                         continue
                     for donor in found:
-                        before = self._text(winner.get("description"))
+                        before = has_description(winner)
                         if self._merge_metadata(winner, donor):
-                            if not before and self._text(winner.get("description")):
+                            if not before and has_description(winner):
                                 log.info(
                                     "Metadata Engine: description supplied by provider=%r",
                                     provider_id,
                                 )
                 if not any(
-                    requested_match(row) and not self._text(row.get("description"))
+                    requested_match(row) and not has_description(row)
                     for row in self._dedupe(rows)
                 ):
                     log.info("Metadata Engine: matching description recovered")
@@ -1122,6 +1125,25 @@ class MetadataEngineSource(Source):
             return row
         return dict(row, series=[{"name": name, "position": float(position)}])
 
+    @classmethod
+    def _usable_description(cls, value):
+        """Treat catalog physical details and visually empty HTML as missing."""
+        description = cls._text(value)
+        if not description:
+            return None
+        visible = unescape(re.sub(r"<[^<>]+>", " ", description))
+        visible = " ".join(visible.split())
+        if not visible or re.fullmatch(
+            r"(?:(?:[ivxlcdm]+|\d+)\s*,\s*)?"
+            r"\d+\s*(?:p(?:p)?\.?|pages?|leaves)"
+            r"(?:\s*:\s*(?:col\.\s*)?(?:ill\.|illustrations))?"
+            r"(?:\s*[:;]\s*\d+(?:[.,]\d+)?\s*cm\.?)?\.?",
+            visible,
+            re.IGNORECASE,
+        ):
+            return None
+        return description
+
     @staticmethod
     def _format_description(description):
         """Render clear plain-text lists without rewriting provider HTML or prose."""
@@ -1306,15 +1328,15 @@ class MetadataEngineSource(Source):
 
         if row.get("publisher"):
             mi.publisher = self._text(row["publisher"])
-        if row.get("description"):
-            description = self._text(row["description"]) or ""
+        description = self._usable_description(row.get("description"))
+        if description:
             # Remove explicit source-attribution lines, not names in prose.
             description = re.sub(
                 r"(?im)^\s*(?:metadata )?source\s*:\s*(?:amazon(?:\.com)?|audible|goodreads|hardcover|itunes|apple books|open library|google books|isbnlab|asintojson)\s*$",
                 "",
                 description,
             ).strip()
-            if description:
+            if self._usable_description(description):
                 mi.comments = self._format_description(description)
         if row.get("language"):
             mi.languages = [self._text(row["language"])]
@@ -1522,7 +1544,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.31",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.32",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -1656,6 +1678,7 @@ class MetadataEngineSource(Source):
         title = unicodedata.normalize("NFKC", cls._text(value) or "").casefold()
         title = title.translate(str.maketrans({"’": "'", "‘": "'", "–": "-", "—": "-"}))
         title = " ".join(title.split())
+        title = re.sub(r"\s+:\s*", ": ", title)
         match = re.fullmatch(
             r"(.+?)\s+\((.+?)\s+(?:book\s*|#)(\d+(?:\.\d+)?)\)",
             title,
@@ -2073,13 +2096,15 @@ class MetadataEngineSource(Source):
         if not edition and not work:
             return False
 
-        for field in ("description", "series"):
-            if not winner.get(field) or (
-                isinstance(winner[field], str) and not winner[field].strip()
-            ):
-                value = donor.get(field)
-                if value and (not isinstance(value, str) or value.strip()):
-                    winner[field] = value
+        if not cls._usable_description(winner.get("description")):
+            description = cls._usable_description(donor.get("description"))
+            if description:
+                winner["description"] = description
+        series = winner.get("series")
+        if not series or (isinstance(series, str) and not series.strip()):
+            value = donor.get("series")
+            if value and (not isinstance(value, str) or value.strip()):
+                winner["series"] = value
         # Merge work-level subjects and warning labels from compatible records.
         for field in ("genres", "tags", "trigger_warnings", "parental_warnings"):
             values = cls._list(winner.get(field)) + cls._list(donor.get(field))

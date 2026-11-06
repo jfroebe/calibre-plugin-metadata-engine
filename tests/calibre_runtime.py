@@ -322,6 +322,36 @@ class InstalledPluginTests(unittest.TestCase):
         ):
             self.assertEqual(self.plugin._format_description(unchanged), unchanged)
 
+    def test_physical_description_does_not_block_matching_catalog_synopsis(self):
+        """Merge the reported ISBN and never display bare physical details."""
+        archive = {
+            "title": "The Spice Routes : Chronicles and Recipes From Around the World",
+            "authors": ["Chris Caldicott"],
+            "isbn": "0711217564",
+            "description": "192 p. : 25 cm",
+            "source": "internet_archive",
+            "confidence": 0.99,
+        }
+        synopsis = "A travelogue and cookbook following the old spice trade routes."
+        catalog = {
+            "title": "The Spice Routes: Chronicles and Recipes From Around the World",
+            "authors": ["Chris. Caldicott", "Carolyn. Caldicott"],
+            "isbn": "9780711217560",
+            "description": synopsis,
+            "source": "loc_sru_z3950",
+            "confidence": 0.95,
+        }
+        unrelated = dict(catalog, title="Another cookbook", description="Wrong book.")
+        for placeholder in ("192 p. : 25 cm", "1108 pages : 26 cm", "<p>&nbsp;</p>"):
+            row = dict(archive, description=placeholder)
+            self.assertFalse(self.plugin._to_metadata(row, 0).comments)
+            results = self.plugin._dedupe([row, unrelated, catalog])
+            self.assertEqual(len(results), 2)
+            self.assertEqual(self.plugin._to_metadata(results[0], 0).comments, synopsis)
+        valid = "192 pages of recipes and travel stories."
+        results = self.plugin._dedupe([dict(archive, description=valid), catalog])
+        self.assertEqual(results[0]["description"], valid)
+
     def test_catalog_parts_render_nested_contents_in_calibre(self):
         """Preserve numbered parts and their unnumbered entries from the catalog."""
         from calibre.library.comments import comments_to_html
