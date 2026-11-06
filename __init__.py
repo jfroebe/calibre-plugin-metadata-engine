@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 27)
+    version = (1, 1, 28)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -301,6 +301,10 @@ class MetadataEngineSource(Source):
                 timeout,
                 retried_providers,
             )
+            rows = [
+                self._with_requested_series(row, title, authors, identifiers)
+                for row in rows
+            ]
             rows = self._dedupe(rows)
             rows.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
@@ -1089,6 +1093,34 @@ class MetadataEngineSource(Source):
             out.append(row)
         return out
 
+    @classmethod
+    def _with_requested_series(cls, row, title, authors, identifiers):
+        """Recover a numbered prefix corroborated by the matching edition."""
+        if row.get("series") or not authors or not row.get("authors"):
+            return row
+        isbn = cls._canonical_isbn(
+            cls._identifier(identifiers, "isbn", "isbn13", "isbn10")
+        )
+        if not isbn or isbn != cls._canonical_isbn(row.get("isbn")):
+            return row
+        requested = re.fullmatch(
+            r"(.+?)\s+(\d+(?:\.\d+)?):\s+(.+)", cls._text(title) or ""
+        )
+        returned = re.fullmatch(
+            r"(.+?)\s+\(([^()]+)\)", cls._text(row.get("title")) or ""
+        )
+        if not requested or not returned:
+            return row
+        name, position, book_title = requested.groups()
+        if cls._work_title(name)[0] != cls._work_title(returned[2])[0]:
+            return row
+        if not cls._work_description_matches(
+            {"title": book_title, "authors": authors},
+            dict(row, title=returned[1]),
+        ):
+            return row
+        return dict(row, series=[{"name": name, "position": float(position)}])
+
     def _to_metadata(self, row, relevance):
         if not self._book_media(row):
             return None
@@ -1334,7 +1366,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.27",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.28",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
