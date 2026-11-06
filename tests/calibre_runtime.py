@@ -262,6 +262,27 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("Open-Library", metadata.tags)
         self.assertNotIn("Cleaned", metadata.tags)
 
+    def test_saved_kindle_asin_does_not_block_goodreads_isbn(self):
+        """Only send the saved Kindle identifier to ASIN-capable sources."""
+        from urllib.parse import parse_qs, urlsplit
+
+        identifiers = {"isbn": "9781977552136", "mobi-asin": "B075JB53VN"}
+        with patch.object(
+            self.plugin, "_http_json", return_value={"results": []}
+        ) as request:
+            for provider in ("goodreads", "amazon"):
+                self.plugin._search(
+                    provider, "Fairy Rings and Dragon Kings", ["Amy Sumida"],
+                    identifiers, 30,
+                )
+        goodreads, amazon = [
+            parse_qs(urlsplit(call.args[0]).query)
+            for call in request.call_args_list
+        ]
+        self.assertEqual(goodreads["isbn"], ["9781977552136"])
+        self.assertNotIn("asin", goodreads)
+        self.assertEqual(amazon["asin"], ["B075JB53VN"])
+
     def test_twilight_court_isbn_recovers_series_and_subjects(self):
         """Enrich the reported work from the matching Goodreads ISBN."""
         title = "Fairy Rings and Dragon Kings"
