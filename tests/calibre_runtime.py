@@ -285,6 +285,21 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("asin", goodreads)
         self.assertEqual(amazon["asin"], ["B075JB53VN"])
 
+    def test_numbered_volume_fills_missing_series(self):
+        """Infer the volume position without rewriting the title."""
+        series = "Starting on Hard Mode: God Levels, Got Problems"
+        for suffix in (" Volume 1", ": Volume 1"):
+            with self.subTest(suffix=suffix):
+                row = {"title": series + suffix, "authors": ["Hanmenkyoushi"]}
+                metadata = self.plugin._to_metadata(row, 0)
+                self.assertEqual(metadata.title, row["title"])
+                self.assertEqual(metadata.series, series)
+                self.assertEqual(metadata.series_index, 1)
+                row["series"] = [{"name": "Catalog Series", "position": 2}]
+                metadata = self.plugin._to_metadata(row, 0)
+                self.assertEqual(metadata.series, "Catalog Series")
+                self.assertEqual(metadata.series_index, 2)
+
     def test_twilight_court_isbn_recovers_series_and_subjects(self):
         """Enrich the reported work from the matching Goodreads ISBN."""
         title = "Fairy Rings and Dragon Kings"
