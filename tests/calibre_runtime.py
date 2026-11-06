@@ -267,7 +267,9 @@ class InstalledPluginTests(unittest.TestCase):
         from urllib.parse import parse_qs, urlsplit
 
         identifiers = {"isbn": "9781977552136", "mobi-asin": "B075JB53VN"}
-        with patch.object(self.plugin, "_http_json", return_value={"results": []}) as request:
+        with patch.object(
+            self.plugin, "_http_json", return_value={"results": []}
+        ) as request:
             for provider in ("goodreads", "amazon"):
                 self.plugin._search(
                     provider,
