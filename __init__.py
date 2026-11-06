@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 24)
+    version = (1, 1, 25)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -477,9 +477,25 @@ class MetadataEngineSource(Source):
             if value and re.fullmatch(patterns[kind], value):
                 seeds.append((kind, value, None))
         for row in rows:
-            if not self._matches_requested(row, title, authors, identifiers):
+            strict_match = self._matches_requested(row, title, authors, identifiers)
+            matches_request = strict_match
+            if not strict_match and authors:
+                # A catalog may omit the parenthetical series from its title.
+                # Use its ISBN to discover corroboration, not to accept its identity.
+                suffix = re.fullmatch(r"(.+?)\s+\(([^()]+)\)", self._text(title) or "")
+                matches_request = bool(
+                    suffix
+                    and self._list(row.get("authors"))
+                    and self._work_description_matches(
+                        {"title": suffix[1], "authors": authors}, row
+                    )
+                    and self._matches_requested(row, suffix[1], authors, identifiers)
+                )
+            if not matches_request:
                 continue
             for kind in ("isbn", "asin", "goodreads", "lccn", "oclc", "openlibrary"):
+                if kind != "isbn" and not strict_match:
+                    continue
                 value = value_for(row, kind)
                 if not value or not re.fullmatch(patterns[kind], value):
                     continue
@@ -1085,7 +1101,7 @@ class MetadataEngineSource(Source):
             r"(.+?)\s+\((.+?)\s+(?:Book\s*|#)(\d+(?:\.\d+)?)\)", title, re.IGNORECASE
         )
         if match:
-            series_name = match.group(2).strip()
+            series_name = match.group(2).rstrip(" ,")
             # A numbered franchise prefix (e.g. "Aeon 14:") is not the series.
             series_name = re.sub(r"^.+?\s+\d+\s*:\s*", "", series_name)
             if series_name:
@@ -1121,6 +1137,7 @@ class MetadataEngineSource(Source):
             "amazon.com",
             "audible",
             "books",
+            "work",
             "not mature",
             "mature",
             "audiobook",
@@ -1307,7 +1324,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.24",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.25",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -1448,7 +1465,7 @@ class MetadataEngineSource(Source):
         )
         if not match:
             return title, None, None
-        series = re.sub(r"^.+?\s+\d+\s*:\s*", "", match.group(2)).strip()
+        series = re.sub(r"^.+?\s+\d+\s*:\s*", "", match.group(2)).rstrip(" ,")
         return match.group(1).strip(), series, float(match.group(3))
 
     @classmethod
@@ -1527,6 +1544,19 @@ class MetadataEngineSource(Source):
             return False
         if left_title == right_title:
             return True
+        for decorated, plain, witness in (
+            (left_title, right_title, right),
+            (right_title, left_title, left),
+        ):
+            suffix = re.fullmatch(r"(.+?)\s+\(([^()]+)\)", decorated)
+            series, _ = cls._series_identity(witness)
+            if (
+                suffix
+                and suffix[1] == plain
+                and series
+                and cls._series_name_key(suffix[2]) == cls._series_name_key(series)
+            ):
+                return True
         left_key = cls._series_work_key(left)
         right_key = cls._series_work_key(right)
         if left_key is not None and left_key == right_key:
