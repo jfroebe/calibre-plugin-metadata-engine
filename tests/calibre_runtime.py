@@ -285,6 +285,31 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("asin", goodreads)
         self.assertEqual(amazon["asin"], ["B075JB53VN"])
 
+    def test_requested_series_prefix_requires_edition_and_catalog_evidence(self):
+        """Recover an explicit series position only for a corroborated edition."""
+        title = "Blossomverse Omegaverse 1: Feeling the Heat: Part One"
+        authors = ["Emily Antoinette"]
+        ids = {"isbn": "9781967556113"}
+        row = {
+            "title": "Feeling the Heat: Part One (Blossomverse Omegaverse)",
+            "authors": authors,
+            "isbn": ids["isbn"],
+        }
+        enriched = self.plugin._with_requested_series(row, title, authors, ids)
+        self.assertEqual(
+            enriched["series"], [{"name": "Blossomverse Omegaverse", "position": 1}]
+        )
+        for wrong in (
+            dict(row, authors=["Other Author"]),
+            dict(row, isbn="9781967556120"),
+            dict(row, title="Feeling the Heat: Part Two (Blossomverse Omegaverse)"),
+            dict(row, title="Feeling the Heat: Part One (Other Series)"),
+        ):
+            self.assertNotIn(
+                "series", self.plugin._with_requested_series(wrong, title, authors, ids)
+            )
+        self.assertNotIn("series", row)
+
     def test_numbered_volume_fills_missing_series(self):
         """Infer the volume position without rewriting the title."""
         series = "Starting on Hard Mode: God Levels, Got Problems"
