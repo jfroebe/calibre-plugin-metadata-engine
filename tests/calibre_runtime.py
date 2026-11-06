@@ -285,6 +285,43 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("asin", goodreads)
         self.assertEqual(amazon["asin"], ["B075JB53VN"])
 
+    def test_description_lists_render_as_native_calibre_html(self):
+        """Preserve numbering, paragraph boundaries, and literal punctuation."""
+        from calibre.library.comments import comments_to_html
+
+        description = (
+            "Getting started\n\n3. Warm up\n4) Run & walk\n\n"
+            "Bring along:\n- Water\n• Shoes\n\nThen cool down."
+        )
+        row = {"title": "Example", "description": description}
+        comments = comments_to_html(self.plugin._to_metadata(row, 0).comments)
+        self.assertIn(
+            '<ol start="3"><li>Warm up</li><li>Run &amp; walk</li></ol>', comments
+        )
+        self.assertIn("<ul><li>Water</li><li>Shoes</li></ul>", comments)
+        self.assertTrue(comments.endswith("<p>Then cool down.</p>"))
+
+    def test_catalog_contents_are_separate_from_the_abstract(self):
+        """Render the reported flattened contents without turning prose into a list."""
+        description = (
+            "Foreword; Introduction; Chapter 1: Get Moving!; "
+            "Chapter 2: It Starts with a Single Step; "
+            "Appendix A: Resources; Acknowledgments; Index.;Founded on a simple idea."
+        )
+        comments = self.plugin._format_description(description)
+        self.assertIn("<ul><li>Foreword</li><li>Introduction</li></ul>", comments)
+        self.assertIn(
+            "<ol><li>Get Moving!</li><li>It Starts with a Single Step</li></ol>",
+            comments,
+        )
+        self.assertTrue(comments.endswith("<p>Founded on a simple idea.</p>"))
+        for unchanged in (
+            "There were three steps; all were simple.",
+            "<p>Existing HTML</p><ul><li>Water</li></ul>",
+            "2026. A good year.\nA new paragraph.",
+        ):
+            self.assertEqual(self.plugin._format_description(unchanged), unchanged)
+
     def test_separate_subtitle_does_not_lose_same_edition_tags(self):
         """Merge the matching full title without merging an unrelated ISBN claim."""
         title = "Design Multi-Agent AI Systems Using MCP and A2A"
