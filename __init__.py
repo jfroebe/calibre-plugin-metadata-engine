@@ -1585,7 +1585,12 @@ class MetadataEngineSource(Source):
         if not left_title or not right_title:
             return False
         if left_title == right_title:
-            return True
+            left_subtitle = cls._work_title(left.get("subtitle"))[0]
+            right_subtitle = cls._work_title(right.get("subtitle"))[0]
+            return (
+                not (left_subtitle and right_subtitle)
+                or left_subtitle == right_subtitle
+            )
         for base, full, row in (
             (left_title, right_title, left),
             (right_title, left_title, right),
