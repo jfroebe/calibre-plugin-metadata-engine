@@ -28,7 +28,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 30)
+    version = (1, 1, 31)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1173,7 +1173,61 @@ class MetadataEngineSource(Source):
                 blocks.append("<p>" + escape(remainder) + "</p>")
             return "".join(blocks)
 
-        toc = contents()
+        def part_contents():
+            # Catalog ISBD contents use spaced double dashes between entries.
+            entries = re.split(r"\s+--\s+", description.strip())
+            front_labels = {
+                "acknowledgements",
+                "acknowledgments",
+                "foreword",
+                "introduction",
+                "preface",
+                "prologue",
+                "table of contents",
+                "contents",
+            }
+            front, parts = [], []
+            for entry in entries:
+                part = re.fullmatch(
+                    r"(?:Pt\.?|Part)\s+(\d{1,3}):\s*(.+)", entry, re.IGNORECASE
+                )
+                if part:
+                    if int(part[1]) != len(parts) + 1:
+                        return None
+                    heading, separator, first_entry = part[2].partition(": ")
+                    parts.append((heading, [first_entry] if separator else []))
+                elif parts:
+                    parts[-1][1].append(entry)
+                elif entry.rstrip(".:").casefold() in front_labels:
+                    if entry.rstrip(".:").casefold() not in {
+                        "contents",
+                        "table of contents",
+                    }:
+                        front.append(entry)
+                else:
+                    return None
+            if len(parts) < 2 or not all(items for _, items in parts):
+                return None
+
+            remainder = ""
+            last = parts[-1][1]
+            ending = re.fullmatch(
+                r"(Index|Bibliography)\.\s+(.+)", last[-1], re.IGNORECASE
+            )
+            if ending:
+                last[-1], remainder = ending.groups()
+            blocks = ["<p><strong>Contents</strong></p>"]
+            if front:
+                blocks.append(render_list("ul", front))
+            blocks.append("<ol>")
+            for heading, items in parts:
+                blocks.append(f"<li>{escape(heading)}{render_list('ul', items)}</li>")
+            blocks.append("</ol>")
+            if remainder:
+                blocks.append(f"<p>{escape(remainder)}</p>")
+            return "".join(blocks)
+
+        toc = contents() or part_contents()
         if toc:
             return toc
 
@@ -1468,7 +1522,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.30",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.31",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
