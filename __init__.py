@@ -27,7 +27,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 28)
+    version = (1, 1, 29)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1366,7 +1366,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.28",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.29",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -1579,13 +1579,25 @@ class MetadataEngineSource(Source):
 
     @classmethod
     def _work_titles_compatible(cls, left, right):
-        """Match an inserted series name only when another record names that series."""
+        """Compare full titles and corroborated catalog series variants."""
         left_title, _, _ = cls._work_title(left.get("title"))
         right_title, _, _ = cls._work_title(right.get("title"))
         if not left_title or not right_title:
             return False
         if left_title == right_title:
-            return True
+            left_subtitle = cls._work_title(left.get("subtitle"))[0]
+            right_subtitle = cls._work_title(right.get("subtitle"))[0]
+            return (
+                not (left_subtitle and right_subtitle)
+                or left_subtitle == right_subtitle
+            )
+        for base, full, row in (
+            (left_title, right_title, left),
+            (right_title, left_title, right),
+        ):
+            subtitle = cls._work_title(row.get("subtitle"))[0]
+            if subtitle and f"{base}: {subtitle}" == full:
+                return True
         for decorated, plain, witness in (
             (left_title, right_title, right),
             (right_title, left_title, left),

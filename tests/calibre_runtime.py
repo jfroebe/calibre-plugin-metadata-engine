@@ -285,6 +285,43 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("asin", goodreads)
         self.assertEqual(amazon["asin"], ["B075JB53VN"])
 
+    def test_separate_subtitle_does_not_lose_same_edition_tags(self):
+        """Merge the matching full title without merging an unrelated ISBN claim."""
+        title = "Design Multi-Agent AI Systems Using MCP and A2A"
+        subtitle = (
+            "Engineer your own Python-based agentic AI framework with tool use, "
+            "memory, and multi-agent workflows"
+        )
+        isbn = "9781806116478"
+        winner = {
+            "title": f"{title}: {subtitle}",
+            "authors": ["Gigi Sayfan"],
+            "isbn": isbn,
+            "source": "goodreads",
+            "confidence": 0.995,
+            "description": "Build and deploy a multi-agent AI framework.",
+        }
+        donor = {
+            "title": title,
+            "subtitle": subtitle.title(),
+            "authors": ["Gigi. Sayfan"],
+            "isbn": isbn,
+            "source": "google_books",
+            "confidence": 0.99,
+            "genres": ["Computers"],
+            "tags": ["Programming", "Computers & Internet", "google-books"],
+        }
+        unrelated = dict(donor, subtitle="An unrelated subtitle", tags=["Unrelated"])
+        rows = self.plugin._dedupe([winner, donor, unrelated])
+        self.assertEqual(len(rows), 2)
+        result = self.plugin._to_metadata(rows[0], 0)
+        self.assertEqual(result.title, winner["title"])
+        self.assertEqual(result.authors, ["Gigi Sayfan"])
+        self.assertEqual(result.comments, winner["description"])
+        self.assertEqual(
+            result.tags, ["Computers", "Programming", "Computers & Internet"]
+        )
+
     def test_requested_series_prefix_requires_edition_and_catalog_evidence(self):
         """Recover an explicit series position only for a corroborated edition."""
         title = "Blossomverse Omegaverse 1: Feeling the Heat: Part One"
