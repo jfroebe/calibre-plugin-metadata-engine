@@ -262,6 +262,47 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("Open-Library", metadata.tags)
         self.assertNotIn("Cleaned", metadata.tags)
 
+    def test_twilight_court_isbn_recovers_series_and_subjects(self):
+        """Enrich the reported work from the matching Goodreads ISBN."""
+        title = "Fairy Rings and Dragon Kings"
+        authors = ["Amy Sumida"]
+        isbn = "9781977552136"
+        self.plugin.prefs["plugin_ids"] = "open_library,goodreads"
+
+        def lookup(provider, query, people, identifiers, timeout):
+            common = {"authors": authors, "isbn": isbn, "source": provider}
+            if provider == "open_library":
+                return [
+                    dict(common, title=title, confidence=0.99, tags=["books", "work"])
+                ]
+            if identifiers.get("isbn") == isbn:
+                return [
+                    dict(
+                        common,
+                        title=title + " (The Twilight Court, #7)",
+                        confidence=0.95,
+                        genres=["Romance", "Fantasy", "Dragons"],
+                        series=[{"name": "The Twilight Court", "position": "7"}],
+                    )
+                ]
+            return []
+
+        with patch.object(self.plugin, "_search", side_effect=lookup) as search:
+            matches = self.identify(
+                title=title + " (The Twilight Court)", authors=authors
+            )
+        self.assertTrue(
+            any(
+                call.args[0] == "goodreads" and call.args[3].get("isbn") == isbn
+                for call in search.call_args_list
+            )
+        )
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].title, title)
+        self.assertEqual(matches[0].series, "The Twilight Court")
+        self.assertEqual(matches[0].series_index, 7)
+        self.assertEqual(matches[0].tags, ["Romance", "Fantasy", "Dragons"])
+
     def test_ebook_enriches_matching_book_not_different_author(self):
         """Merge rich ebook details only into the same title and author."""
         rows = [
