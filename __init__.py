@@ -28,7 +28,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 36)
+    version = (1, 1, 37)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -342,6 +342,18 @@ class MetadataEngineSource(Source):
                     return None
                 mi = self._to_metadata(row, relevance)
                 if mi is not None:
+                    if self._matches_requested(row, title, authors, identifiers):
+                        missing = []
+                        if not self._usable_description(mi.comments):
+                            missing.append("description")
+                        if not mi.tags:
+                            missing.append("tags")
+                        if missing:
+                            log.warning(
+                                "Metadata Engine incomplete matching result: "
+                                + ", ".join(missing)
+                                + f"; source={row.get('source')}"
+                            )
                     self.clean_downloaded_metadata(mi)
                     result_queue.put(mi)
             return None
@@ -584,7 +596,11 @@ class MetadataEngineSource(Source):
                 if provider not in support[kind]:
                     continue
                 if anchor and provider == anchor.get("source"):
-                    continue
+                    incomplete = not self._usable_description(
+                        anchor.get("description")
+                    ) or not self._to_metadata(anchor, 0).tags
+                    if kind not in {"goodreads", "openlibrary"} or not incomplete:
+                        continue
                 pair = (provider, kind, value)
                 if pair in visited:
                     continue
@@ -1634,7 +1650,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.36",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.37",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

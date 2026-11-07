@@ -219,6 +219,43 @@ class InstalledPluginTests(unittest.TestCase):
             metadata.comments, "Time has passed. Goodreads is mentioned in prose."
         )
 
+    def test_sparse_goodreads_result_is_enriched_by_its_own_identifier(self):
+        """A match is incomplete until its missing fields have been checked by ID."""
+        title = "Homemade Sauce & Dip Recipes"
+        authors = ["Tyler Sweet"]
+        sparse = {
+            "title": title,
+            "authors": authors,
+            "source": "goodreads",
+            "source_id": "58987091",
+            "extra": {"goodreads_id": "58987091"},
+        }
+        detailed = dict(sparse, description="A collection of homemade sauces and dips.")
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+
+        def search(provider, query, *args, **kwargs):
+            if provider != "goodreads":
+                return []
+            return [dict(detailed if query == "goodreads:58987091" else sparse)]
+
+        with (
+            patch.object(self.plugin, "_search", side_effect=search) as lookup,
+            self.assertLogs(self.log, level="INFO") as logs,
+        ):
+            results = self.identify(title=title, authors=authors)
+        self.assertEqual(results[0].comments, detailed["description"])
+        self.assertEqual(results[0].tags, [])
+        self.assertEqual(
+            sum(call.args[1] == "goodreads:58987091" for call in lookup.call_args_list),
+            1,
+        )
+        self.assertIn("incomplete matching result: tags", " ".join(logs.output))
+        detailed["tags"] = ["Cooking", "Recipes"]
+        with patch.object(self.plugin, "_search", side_effect=search):
+            results = self.identify(title=title, authors=authors)
+        self.assertEqual(results[0].tags, ["Cooking", "Recipes"])
+        self.assertEqual(results[0].comments, detailed["description"])
+
     def test_missing_subjects_are_filled_without_replacing_comments(self):
         """Use only the matching ISBN's catalog subjects in Calibre."""
         title = "The Naughty Couple's Bucket List"
