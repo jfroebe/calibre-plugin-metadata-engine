@@ -237,17 +237,6 @@ class MetadataEngineSource(Source):
                             "Metadata Engine provider %r failed: %s", provider_id, exc
                         )
 
-            requested = {"title": title, "authors": authors}
-            compatible = [
-                row for row in rows if self._identity_consistent(requested, row)
-            ]
-            rejected = len(rows) - len(compatible)
-            if rejected:
-                log.info(
-                    f"Metadata Engine rejected {rejected} conflicting title/author results"
-                )
-            rows = compatible
-
             # An exact edition identifier ties the provider result to the
             # existing Calibre record even when the provider omits its authors.
             if authors:
@@ -322,6 +311,17 @@ class MetadataEngineSource(Source):
                 for row in rows
             ]
             rows = self._dedupe(rows)
+            requested = {"title": title, "authors": authors}
+            compatible = [
+                row for row in rows if self._identity_consistent(requested, row)
+            ]
+            rejected = len(rows) - len(compatible)
+            if rejected:
+                log.info(
+                    f"Metadata Engine rejected {rejected} conflicting title/author results"
+                )
+            rows = compatible
+
             isbn = self._canonical_isbn(
                 self._identifier(identifiers, "isbn", "isbn13", "isbn10")
             )

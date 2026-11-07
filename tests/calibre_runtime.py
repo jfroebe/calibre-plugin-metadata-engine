@@ -572,7 +572,7 @@ class InstalledPluginTests(unittest.TestCase):
             )
         self.assertEqual(results[0].comments, synopsis)
         self.assertEqual(results[0].authors[0], "Jill Norman")
-        self.assertFalse(results[1].comments)
+        self.assertEqual(len(results), 1)
 
     def test_physical_description_does_not_block_matching_catalog_synopsis(self):
         """Merge the reported ISBN and never display bare physical details."""
@@ -1004,7 +1004,7 @@ class InstalledPluginTests(unittest.TestCase):
         ]
         self.assertEqual(len(matches), 1)
         self.assertIn("matching book description", matches[0].comments)
-        self.assertTrue(any(item.title == "My Curvy Belle" for item in results))
+        self.assertFalse(any(item.title == "My Curvy Belle" for item in results))
 
     def test_mobi_asin_sent_for_identify_and_cover_matching(self):
         """Forward Calibre's Kindle identifier and prefer its matching cover."""
