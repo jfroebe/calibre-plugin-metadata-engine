@@ -41,6 +41,18 @@ class InstalledPluginTests(unittest.TestCase):
         self.plugin.prefs["include_source_tag"] = True
         self.plugin.prefs["api_token"] = ""
         self.plugin._cover_urls.clear()
+        # These fixture tests define their enabled test inventory through the
+        # local provider preference; selection policy has independent coverage.
+        discover = self.plugin._discover
+
+        def fixture_inventory(timeout, abort):
+            return self.plugin._configured_provider_ids() or discover(timeout, abort)
+
+        inventory = patch.object(
+            self.plugin, "_discover", side_effect=fixture_inventory
+        )
+        inventory.start()
+        self.addCleanup(inventory.stop)
         self.log = logging.getLogger("calibre-validation")
         self.abort = Event()
 
@@ -218,6 +230,30 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(
             metadata.comments, "Time has passed. Goodreads is mentioned in prose."
         )
+
+    def test_book_provider_inventory_overrides_an_old_restricted_list(self):
+        """Select every enabled book provider regardless of saved restrictions."""
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        payload = {
+            "plugins": [
+                {"plugin_id": "goodreads", "metadata_types": ["books"]},
+                {"plugin_id": "open_library", "metadata_types": ["books"]},
+                {
+                    "plugin_id": "disabled",
+                    "enabled": False,
+                    "metadata_types": ["books"],
+                },
+                {"plugin_id": "tvmaze", "metadata_types": ["tv"]},
+            ]
+        }
+        with patch.object(self.plugin, "_http_json", return_value=payload):
+            selected = type(self.plugin)._discover(self.plugin, 5, self.abort)
+        self.assertEqual(selected, ["goodreads", "open_library"])
+        with patch.object(self.plugin, "_discover", return_value=selected):
+            self.assertEqual(
+                self.plugin._book_provider_ids(self.log, 5, self.abort),
+                ["google_books", "goodreads", "open_library"],
+            )
 
     def test_sparse_goodreads_result_is_enriched_by_its_own_identifier(self):
         """A match is incomplete until its missing fields have been checked by ID."""

@@ -1098,12 +1098,10 @@ class MetadataEngineSource(Source):
     def _book_provider_ids(self, log, timeout, abort):
         """Check Google Books first through Metadata Engine's provider endpoint."""
         try:
-            selected = self._configured_provider_ids()
-            if not selected:
-                selected = self._discover(timeout, abort)
+            selected = self._discover(timeout, abort)
         except Exception as exc:
             log.error("Metadata Engine provider discovery failed: %s", exc)
-            selected = []
+            selected = self._configured_provider_ids()
         return list(dict.fromkeys(["google_books", *selected]))
 
     def _discover(self, timeout, abort):
@@ -1117,6 +1115,13 @@ class MetadataEngineSource(Source):
             if isinstance(item, str):
                 found.append(item)
             elif isinstance(item, dict) and item.get("enabled", True):
+                media_types = item.get("metadata_types")
+                if isinstance(media_types, list) and media_types:
+                    if not any(
+                        self._book_media({"metadata_type": value})
+                        for value in media_types
+                    ):
+                        continue
                 pid = item.get("plugin_id") or item.get("id") or item.get("name")
                 if pid:
                     found.append(str(pid))
