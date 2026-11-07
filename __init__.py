@@ -7,6 +7,7 @@ import json
 import re
 import ssl
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from html import escape, unescape
 from urllib.error import HTTPError, URLError
@@ -28,7 +29,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 37)
+    version = (1, 1, 38)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -147,6 +148,9 @@ class MetadataEngineSource(Source):
 
         try:
             provider_ids = self._book_provider_ids(log, timeout, abort)
+            initial = self._initial_provider_batch(
+                provider_ids, query, authors, identifiers, timeout, abort
+            )
             rows = []
             retried_providers = set()
             for provider_id in provider_ids:
@@ -155,19 +159,9 @@ class MetadataEngineSource(Source):
                     if abort.is_set():
                         return None
                     try:
-                        if media_type:
-                            found = self._search(
-                                provider_id,
-                                query,
-                                authors,
-                                identifiers,
-                                timeout,
-                                metadata_type=media_type,
-                            )
-                        else:
-                            found = self._search(
-                                provider_id, query, authors, identifiers, timeout
-                            )
+                        found, error = initial[(provider_id, media_type)]
+                        if error is not None:
+                            raise error
                         if provider_id == "goodreads" and not found and title:
                             short_title = self._search_title(title)
                             if short_title != str(title).strip():
@@ -788,25 +782,22 @@ class MetadataEngineSource(Source):
         if query:
             provider_ids = self._book_provider_ids(log, timeout, abort)
 
+            initial = self._initial_provider_batch(
+                provider_ids, query, authors, identifiers, timeout, abort
+            )
             rows = []
             for provider_id in provider_ids:
                 if abort.is_set():
                     return None
                 try:
-                    provider_rows = self._search(
-                        provider_id, query, authors, identifiers, timeout
-                    )
+                    provider_rows, error = initial[(provider_id, None)]
+                    if error is not None:
+                        raise error
                     if provider_id == "itunes":
-                        provider_rows.extend(
-                            self._search(
-                                provider_id,
-                                query,
-                                authors,
-                                identifiers,
-                                timeout,
-                                metadata_type="books",
-                            )
-                        )
+                        books, error = initial[(provider_id, "books")]
+                        if error is not None:
+                            raise error
+                        provider_rows.extend(books)
                     if (
                         title
                         and len(self._list(authors)) > 1
@@ -1094,6 +1085,38 @@ class MetadataEngineSource(Source):
                         exc,
                     )
         return recovered
+
+    def _initial_provider_batch(
+        self, provider_ids, query, authors, identifiers, timeout, abort
+    ):
+        """Start providers together, retaining deterministic output and failure isolation."""
+        providers = list(dict.fromkeys(provider_ids))
+        if not providers or abort.is_set():
+            return {}
+
+        def lookup(provider):
+            results = {}
+            modes = (None, "books") if provider == "itunes" else (None,)
+            for mode in modes:
+                if abort.is_set():
+                    break
+                try:
+                    kwargs = {"metadata_type": mode} if mode else {}
+                    found = self._search(
+                        provider, query, authors, identifiers, timeout, **kwargs
+                    )
+                    results[(provider, mode)] = (found, None)
+                except Exception as exc:
+                    results[(provider, mode)] = ([], exc)
+            return results
+
+        # One worker per provider overlaps the independent initial requests.
+        # Alternate modes within a provider remain serial; server-side queues
+        # continue to own provider rate limits and cache access.
+        with ThreadPoolExecutor(max_workers=len(providers)) as executor:
+            futures = [executor.submit(lookup, provider) for provider in providers]
+            batches = [future.result() for future in futures]
+        return {key: value for batch in batches for key, value in batch.items()}
 
     def _book_provider_ids(self, log, timeout, abort):
         """Check Google Books first through Metadata Engine's provider endpoint."""
@@ -1657,7 +1680,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.37",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.38",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

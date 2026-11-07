@@ -13,7 +13,7 @@ import unittest
 import urllib.request
 from pathlib import Path
 from queue import Queue
-from threading import Event
+from threading import Barrier, Event
 from unittest.mock import patch
 from urllib.request import ProxyHandler, build_opener, install_opener
 
@@ -62,6 +62,33 @@ class InstalledPluginTests(unittest.TestCase):
         error = self.plugin.identify(self.log, queue, self.abort, **kwargs)
         self.assertIsNone(error)
         return list(queue.queue)
+
+    def test_initial_provider_requests_overlap_for_metadata_and_covers(self):
+        """A barrier must admit every provider before any initial call completes."""
+        providers = ["google_books", "goodreads", "open_library"]
+        for operation in ("identify", "cover"):
+            with self.subTest(operation=operation):
+                barrier = Barrier(len(providers), timeout=3)
+
+                def search(provider, query, *args, **kwargs):
+                    barrier.wait()
+                    return []
+
+                with (
+                    patch.object(
+                        self.plugin, "_book_provider_ids", return_value=providers
+                    ),
+                    patch.object(self.plugin, "_search", side_effect=search) as calls,
+                ):
+                    if operation == "identify":
+                        self.assertEqual(self.identify(title="Unknown Book"), [])
+                    else:
+                        queue = Queue()
+                        self.plugin.download_cover(
+                            self.log, queue, self.abort, title="Unknown Book"
+                        )
+                        self.assertTrue(queue.empty())
+                self.assertEqual(calls.call_count, len(providers))
 
     def test_specter_without_identifier_combines_partial_sources(self):
         """A title and authors lookup must return one complete leading match."""
