@@ -34,7 +34,10 @@ def command(args: list[str], env: dict, report: Path, name: str) -> str:
     output = result.stdout + result.stderr
     report.joinpath(name + ".log").write_text(output, encoding="utf-8")
     if result.returncode:
-        raise RuntimeError(f"{name} exited {result.returncode}; see report")
+        diagnostics = "\n".join(output.splitlines()[-160:])
+        raise RuntimeError(
+            f"{name} exited {result.returncode}; see report\n{diagnostics}"
+        )
     return result.stdout
 
 
