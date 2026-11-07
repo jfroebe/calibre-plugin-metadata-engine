@@ -28,7 +28,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 36)
+    version = (1, 1, 37)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -74,7 +74,7 @@ class MetadataEngineSource(Source):
             "string",
             "",
             "Metadata Engine plugin IDs",
-            "Google Books is always checked. List additional provider IDs, or leave blank to discover enabled providers.",
+            "All enabled book providers are used. These IDs are a fallback if discovery is unavailable.",
         ),
         Option(
             "max_results",
@@ -342,6 +342,18 @@ class MetadataEngineSource(Source):
                     return None
                 mi = self._to_metadata(row, relevance)
                 if mi is not None:
+                    if self._matches_requested(row, title, authors, identifiers):
+                        missing = []
+                        if not self._usable_description(mi.comments):
+                            missing.append("description")
+                        if not mi.tags:
+                            missing.append("tags")
+                        if missing:
+                            log.warning(
+                                "Metadata Engine incomplete matching result: "
+                                + ", ".join(missing)
+                                + f"; source={row.get('source')}"
+                            )
                     self.clean_downloaded_metadata(mi)
                     result_queue.put(mi)
             return None
@@ -584,7 +596,13 @@ class MetadataEngineSource(Source):
                 if provider not in support[kind]:
                     continue
                 if anchor and provider == anchor.get("source"):
-                    continue
+                    description = anchor.get("description")
+                    has_description = self._usable_description(description)
+                    has_tags = self._to_metadata(anchor, 0).tags
+                    if kind not in {"goodreads", "openlibrary"}:
+                        continue
+                    if has_description and has_tags:
+                        continue
                 pair = (provider, kind, value)
                 if pair in visited:
                     continue
@@ -1080,12 +1098,10 @@ class MetadataEngineSource(Source):
     def _book_provider_ids(self, log, timeout, abort):
         """Check Google Books first through Metadata Engine's provider endpoint."""
         try:
-            selected = self._configured_provider_ids()
-            if not selected:
-                selected = self._discover(timeout, abort)
+            selected = self._discover(timeout, abort)
         except Exception as exc:
             log.error("Metadata Engine provider discovery failed: %s", exc)
-            selected = []
+            selected = self._configured_provider_ids()
         return list(dict.fromkeys(["google_books", *selected]))
 
     def _discover(self, timeout, abort):
@@ -1099,6 +1115,13 @@ class MetadataEngineSource(Source):
             if isinstance(item, str):
                 found.append(item)
             elif isinstance(item, dict) and item.get("enabled", True):
+                media_types = item.get("metadata_types")
+                if isinstance(media_types, list) and media_types:
+                    if not any(
+                        self._book_media({"metadata_type": value})
+                        for value in media_types
+                    ):
+                        continue
                 pid = item.get("plugin_id") or item.get("id") or item.get("name")
                 if pid:
                     found.append(str(pid))
@@ -1634,7 +1657,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.36",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.37",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
