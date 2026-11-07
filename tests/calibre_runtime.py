@@ -88,6 +88,7 @@ class InstalledPluginTests(unittest.TestCase):
                             self.log, queue, self.abort, title="Unknown Book"
                         )
                         self.assertTrue(queue.empty())
+                self.assertFalse(barrier.broken)
                 self.assertEqual(calls.call_count, len(providers))
 
     def test_specter_without_identifier_combines_partial_sources(self):
