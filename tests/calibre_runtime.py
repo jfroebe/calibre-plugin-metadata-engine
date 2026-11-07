@@ -956,9 +956,11 @@ class InstalledPluginTests(unittest.TestCase):
             for path, query in self.requests
             if path == "/plugins/goodreads/search"
         ]
-        self.assertEqual(len(searches), 2)
-        self.assertEqual(searches[-1]["query"], ["A Specter and an Invasion"])
-        self.assertNotIn("author", searches[-1])
+        self.assertEqual(len(searches), 3)
+        self.assertEqual(searches[1]["query"], ["A Specter and an Invasion"])
+        self.assertNotIn("author", searches[1])
+        self.assertEqual(searches[2]["query"], ["goodreads:55033599"])
+        self.assertNotIn("author", searches[2])
 
     def test_series_title_fallback_is_conservative(self):
         """Extract explicit numbered series while preserving structured values."""
