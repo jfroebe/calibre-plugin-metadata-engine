@@ -596,10 +596,12 @@ class MetadataEngineSource(Source):
                 if provider not in support[kind]:
                     continue
                 if anchor and provider == anchor.get("source"):
-                    incomplete = not self._usable_description(
-                        anchor.get("description")
-                    ) or not self._to_metadata(anchor, 0).tags
-                    if kind not in {"goodreads", "openlibrary"} or not incomplete:
+                    description = anchor.get("description")
+                    has_description = self._usable_description(description)
+                    has_tags = self._to_metadata(anchor, 0).tags
+                    if kind not in {"goodreads", "openlibrary"}:
+                        continue
+                    if has_description and has_tags:
                         continue
                 pair = (provider, kind, value)
                 if pair in visited:
