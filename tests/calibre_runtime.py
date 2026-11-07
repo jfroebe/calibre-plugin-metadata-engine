@@ -1993,7 +1993,7 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("Wrong book warning", metadata.comments)
         existing = dict(
             book,
-            description="Trigger warnings: Violence\\n\\nBook synopsis.",
+            description="Trigger warnings: Violence\n\nBook synopsis.",
             trigger_warnings=["Violence"],
         )
         self.assertEqual(
