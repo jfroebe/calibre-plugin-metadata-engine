@@ -322,6 +322,43 @@ class InstalledPluginTests(unittest.TestCase):
         ):
             self.assertEqual(self.plugin._format_description(unchanged), unchanged)
 
+    def test_verified_isbn_with_synopsis_beats_conflicting_archive_author(self):
+        """Rank the complete, corroborated edition above the malformed record."""
+        isbn = "9781465435989"
+        title = "Herbs & Spices"
+        synopsis = "An illustrated guide to herbs and spices, with recipes."
+        archive = {
+            "title": title,
+            "authors": ["1940- Author Norman Jillian"],
+            "isbn": isbn,
+            "source": "internet_archive",
+            "confidence": 0.99,
+        }
+        catalog = dict(
+            archive,
+            authors=["Jill Norman", "Dave King", "Inc. Dk Publishing"],
+            source="loc_sru_z3950",
+            confidence=0.85,
+            description=synopsis,
+        )
+        self.plugin.prefs["plugin_ids"] = "internet_archive,loc_sru_z3950"
+        rows = {
+            "google_books": [],
+            "internet_archive": [archive],
+            "loc_sru_z3950": [catalog],
+        }
+
+        def search(provider, *args, **kwargs):
+            return [dict(row) for row in rows[provider]]
+
+        with patch.object(self.plugin, "_search", side_effect=search):
+            results = self.identify(
+                title=title, authors=["Jill Norman"], identifiers={"isbn": isbn}
+            )
+        self.assertEqual(results[0].comments, synopsis)
+        self.assertEqual(results[0].authors[0], "Jill Norman")
+        self.assertFalse(results[1].comments)
+
     def test_physical_description_does_not_block_matching_catalog_synopsis(self):
         """Merge the reported ISBN and never display bare physical details."""
         archive = {

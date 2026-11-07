@@ -28,7 +28,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 33)
+    version = (1, 1, 34)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -225,6 +225,18 @@ class MetadataEngineSource(Source):
                                 if matching:
                                     found.extend(matching)
                                     break
+                        if provider_id == "google_books":
+                            matches = sum(
+                                self._matches_requested(
+                                    row, title, authors, identifiers
+                                )
+                                for row in found
+                            )
+                            log.info(
+                                "Metadata Engine Google Books: candidates=%d matching=%d",
+                                len(found),
+                                matches,
+                            )
                         rows.extend(found)
                     except Exception as exc:
                         log.error(
@@ -305,7 +317,22 @@ class MetadataEngineSource(Source):
                 for row in rows
             ]
             rows = self._dedupe(rows)
-            rows.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
+            isbn = self._canonical_isbn(
+                self._identifier(identifiers, "isbn", "isbn13", "isbn10")
+            )
+            target = {"title": title, "authors": authors}
+
+            def rank(row):
+                confirmed = bool(
+                    isbn
+                    and isbn == self._canonical_isbn(row.get("isbn"))
+                    and self._work_description_matches(target, row)
+                )
+                has_synopsis = bool(self._usable_description(row.get("description")))
+                confidence = float(row.get("confidence") or 0)
+                return confirmed, confirmed and has_synopsis, confidence
+
+            rows.sort(key=rank, reverse=True)
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
 
             for relevance, row in enumerate(rows[:maximum]):
@@ -1547,7 +1574,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.33",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.34",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
