@@ -29,7 +29,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 38)
+    version = (1, 1, 39)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -164,7 +164,7 @@ class MetadataEngineSource(Source):
                             raise error
                         if provider_id == "goodreads" and not found and title:
                             short_title = self._search_title(title)
-                            if short_title != str(title).strip():
+                            if short_title != query.strip():
                                 log.info("Retrying Goodreads with a shortened title")
                                 found = self._search(
                                     provider_id, short_title, None, {}, timeout
@@ -236,6 +236,17 @@ class MetadataEngineSource(Source):
                         log.error(
                             "Metadata Engine provider %r failed: %s", provider_id, exc
                         )
+
+            requested = {"title": title, "authors": authors}
+            compatible = [
+                row for row in rows if self._identity_consistent(requested, row)
+            ]
+            rejected = len(rows) - len(compatible)
+            if rejected:
+                log.info(
+                    f"Metadata Engine rejected {rejected} conflicting title/author results"
+                )
+            rows = compatible
 
             # An exact edition identifier ties the provider result to the
             # existing Calibre record even when the provider omits its authors.
@@ -1680,7 +1691,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.38",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.39",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -1773,7 +1784,7 @@ class MetadataEngineSource(Source):
     def _make_query(cls, title, authors, identifiers):
         """Keep the title clean; author and edition IDs travel as API parameters."""
         if title and str(title).strip():
-            return str(title).strip()
+            return cls._search_title(title)
         for key in ("isbn", "isbn13", "isbn10", "asin"):
             value = cls._identifier(identifiers, key)
             if value:

@@ -63,6 +63,48 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertIsNone(error)
         return list(queue.queue)
 
+    def test_series_suffix_is_removed_before_initial_parallel_search(self):
+        """Find the Eli Wray book and reject unrelated sugar-and-spice titles."""
+        title = "Sugar And Spice (A Very Enby Christmas Book 1)"
+        authors = ["Eli Wray"]
+        asin = "B08JCS4TNZ"
+        book = {
+            "title": "Sugar and Spice",
+            "authors": authors,
+            "source": "goodreads",
+            "source_id": "55386622",
+            "series": [{"name": "A Very Enby Christmas", "position": 1}],
+            "description": "Mason tries baking cookies for Natalie.",
+            "genres": ["Romance", "Queer", "Holiday"],
+        }
+        wrong = {
+            "title": "Sugar and Spice 'n' Everything Nice: Holiday Recipes",
+            "authors": ["Woman's Guild"],
+            "source": "google_books",
+        }
+
+        def search(provider, query, *args, **kwargs):
+            if provider == "google_books":
+                return [dict(wrong)]
+            if query == "Sugar And Spice" or query == "goodreads:55386622":
+                return [dict(book)]
+            return []
+
+        self.plugin.prefs["plugin_ids"] = "google_books,goodreads"
+        with patch.object(self.plugin, "_search", side_effect=search) as calls:
+            results = self.identify(
+                title=title, authors=authors, identifiers={"mobi-asin": asin}
+            )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Sugar and Spice")
+        self.assertEqual(results[0].authors, authors)
+        self.assertEqual(results[0].series, "A Very Enby Christmas")
+        self.assertEqual(results[0].series_index, 1)
+        self.assertEqual(results[0].comments, book["description"])
+        self.assertEqual(results[0].tags, book["genres"])
+        initial = calls.call_args_list[:2]
+        self.assertEqual({call.args[1] for call in initial}, {"Sugar And Spice"})
+
     def test_initial_provider_requests_overlap_for_metadata_and_covers(self):
         """A barrier must admit every provider before any initial call completes."""
         providers = ["google_books", "goodreads", "open_library"]
