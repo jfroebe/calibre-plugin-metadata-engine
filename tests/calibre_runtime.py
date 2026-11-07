@@ -69,11 +69,11 @@ class InstalledPluginTests(unittest.TestCase):
         authors = ["Eli Wray"]
         asin = "B08JCS4TNZ"
         book = {
-            "title": "Sugar and Spice",
+            "title": "Sugar and Spice (A Very Enby Christmas #1)",
             "authors": authors,
             "source": "goodreads",
             "source_id": "55386622",
-            "series": [{"name": "A Very Enby Christmas", "position": 1}],
+            "series": [],
             "description": "Mason tries baking cookies for Natalie.",
             "genres": ["Romance", "Queer", "Holiday"],
         }
