@@ -219,6 +219,35 @@ class InstalledPluginTests(unittest.TestCase):
             metadata.comments, "Time has passed. Goodreads is mentioned in prose."
         )
 
+    def test_catalog_tag_periods_are_removed_before_deduplication(self):
+        """Keep one clean tag for each subject while retaining internal periods."""
+        row = {
+            "title": "Herbs & Spices",
+            "genres": ["Cookbooks.", "Spices.", "Herbs.", "Herb Gardening."],
+            "tags": [
+                "cookbooks",
+                "Spices",
+                "Herbs",
+                "Herb Gardening",
+                "Cooking (Spices)",
+                "U.S. Cooking.",
+                "Open-Library.",
+                ".",
+            ],
+        }
+        metadata = self.plugin._to_metadata(row, 0)
+        self.assertEqual(
+            metadata.tags,
+            [
+                "Cookbooks",
+                "Spices",
+                "Herbs",
+                "Herb Gardening",
+                "Cooking (Spices)",
+                "U.S. Cooking",
+            ],
+        )
+
     def test_catalog_classifications_are_not_calibre_tags(self):
         """Drop format and maturity markers even from cached provider rows."""
         row = {
