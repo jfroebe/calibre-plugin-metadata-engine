@@ -28,7 +28,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 35)
+    version = (1, 1, 36)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -333,6 +333,8 @@ class MetadataEngineSource(Source):
                 return confirmed, confirmed and has_synopsis, confidence
 
             rows.sort(key=rank, reverse=True)
+            if rows and isbn and rank(rows[0])[0] and not abort.is_set():
+                self._recover_book_subjects(log, rows[0], isbn, timeout)
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
 
             for relevance, row in enumerate(rows[:maximum]):
@@ -346,6 +348,28 @@ class MetadataEngineSource(Source):
         except Exception as exc:
             log.exception("Metadata Engine identify failed")
             return "Metadata Engine identify failed: %s" % exc
+
+    def _recover_book_subjects(self, log, row, isbn, timeout):
+        """Fill empty tags from a verified edition without replacing other fields."""
+        if self._to_metadata(row, 0).tags:
+            return
+        try:
+            donors = self._search(
+                "tertulia_subjects",
+                row["title"],
+                self._list(row.get("authors")),
+                {"isbn": isbn},
+                min(timeout, 5),
+            )
+        except Exception as exc:
+            log.info(f"Metadata Engine subject lookup unavailable: {exc}")
+            return
+        for donor in donors:
+            if self._same_edition(row, donor):
+                tags = self._list(donor.get("tags"))
+                row["tags"] = self._list(row.get("tags")) + tags
+        if not self._to_metadata(row, 0).tags:
+            log.info("Metadata Engine found no catalog subjects for the matching ISBN")
 
     def _matches_requested(self, row, title, authors, identifiers):
         """Reject ID matches that contradict the requested title or contributors."""
@@ -1584,7 +1608,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.35",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.36",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

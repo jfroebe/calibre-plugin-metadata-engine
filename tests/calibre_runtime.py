@@ -219,6 +219,42 @@ class InstalledPluginTests(unittest.TestCase):
             metadata.comments, "Time has passed. Goodreads is mentioned in prose."
         )
 
+    def test_missing_subjects_are_filled_without_replacing_comments(self):
+        """Use only the matching ISBN's catalog subjects in Calibre."""
+        title = "The Naughty Couple's Bucket List"
+        isbn = "9798887680118"
+        authors = ["Nicole Jones"]
+        row = {
+            "title": title,
+            "isbn": isbn,
+            "authors": authors,
+            "description": "Existing synopsis",
+            "source": "google_books",
+            "confidence": 0.99,
+        }
+
+        def search(provider, *args, **kwargs):
+            if provider == "google_books":
+                return [dict(row)]
+            return [
+                dict(row, isbn="9781452163857", tags=["Wrong edition"]),
+                dict(row, tags=["Sexuality", "Sacred Sexuality", "Sexual Instruction"]),
+            ]
+
+        self.plugin.prefs["plugin_ids"] = "google_books"
+        with patch.object(self.plugin, "_search", side_effect=search) as lookup:
+            result = self.identify(
+                title=title, authors=authors, identifiers={"isbn": isbn}
+            )
+        self.assertEqual(
+            [call.args[0] for call in lookup.call_args_list],
+            ["google_books", "tertulia_subjects"],
+        )
+        self.assertEqual(result[0].comments, "Existing synopsis")
+        self.assertEqual(
+            result[0].tags, ["Sexuality", "Sacred Sexuality", "Sexual Instruction"]
+        )
+
     def test_catalog_tag_periods_are_removed_before_deduplication(self):
         """Split subject paths, discard terminal periods, and deduplicate."""
         row = {
