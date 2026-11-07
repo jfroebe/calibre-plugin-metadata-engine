@@ -1408,9 +1408,15 @@ class MetadataEngineSource(Source):
         tags = self._list(row.get("genres")) + self._list(row.get("tags"))
         unique_tags = []
         seen_tags = set()
-        for tag in tags:
-            # Catalog subject headings often carry terminal punctuation.
-            tag = tag.rstrip(".").rstrip()
+        # Split catalog subject paths before normalizing individual tags.
+        subjects = (
+            part
+            for tag in tags
+            if not re.match(r"https?://", tag, re.IGNORECASE)
+            for part in tag.split("/")
+        )
+        for tag in subjects:
+            tag = tag.strip().rstrip(".").rstrip()
             if not tag:
                 continue
             if normalize_label(tag) in excluded or tag.casefold().strip().startswith(

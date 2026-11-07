@@ -220,7 +220,7 @@ class InstalledPluginTests(unittest.TestCase):
         )
 
     def test_catalog_tag_periods_are_removed_before_deduplication(self):
-        """Keep one clean tag for each subject while retaining internal periods."""
+        """Split subject paths, discard terminal periods, and deduplicate."""
         row = {
             "title": "Herbs & Spices",
             "genres": ["Cookbooks.", "Spices.", "Herbs.", "Herb Gardening."],
@@ -231,6 +231,10 @@ class InstalledPluginTests(unittest.TestCase):
                 "Herb Gardening",
                 "Cooking (Spices)",
                 "U.S. Cooking.",
+                "Cooking",
+                "COOKING / Reference. / Herbs",
+                "GARDENING / Herbs",
+                "https://archive.org/subject/example",
                 "Open-Library.",
                 ".",
             ],
@@ -245,6 +249,9 @@ class InstalledPluginTests(unittest.TestCase):
                 "Herb Gardening",
                 "Cooking (Spices)",
                 "U.S. Cooking",
+                "Cooking",
+                "Reference",
+                "GARDENING",
             ],
         )
 
