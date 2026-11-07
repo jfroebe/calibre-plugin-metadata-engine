@@ -28,7 +28,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 34)
+    version = (1, 1, 35)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1408,7 +1408,17 @@ class MetadataEngineSource(Source):
         tags = self._list(row.get("genres")) + self._list(row.get("tags"))
         unique_tags = []
         seen_tags = set()
-        for tag in tags:
+        # Split catalog subject paths before normalizing individual tags.
+        subjects = (
+            part
+            for tag in tags
+            if not re.match(r"https?://", tag, re.IGNORECASE)
+            for part in tag.split("/")
+        )
+        for tag in subjects:
+            tag = tag.strip().rstrip(".").rstrip()
+            if not tag:
+                continue
             if normalize_label(tag) in excluded or tag.casefold().strip().startswith(
                 "metadata-engine:"
             ):
@@ -1574,7 +1584,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.34",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.35",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
