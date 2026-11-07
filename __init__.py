@@ -28,7 +28,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 35)
+    version = (1, 1, 36)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -333,6 +333,8 @@ class MetadataEngineSource(Source):
                 return confirmed, confirmed and has_synopsis, confidence
 
             rows.sort(key=rank, reverse=True)
+            if rows and isbn and rank(rows[0])[0] and not abort.is_set():
+                self._recover_book_subjects(log, rows[0], isbn, timeout)
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
 
             for relevance, row in enumerate(rows[:maximum]):
@@ -346,6 +348,28 @@ class MetadataEngineSource(Source):
         except Exception as exc:
             log.exception("Metadata Engine identify failed")
             return "Metadata Engine identify failed: %s" % exc
+
+    def _recover_book_subjects(self, log, row, isbn, timeout):
+        """Fill empty tags from a verified edition without replacing other fields."""
+        if self._to_metadata(row, 0).tags:
+            return
+        try:
+            donors = self._search(
+                "tertulia_subjects",
+                row["title"],
+                self._list(row.get("authors")),
+                {"isbn": isbn},
+                min(timeout, 5),
+            )
+        except Exception as exc:
+            log.info(f"Metadata Engine subject lookup unavailable: {exc}")
+            return
+        for donor in donors:
+            if self._same_edition(row, donor):
+                tags = self._list(donor.get("tags"))
+                row["tags"] = self._list(row.get("tags")) + tags
+        if not self._to_metadata(row, 0).tags:
+            log.info("Metadata Engine found no catalog subjects for the matching ISBN")
 
     def _matches_requested(self, row, title, authors, identifiers):
         """Reject ID matches that contradict the requested title or contributors."""
@@ -1510,18 +1534,44 @@ class MetadataEngineSource(Source):
                 extras.append("Duration: %dh %02dm" % (hours, minutes))
             except Exception:
                 pass
-        for field, label in (
-            ("trigger_warnings", "Trigger warnings"),
-            ("parental_warnings", "Parental warnings"),
-        ):
-            warnings = self._list(row.get(field))
-            existing = (mi.comments or "").casefold()
-            missing = [value for value in warnings if value.casefold() not in existing]
-            if missing:
-                extras.append(label + ": " + "; ".join(dict.fromkeys(missing)))
+        warnings = self._list(row.get("parental_warnings"))
+        existing = (mi.comments or "").casefold()
+        missing = [value for value in warnings if value.casefold() not in existing]
+        if missing:
+            extras.append("Parental warnings: " + "; ".join(dict.fromkeys(missing)))
         if extras:
             mi.comments = (mi.comments or "") + "\n\n" + "\n".join(extras)
+        mi.comments = self._with_trigger_warnings(
+            mi.comments, self._list(row.get("trigger_warnings"))
+        )
         return mi
+
+    @staticmethod
+    def _with_trigger_warnings(comments, warnings):
+        """Prefix verified warnings as a separate paragraph in either comment format."""
+        if not warnings:
+            return comments
+        body = (comments or "").lstrip()
+        is_html = body.startswith("<")
+        if is_html:
+            pattern = r"<p>\s*trigger warnings:\s*([^<]+)</p>\s*"
+        else:
+            pattern = r"trigger warnings:[ \t]*([^\r\n]+)(?:\r?\n|$)\s*"
+        header = re.match(pattern, body, re.IGNORECASE)
+        if header:
+            warnings = re.split(r"[,;]", unescape(header[1])) + warnings
+            body = body[header.end() :]
+        unique = {}
+        for warning in warnings:
+            label = warning.strip()
+            if label:
+                unique.setdefault(label.casefold(), label)
+        if not unique:
+            return comments
+        line = "trigger warnings: " + ", ".join(unique.values())
+        if is_html:
+            return f"<p>{escape(line)}</p>{body}"
+        return f"{line}\n\n{body}" if body else line
 
     def _remember_cover(self, row):
         url = self._text(row.get("cover_url"))
@@ -1584,7 +1634,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.35",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.36",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

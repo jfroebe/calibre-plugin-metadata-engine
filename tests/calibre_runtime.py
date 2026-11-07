@@ -219,6 +219,42 @@ class InstalledPluginTests(unittest.TestCase):
             metadata.comments, "Time has passed. Goodreads is mentioned in prose."
         )
 
+    def test_missing_subjects_are_filled_without_replacing_comments(self):
+        """Use only the matching ISBN's catalog subjects in Calibre."""
+        title = "The Naughty Couple's Bucket List"
+        isbn = "9798887680118"
+        authors = ["Nicole Jones"]
+        row = {
+            "title": title,
+            "isbn": isbn,
+            "authors": authors,
+            "description": "Existing synopsis",
+            "source": "google_books",
+            "confidence": 0.99,
+        }
+
+        def search(provider, *args, **kwargs):
+            if provider == "google_books":
+                return [dict(row)]
+            return [
+                dict(row, isbn="9781452163857", tags=["Wrong edition"]),
+                dict(row, tags=["Sexuality", "Sacred Sexuality", "Sexual Instruction"]),
+            ]
+
+        self.plugin.prefs["plugin_ids"] = "google_books"
+        with patch.object(self.plugin, "_search", side_effect=search) as lookup:
+            result = self.identify(
+                title=title, authors=authors, identifiers={"isbn": isbn}
+            )
+        self.assertEqual(
+            [call.args[0] for call in lookup.call_args_list],
+            ["google_books", "tertulia_subjects"],
+        )
+        self.assertEqual(result[0].comments, "Existing synopsis")
+        self.assertEqual(
+            result[0].tags, ["Sexuality", "Sacred Sexuality", "Sexual Instruction"]
+        )
+
     def test_catalog_tag_periods_are_removed_before_deduplication(self):
         """Split subject paths, discard terminal periods, and deduplicate."""
         row = {
@@ -1950,16 +1986,28 @@ class InstalledPluginTests(unittest.TestCase):
         merged = self.plugin._dedupe([book, warning, wrong])
         metadata = self.plugin._to_metadata(merged[0], 0)
         self.assertIn("Book synopsis.", metadata.comments)
-        self.assertIn("Trigger warnings: Violence; Abuse", metadata.comments)
+        self.assertTrue(
+            metadata.comments.startswith("trigger warnings: Violence, Abuse\n\n")
+        )
         self.assertIn("Parental warnings: Sexual content", metadata.comments)
         self.assertNotIn("Wrong book warning", metadata.comments)
         existing = dict(
             book,
-            description="Trigger warnings: Violence\\n\\nBook synopsis.",
+            description="Trigger warnings: Violence\n\nBook synopsis.",
             trigger_warnings=["Violence"],
         )
         self.assertEqual(
             self.plugin._to_metadata(existing, 0).comments.count("Violence"), 1
+        )
+
+    def test_trigger_warning_header_formats_html_and_omits_empty_labels(self):
+        """Keep comments intact and use a separate paragraph for HTML warnings."""
+        row = {"title": "Example", "description": "<p>Synopsis.</p>"}
+        self.assertEqual(self.plugin._to_metadata(row, 0).comments, row["description"])
+        row["trigger_warnings"] = ["Violence & Abuse", "violence & abuse"]
+        self.assertEqual(
+            self.plugin._to_metadata(row, 0).comments,
+            "<p>trigger warnings: Violence &amp; Abuse</p><p>Synopsis.</p>",
         )
 
     def test_known_wrong_edition_cover_is_not_used(self):
