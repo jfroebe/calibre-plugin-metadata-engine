@@ -1986,7 +1986,9 @@ class InstalledPluginTests(unittest.TestCase):
         merged = self.plugin._dedupe([book, warning, wrong])
         metadata = self.plugin._to_metadata(merged[0], 0)
         self.assertIn("Book synopsis.", metadata.comments)
-        self.assertIn("Trigger warnings: Violence; Abuse", metadata.comments)
+        self.assertTrue(
+            metadata.comments.startswith("trigger warnings: Violence, Abuse\n\n")
+        )
         self.assertIn("Parental warnings: Sexual content", metadata.comments)
         self.assertNotIn("Wrong book warning", metadata.comments)
         existing = dict(
@@ -1996,6 +1998,16 @@ class InstalledPluginTests(unittest.TestCase):
         )
         self.assertEqual(
             self.plugin._to_metadata(existing, 0).comments.count("Violence"), 1
+        )
+
+    def test_trigger_warning_header_formats_html_and_omits_empty_labels(self):
+        """Keep comments intact and use a separate paragraph for HTML warnings."""
+        row = {"title": "Example", "description": "<p>Synopsis.</p>"}
+        self.assertEqual(self.plugin._to_metadata(row, 0).comments, row["description"])
+        row["trigger_warnings"] = ["Violence & Abuse", "violence & abuse"]
+        self.assertEqual(
+            self.plugin._to_metadata(row, 0).comments,
+            "<p>trigger warnings: Violence &amp; Abuse</p><p>Synopsis.</p>",
         )
 
     def test_known_wrong_edition_cover_is_not_used(self):

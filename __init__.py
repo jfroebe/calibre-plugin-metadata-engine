@@ -1534,18 +1534,44 @@ class MetadataEngineSource(Source):
                 extras.append("Duration: %dh %02dm" % (hours, minutes))
             except Exception:
                 pass
-        for field, label in (
-            ("trigger_warnings", "Trigger warnings"),
-            ("parental_warnings", "Parental warnings"),
-        ):
-            warnings = self._list(row.get(field))
-            existing = (mi.comments or "").casefold()
-            missing = [value for value in warnings if value.casefold() not in existing]
-            if missing:
-                extras.append(label + ": " + "; ".join(dict.fromkeys(missing)))
+        warnings = self._list(row.get("parental_warnings"))
+        existing = (mi.comments or "").casefold()
+        missing = [value for value in warnings if value.casefold() not in existing]
+        if missing:
+            extras.append("Parental warnings: " + "; ".join(dict.fromkeys(missing)))
         if extras:
             mi.comments = (mi.comments or "") + "\n\n" + "\n".join(extras)
+        mi.comments = self._with_trigger_warnings(
+            mi.comments, self._list(row.get("trigger_warnings"))
+        )
         return mi
+
+    @staticmethod
+    def _with_trigger_warnings(comments, warnings):
+        """Prefix verified warnings as a separate paragraph in either comment format."""
+        if not warnings:
+            return comments
+        body = (comments or "").lstrip()
+        is_html = body.startswith("<")
+        if is_html:
+            pattern = r"<p>\s*trigger warnings:\s*([^<]+)</p>\s*"
+        else:
+            pattern = r"trigger warnings:[ \t]*([^\r\n]+)(?:\r?\n|$)\s*"
+        header = re.match(pattern, body, re.IGNORECASE)
+        if header:
+            warnings = re.split(r"[,;]", unescape(header[1])) + warnings
+            body = body[header.end() :]
+        unique = {}
+        for warning in warnings:
+            label = warning.strip()
+            if label:
+                unique.setdefault(label.casefold(), label)
+        if not unique:
+            return comments
+        line = "trigger warnings: " + ", ".join(unique.values())
+        if is_html:
+            return f"<p>{escape(line)}</p>{body}"
+        return f"{line}\n\n{body}" if body else line
 
     def _remember_cover(self, row):
         url = self._text(row.get("cover_url"))
