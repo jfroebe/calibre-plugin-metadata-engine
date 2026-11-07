@@ -74,7 +74,7 @@ class MetadataEngineSource(Source):
             "string",
             "",
             "Metadata Engine plugin IDs",
-            "Google Books is always checked. List additional provider IDs, or leave blank to discover enabled providers.",
+            "All enabled book providers are used. These IDs are a fallback if discovery is unavailable.",
         ),
         Option(
             "max_results",
