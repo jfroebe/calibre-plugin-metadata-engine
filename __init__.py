@@ -28,7 +28,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 32)
+    version = (1, 1, 33)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -74,7 +74,7 @@ class MetadataEngineSource(Source):
             "string",
             "",
             "Metadata Engine plugin IDs",
-            "Comma-separated provider IDs. Blank means discover all enabled providers.",
+            "Google Books is always checked. List additional provider IDs, or leave blank to discover enabled providers.",
         ),
         Option(
             "max_results",
@@ -146,9 +146,7 @@ class MetadataEngineSource(Source):
             )
 
         try:
-            provider_ids = self._configured_provider_ids() or self._discover(
-                timeout, abort
-            )
+            provider_ids = self._book_provider_ids(log, timeout, abort)
             rows = []
             retried_providers = set()
             for provider_id in provider_ids:
@@ -719,13 +717,7 @@ class MetadataEngineSource(Source):
 
         query = self._make_query(title, authors, identifiers)
         if query:
-            try:
-                provider_ids = self._configured_provider_ids() or self._discover(
-                    timeout, abort
-                )
-            except Exception as exc:
-                log.error("Metadata Engine provider discovery failed: %s", exc)
-                provider_ids = []
+            provider_ids = self._book_provider_ids(log, timeout, abort)
 
             rows = []
             for provider_id in provider_ids:
@@ -1033,6 +1025,17 @@ class MetadataEngineSource(Source):
                         exc,
                     )
         return recovered
+
+    def _book_provider_ids(self, log, timeout, abort):
+        """Check Google Books first through Metadata Engine's provider endpoint."""
+        try:
+            selected = self._configured_provider_ids()
+            if not selected:
+                selected = self._discover(timeout, abort)
+        except Exception as exc:
+            log.error("Metadata Engine provider discovery failed: %s", exc)
+            selected = []
+        return list(dict.fromkeys(["google_books", *selected]))
 
     def _discover(self, timeout, abort):
         if abort.is_set():
@@ -1544,7 +1547,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.32",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.33",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

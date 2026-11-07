@@ -569,6 +569,22 @@ class InstalledPluginTests(unittest.TestCase):
         ]
         self.assertEqual(searches[0]["isbn"], ["9780441013593"])
 
+    def test_google_books_is_checked_with_or_without_a_provider_list(self):
+        """Send one Google Books lookup through the engine even if omitted."""
+        isbn = "0711217564"
+        for configured in ("", "fixture", "fixture,google_books,google_books"):
+            with self.subTest(configured=configured):
+                self.plugin.prefs["plugin_ids"] = configured
+                self.requests.clear()
+                self.identify(title="The Spice Routes", identifiers={"isbn": isbn})
+                searches = [
+                    query
+                    for path, query in self.requests
+                    if path == "/plugins/google_books/search"
+                ]
+                self.assertEqual(len(searches), 1)
+                self.assertEqual(searches[0]["isbn"], [isbn])
+
     def test_failures_are_isolated(self):
         """404, 401 and invalid JSON must permit the next provider to succeed."""
         for failing in ("missing", "unauthorized", "malformed"):
@@ -1196,7 +1212,7 @@ class InstalledPluginTests(unittest.TestCase):
         self.plugin.prefs["plugin_ids"] = "hardcover"
 
         def lookup(provider, query, authors, identifiers, timeout, **kwargs):
-            if authors == ["B Writer"]:
+            if provider == "hardcover" and authors == ["B Writer"]:
                 return [
                     {
                         "source": "hardcover",
@@ -1216,7 +1232,11 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].comments, "Anthology synopsis")
         self.assertEqual(
-            [call.args[2] for call in search.call_args_list],
+            [
+                call.args[2]
+                for call in search.call_args_list
+                if call.args[0] == "hardcover"
+            ],
             [["A Writer", "B Writer", "C Writer"], None, ["A Writer"], ["B Writer"]],
         )
 

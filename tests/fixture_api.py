@@ -82,6 +82,8 @@ def serve():
                         {"plugin_id": "disabled", "enabled": False},
                     ]
                 }
+            elif path.path == "/plugins/google_books/search":
+                payload = {"results": []}
             elif path.path == "/plugins/specter/search":
                 payload = {"results": []}
                 if query.get("asin") == ["B08CK7H7P2"]:
