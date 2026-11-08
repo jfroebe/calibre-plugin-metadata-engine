@@ -68,10 +68,27 @@ def main():
             if plugin._canonical_isbn(row.get_identifiers().get("isbn"))
             == case["canonical_isbn"]
         ]
-        if not len(matching) == 1:
-            raise AssertionError("Expected one verified result for " + case["title"])
+        if len(matching) != 1:
+            raise AssertionError(
+                "Expected one verified result for "
+                + case["title"]
+                + "; got "
+                + repr(
+                    [
+                        (
+                            row.title,
+                            row.authors,
+                            row.tags,
+                            row.get_identifiers(),
+                            row.series,
+                            row.series_index,
+                        )
+                        for row in matching
+                    ]
+                )
+            )
         book = matching[0]
-        if not book.authors == case["expected_authors"]:
+        if book.authors != case["expected_authors"]:
             raise AssertionError(book.authors)
         description = plugin._usable_description(book.comments)
         if not (description and len(description) >= case["minimum_description"]):
@@ -83,13 +100,13 @@ def main():
         if case.get("warnings"):
             if "trigger warnings:" not in book.comments.casefold():
                 raise AssertionError(book.comments)
-            if not "warnings are available" not in book.comments.casefold():
+            if "warnings are available" in book.comments.casefold():
                 raise AssertionError("Live metadata requirement failed")
-            if not book.series == "Wicked Darlings":
+            if book.series != "Wicked Darlings":
                 raise AssertionError(book.series)
-            if not book.series_index == 1.0:
+            if book.series_index != 1.0:
                 raise AssertionError(book.series_index)
-        if not not any(
+        if any(
             tag.casefold() in {"archive.org", "inlibrary", "printdisabled", "work"}
             for tag in book.tags
         ):
