@@ -483,7 +483,7 @@ class MetadataEngineSource(Source):
         )
         if not needs_tags and not needs_warnings:
             return rows
-        query = self._search_title(candidate.get("title"))
+        query = self._search_title(candidate.get("title"), candidate.get("subtitle"))
         providers = [
             p
             for p in provider_ids
@@ -1739,7 +1739,7 @@ class MetadataEngineSource(Source):
         # Some books carry their series only in a trailing "Series Book N".
         # Keep a structured provider series authoritative when available.
         inferred_series = None
-        prefix = self._numbered_title_prefix(title)
+        prefix = self._numbered_title_prefix(title, row.get("subtitle"))
         if prefix and row.get("series"):
             name, position = self._series_identity(row)
             if name == prefix[0].casefold() and position == float(prefix[1]):
@@ -2182,10 +2182,10 @@ class MetadataEngineSource(Source):
         return [value] if value else []
 
     @classmethod
-    def _search_title(cls, value):
+    def _search_title(cls, value, subtitle=None):
         """Remove a numbered series suffix without changing provider query case."""
         title = cls._text(value) or ""
-        prefix = cls._numbered_title_prefix(title)
+        prefix = cls._numbered_title_prefix(title, subtitle)
         if prefix:
             title = prefix[2]
         match = re.fullmatch(
@@ -2196,11 +2196,12 @@ class MetadataEngineSource(Source):
         return match.group(1).strip() if match else title
 
     @classmethod
-    def _numbered_title_prefix(cls, value):
+    def _numbered_title_prefix(cls, value, subtitle=None):
         """Parse a possible series prefix; matching must corroborate its meaning."""
-        match = re.fullmatch(
-            r"(.+?)\s+(\d+(?:\.\d+)?)\s*:\s*(\S.*)", cls._text(value) or ""
-        )
+        value = cls._text(value) or ""
+        if ":" not in value and cls._text(subtitle):
+            value += ": " + cls._text(subtitle)
+        match = re.fullmatch(r"(.+?)\s+(\d+(?:\.\d+)?)\s*:\s*(\S.*)", value)
         return match.groups() if match else None
 
     @classmethod
@@ -2331,8 +2332,12 @@ class MetadataEngineSource(Source):
             return False
         left_isbn = cls._canonical_isbn(left.get("isbn"))
         right_isbn = cls._canonical_isbn(right.get("isbn"))
-        left_prefix = cls._numbered_title_prefix(left.get("title"))
-        right_prefix = cls._numbered_title_prefix(right.get("title"))
+        left_prefix = cls._numbered_title_prefix(
+            left.get("title"), left.get("subtitle")
+        )
+        right_prefix = cls._numbered_title_prefix(
+            right.get("title"), right.get("subtitle")
+        )
         if (
             left_prefix
             and right_prefix
@@ -2344,7 +2349,9 @@ class MetadataEngineSource(Source):
         ):
             return False
         for decorated, plain in ((left, right), (right, left)):
-            prefix = cls._numbered_title_prefix(decorated.get("title"))
+            prefix = cls._numbered_title_prefix(
+                decorated.get("title"), decorated.get("subtitle")
+            )
             if not prefix:
                 continue
             name, number, base = prefix
@@ -2363,9 +2370,10 @@ class MetadataEngineSource(Source):
                 cls._series_name_key(series) == name and position == float(number)
                 for series, position in evidence
             )
-            if corroborated and cls._work_titles_compatible(
-                dict(decorated, title=base), plain
-            ):
+            normalized = dict(decorated, title=base)
+            if not cls._numbered_title_prefix(decorated.get("title")):
+                normalized["subtitle"] = None
+            if corroborated and cls._work_titles_compatible(normalized, plain):
                 return True
         if left_isbn and left_isbn == right_isbn:
             left_title, left_edition = cls._edition_title_key(left_title)

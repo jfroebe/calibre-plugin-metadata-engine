@@ -695,7 +695,8 @@ class InstalledPluginTests(unittest.TestCase):
             "and in the front matter of the book."
         )
         sparse = dict(
-            title=title,
+            title="Wicked Darlings 1",
+            subtitle=base,
             authors=authors,
             isbn=isbn,
             description="A synopsis. " + referral,
@@ -714,6 +715,7 @@ class InstalledPluginTests(unittest.TestCase):
                     dict(
                         sparse,
                         title=base + ": A Nutcracker Romance Retelling",
+                        subtitle=None,
                         genres=[
                             "Fiction / Romance / Fantasy",
                             "Fiction / Romance / Holiday",
@@ -822,6 +824,26 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertTrue(self.plugin._merge_metadata(row, donor))
         self.assertNotIn("subtitle", row)
         self.assertTrue(self.plugin._identity_consistent(row, donor))
+
+    def test_separate_series_heading_and_book_subtitle_match_verified_edition(self):
+        """Recognize the provider's actual split of series heading and work title."""
+        row = dict(
+            title="Wicked Darlings 1",
+            subtitle="A Court of Sugar and Spice",
+            authors=["Rebecca F. Kenney"],
+            isbn="9798362685058",
+        )
+        donor = dict(
+            row,
+            title="A Court of Sugar and Spice",
+            subtitle="A Nutcracker Romance Retelling",
+            series=[{"name": "Wicked Darlings", "position": 1}],
+        )
+        self.assertTrue(self.plugin._merge_metadata(row, donor))
+        metadata = self.plugin._to_metadata(row, 0)
+        self.assertEqual(metadata.title, "A Court of Sugar and Spice")
+        self.assertEqual(metadata.series, "Wicked Darlings")
+        self.assertEqual(metadata.series_index, 1)
 
     def test_nameless_series_placeholder_does_not_block_prefix_enrichment(self):
         """Ignore default series positions when the provider supplies no series name."""
