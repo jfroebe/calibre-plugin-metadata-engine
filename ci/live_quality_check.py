@@ -80,6 +80,7 @@ def main():
             "canonical_isbn": "9798362685058",
             "expected_authors": ["Rebecca F. Kenney"],
             "minimum_description": 500,
+            "expected_subjects": {"fantasy", "romance"},
             "topic": "nutcracker",
             "warnings": True,
         },
@@ -90,6 +91,7 @@ def main():
             "canonical_isbn": "9780732911515",
             "expected_authors": ["Ian Rupert Hemphill"],
             "minimum_description": 80,
+            "expected_subjects": {"spice trade", "condiments"},
             "topic": "spice",
         },
         {
@@ -99,6 +101,7 @@ def main():
             "canonical_isbn": "9781558328365",
             "expected_authors": ["Cheryl Alters Jamison", "Bill Jamison"],
             "minimum_description": 600,
+            "expected_subjects": {"cooking", "cookbooks"},
             "topic": "barbecue",
         },
     ]
@@ -150,11 +153,17 @@ def main():
             raise AssertionError("Synopsis has the wrong subject")
         if not book.tags:
             raise AssertionError("Missing final subject tags")
+        subjects = {tag.casefold() for tag in book.tags}
+        if not case["expected_subjects"].intersection(subjects):
+            raise AssertionError("No relevant subjects for " + case["title"])
         if case.get("warnings"):
             if "trigger warnings:" not in book.comments.casefold():
                 raise AssertionError(book.comments)
-            if "warnings are available" in book.comments.casefold():
+            if plugin._warning_referral(book.comments):
                 raise AssertionError("Live metadata requirement failed")
+            labels = book.comments.splitlines()[0].partition(":")[2].strip()
+            if not labels or not any(label.isalpha() for label in labels):
+                raise AssertionError("Missing actual warning labels")
             if book.series != "Wicked Darlings":
                 raise AssertionError(book.series)
             if book.series_index != 1.0:

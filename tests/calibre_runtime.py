@@ -11,6 +11,8 @@ import subprocess
 import sys
 import unittest
 import urllib.request
+from copy import deepcopy
+from itertools import permutations
 from pathlib import Path
 from queue import Queue
 from threading import Barrier, Event
@@ -861,6 +863,70 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(
             enriched["series"], [{"name": "Wicked Darlings", "position": 1.0}]
         )
+
+    def test_source_shape_order_preserves_complete_final_metadata(self):
+        """Keep split titles, blank series placeholders and donors order independent."""
+        title = "Wicked Darlings 1: A Court of Sugar and Spice"
+        authors = ["Rebecca F. Kenney"]
+        isbn = "9798362685058"
+        referral = "Content warnings are available on the author's website."
+        rows = [
+            {
+                "source": "isbnlab",
+                "title": "Wicked Darlings 1",
+                "subtitle": "A Court of Sugar and Spice",
+                "authors": authors,
+                "isbn": isbn,
+                "series": [{"name": None, "position": 0}],
+                "description": "A Nutcracker romance. " + referral,
+            },
+            {
+                "source": "google_books",
+                "title": "A Court of Sugar and Spice",
+                "subtitle": "A Nutcracker Romance Retelling",
+                "authors": ["Rebecca F Kenney"],
+                "isbn": isbn,
+                "genres": ["Fiction / Romance / Fantasy"],
+            },
+            {
+                "source": "goodreads",
+                "title": "A Court of Sugar and Spice (Wicked Darlings #1)",
+                "authors": authors,
+                "isbn": isbn,
+                "content_warnings": ["Violence", "Blood"],
+            },
+        ]
+        for ordered in permutations(rows):
+            with self.subTest(sources=[row["source"] for row in ordered]):
+                enriched = [
+                    self.plugin._with_requested_series(
+                        row, title, authors, {"isbn": isbn}
+                    )
+                    for row in deepcopy(ordered)
+                ]
+                # All fields are supplied by compatible initial records. A
+                # second network batch must not be needed to repair ordering.
+                with patch.object(self.plugin, "_initial_provider_batch") as retry:
+                    recovered = self.plugin._recover_supplements(
+                        self.log,
+                        self.abort,
+                        [],
+                        enriched,
+                        title,
+                        authors,
+                        {"isbn": isbn},
+                        5,
+                    )
+                retry.assert_not_called()
+                final = self.plugin._dedupe(recovered)
+                self.assertEqual(len(final), 1)
+                book = self.plugin._to_metadata(final[0], 0)
+                self.assertEqual(book.series, "Wicked Darlings")
+                self.assertEqual(book.series_index, 1.0)
+                self.assertIn("Fantasy", book.tags)
+                self.assertIn("Violence", book.comments)
+                self.assertIn("Blood", book.comments)
+                self.assertIsNone(self.plugin._warning_referral(book.comments))
 
     def test_catalog_tag_periods_are_removed_before_deduplication(self):
         """Split subject paths, discard terminal periods, and deduplicate."""
