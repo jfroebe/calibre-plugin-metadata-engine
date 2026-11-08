@@ -868,6 +868,19 @@ class MetadataEngineSource(Source):
                                     "Metadata Engine: description supplied by provider=%r",
                                     provider_id,
                                 )
+                        elif has_description(donor):
+                            reason = (
+                                "conflicting identifiers"
+                                if not self._compatible_identifiers(winner, donor)
+                                else "title or explicit edition conflict"
+                                if not self._work_titles_compatible(winner, donor)
+                                else "contributor, series or edition evidence conflict"
+                            )
+                            _log(
+                                log, "info",
+                                "Metadata Engine: rejected description provider=%s reason=%s isbn=%s",
+                                provider_id, reason, donor.get("isbn"),
+                            )
                 if not any(
                     requested_match(row) and not has_description(row)
                     for row in self._dedupe(rows)
@@ -2479,6 +2492,23 @@ class MetadataEngineSource(Source):
             winner["extra"] = winner_extra
 
         if edition:
+            people = cls._list(winner.get("authors"))
+            for person in cls._list(donor.get("authors")):
+                matching = next(
+                    (
+                        index for index, current_person in enumerate(people)
+                        if cls._author_words_match(
+                            cls._author_words(current_person), cls._author_words(person)
+                        )
+                    ),
+                    None,
+                )
+                if matching is None:
+                    people.append(cls._canonical_author_name(person))
+                elif len(cls._author_words(person)) > len(cls._author_words(people[matching])):
+                    people[matching] = cls._canonical_author_name(person)
+            if people:
+                winner["authors"] = people
             if not winner.get("subtitle") and ":" not in str(winner.get("title") or ""):
                 parts = re.split(r"\s*:\s*", str(donor.get("title") or ""), maxsplit=1)
                 if len(parts) == 2:
