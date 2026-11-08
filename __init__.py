@@ -2788,7 +2788,9 @@ class MetadataEngineSource(Source):
             if people:
                 winner["authors"] = people
             if not winner.get("subtitle") and ":" not in str(winner.get("title") or ""):
-                parts = re.split(r"\s*:\s*", str(donor.get("title") or ""), maxsplit=1)
+                parts = re.split(
+                    r"\s*:\s*", cls._search_title(donor.get("title")), maxsplit=1
+                )
                 if len(parts) == 2:
                     winner["subtitle"] = parts[1].strip()
             for field in (

@@ -807,6 +807,22 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertTrue(book.comments.endswith("A synopsis."))
         self.assertNotIn("TW/CW", book.comments)
 
+    def test_series_prefix_donor_cannot_become_a_catalog_subtitle(self):
+        """Keep prefix decoration from poisoning a same-edition title identity."""
+        row = dict(
+            title="A Court of Sugar and Spice",
+            authors=["Rebecca F. Kenney"],
+            isbn="9798362685058",
+        )
+        donor = dict(
+            row,
+            title="Wicked Darlings 1: A Court of Sugar and Spice",
+            series=[{"name": "Wicked Darlings", "position": 1}],
+        )
+        self.assertTrue(self.plugin._merge_metadata(row, donor))
+        self.assertNotIn("subtitle", row)
+        self.assertTrue(self.plugin._identity_consistent(row, donor))
+
     def test_catalog_tag_periods_are_removed_before_deduplication(self):
         """Split subject paths, discard terminal periods, and deduplicate."""
         row = {
