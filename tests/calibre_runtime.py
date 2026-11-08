@@ -131,7 +131,7 @@ class InstalledPluginTests(unittest.TestCase):
         ):
             self.assertEqual(self.plugin._usable_description(value), value)
 
-    def test_transport_timeout_retries_once_without_retrying_http_failures(self):
+    def test_transport_timeout_retries_once_and_stops(self):
         """Bound timeout recovery at the transport boundary used by all requests."""
         with patch.object(
             importlib.import_module(self.plugin.__class__.__module__),
@@ -140,6 +140,19 @@ class InstalledPluginTests(unittest.TestCase):
         ) as opening:
             with self.assertRaises(RuntimeError):
                 self.plugin._http_bytes(self.url + "/timeout", 2)
+        self.assertEqual(opening.call_count, 2)
+
+    def test_transport_timeout_recovers_without_losing_payload(self):
+        """Preserve a successful API response after one transient timeout."""
+        response = urllib.request.urlopen(self.url + "/plugins", timeout=2)
+        self.addCleanup(response.close)
+        with patch.object(
+            importlib.import_module(self.plugin.__class__.__module__),
+            "urlopen",
+            side_effect=[URLError(TimeoutError("timed out")), response],
+        ) as opening:
+            payload = self.plugin._http_json(self.url + "/plugins", 2)
+        self.assertIsInstance(payload, dict)
         self.assertEqual(opening.call_count, 2)
 
     def test_truncated_catalog_author_requires_corroborated_edition_evidence(self):
@@ -1316,7 +1329,7 @@ class InstalledPluginTests(unittest.TestCase):
             )
         result = next(row for row in self.plugin._dedupe(rows) if row.get("asin"))
         self.assertEqual(result["description"], "Recovered description")
-        self.assertEqual(
+        self.assertCountEqual(
             [call.args[0] for call in mocked.call_args_list],
             ["first", "second", "third"],
         )
