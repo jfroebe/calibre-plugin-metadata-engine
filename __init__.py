@@ -176,7 +176,11 @@ class MetadataEngineSource(Source):
                         if provider_id == "goodreads" and not found and title:
                             short_title = self._search_title(title)
                             if short_title != query.strip():
-                                _log(log, "info", "Retrying Goodreads with a shortened title")
+                                _log(
+                                    log,
+                                    "info",
+                                    "Retrying Goodreads with a shortened title",
+                                )
                                 found = self._search(
                                     provider_id, short_title, None, {}, timeout
                                 )
@@ -221,7 +225,9 @@ class MetadataEngineSource(Source):
                                     for item in retry
                                     if self._work_description_matches(target, item)
                                 ]
-                                _log(log, "info", 
+                                _log(
+                                    log,
+                                    "info",
                                     "Metadata Engine: contributor search provider=%s candidates=%d matches=%d",
                                     provider_id,
                                     len(retry),
@@ -237,15 +243,21 @@ class MetadataEngineSource(Source):
                                 )
                                 for row in found
                             )
-                            _log(log, "info", 
+                            _log(
+                                log,
+                                "info",
                                 "Metadata Engine Google Books: candidates=%d matching=%d",
                                 len(found),
                                 matches,
                             )
                         rows.extend(found)
                     except Exception as exc:
-                        _log(log, "error", 
-                            "Metadata Engine provider %r failed: %s", provider_id, exc
+                        _log(
+                            log,
+                            "error",
+                            "Metadata Engine provider %r failed: %s",
+                            provider_id,
+                            exc,
                         )
 
             authors = self._recover_incomplete_author(
@@ -292,7 +304,9 @@ class MetadataEngineSource(Source):
                             and self._compatible_identifiers(row, witness)
                         ):
                             row["authors"] = self._list(authors)
-                            _log(log, "info", 
+                            _log(
+                                log,
+                                "info",
                                 "Metadata Engine: corroborated missing contributors using provider=%s",
                                 witness.get("source"),
                             )
@@ -336,8 +350,10 @@ class MetadataEngineSource(Source):
             ]
             rejected = len(rows) - len(compatible)
             if rejected:
-                _log(log, "info", 
-                    f"Metadata Engine rejected {rejected} conflicting title/author results"
+                _log(
+                    log,
+                    "info",
+                    f"Metadata Engine rejected {rejected} conflicting title/author results",
                 )
             rows = compatible
 
@@ -373,10 +389,12 @@ class MetadataEngineSource(Source):
                         if not mi.tags:
                             missing.append("tags")
                         if missing:
-                            _log(log, "warning", 
+                            _log(
+                                log,
+                                "warning",
                                 "Metadata Engine incomplete matching result: "
                                 + ", ".join(missing)
-                                + f"; source={row.get('source')}"
+                                + f"; source={row.get('source')}",
                             )
                     self.clean_downloaded_metadata(mi)
                     result_queue.put(mi)
@@ -405,7 +423,11 @@ class MetadataEngineSource(Source):
                 tags = self._list(donor.get("tags"))
                 row["tags"] = self._list(row.get("tags")) + tags
         if not self._to_metadata(row, 0).tags:
-            _log(log, "info", "Metadata Engine found no catalog subjects for the matching ISBN")
+            _log(
+                log,
+                "info",
+                "Metadata Engine found no catalog subjects for the matching ISBN",
+            )
 
     @staticmethod
     def _canonical_author_name(name):
@@ -492,9 +514,11 @@ class MetadataEngineSource(Source):
             ]
             if witnesses:
                 corrected = self._canonical_author_name(person)
-                _log(log, "info", 
+                _log(
+                    log,
+                    "info",
                     f"Metadata Engine recovered incomplete author {people[0]!r} "
-                    f"as {corrected!r} using corroborated ISBN {isbn}"
+                    f"as {corrected!r} using corroborated ISBN {isbn}",
                 )
                 return [corrected]
         return authors
@@ -687,7 +711,9 @@ class MetadataEngineSource(Source):
                 if not value or not re.fullmatch(patterns[kind], value):
                     continue
                 if kind == "isbn" and not self._canonical_isbn(value):
-                    _log(log, "warning", 
+                    _log(
+                        log,
+                        "warning",
                         "Metadata Engine: ignoring invalid ISBN from provider=%s",
                         row.get("source"),
                     )
@@ -705,7 +731,9 @@ class MetadataEngineSource(Source):
         # Freeze initial seeds. Results from these lookups never generate more
         # lookups; four IDs and each compatible provider/ID pair are the limit.
         if len(seeds) > 4:
-            _log(log, "warning", 
+            _log(
+                log,
+                "warning",
                 "Metadata Engine: identifier follow-up limited to 4 of %d discovered IDs",
                 len(seeds),
             )
@@ -728,8 +756,10 @@ class MetadataEngineSource(Source):
                 if pair in visited:
                     continue
                 if len(visited) >= 12:
-                    _log(log, "warning", 
-                        "Metadata Engine: identifier follow-up stopped at 12 requests"
+                    _log(
+                        log,
+                        "warning",
+                        "Metadata Engine: identifier follow-up stopped at 12 requests",
                     )
                     return rows
                 visited.add(pair)
@@ -772,7 +802,9 @@ class MetadataEngineSource(Source):
                             not self._compatible_identifiers(anchor, candidate)
                             or not self._identity_consistent(anchor, candidate)
                         ):
-                            _log(log, "warning", 
+                            _log(
+                                log,
+                                "warning",
                                 "Metadata Engine: rejected conflicting identity evidence provider=%s kind=%s",
                                 provider,
                                 kind,
@@ -780,14 +812,18 @@ class MetadataEngineSource(Source):
                             continue
                         accepted.append(candidate)
                     rows.extend(accepted)
-                    _log(log, "info", 
+                    _log(
+                        log,
+                        "info",
                         "Metadata Engine: identifier follow-up provider=%s kind=%s accepted=%d",
                         provider,
                         kind,
                         len(accepted),
                     )
                 except Exception as exc:
-                    _log(log, "error", 
+                    _log(
+                        log,
+                        "error",
                         "Metadata Engine identifier follow-up provider %s kind %s failed: %s",
                         provider,
                         kind,
@@ -823,13 +859,17 @@ class MetadataEngineSource(Source):
         candidate = missing[0]
         short_title = self._search_title(candidate.get("title"))
         if not short_title or not self._list(candidate.get("authors")):
-            _log(log, "warning", 
-                "Metadata Engine: matching result has no description; insufficient title or author data for recovery"
+            _log(
+                log,
+                "warning",
+                "Metadata Engine: matching result has no description; insufficient title or author data for recovery",
             )
             return rows
 
-        _log(log, "info", 
-            "Metadata Engine: matching result has no description; trying configured sources"
+        _log(
+            log,
+            "info",
+            "Metadata Engine: matching result has no description; trying configured sources",
         )
         retry_ids = [
             provider
@@ -852,7 +892,9 @@ class MetadataEngineSource(Source):
                 found, error = retry_batch[(provider_id, mode)]
                 if error is not None:
                     raise error
-                _log(log, "info", 
+                _log(
+                    log,
+                    "info",
                     "Metadata Engine: description retry provider=%r candidates=%d",
                     provider_id,
                     len(found),
@@ -864,7 +906,9 @@ class MetadataEngineSource(Source):
                         before = has_description(winner)
                         if self._merge_metadata(winner, donor):
                             if not before and has_description(winner):
-                                _log(log, "info", 
+                                _log(
+                                    log,
+                                    "info",
                                     "Metadata Engine: description supplied by provider=%r",
                                     provider_id,
                                 )
@@ -877,9 +921,12 @@ class MetadataEngineSource(Source):
                                 else "contributor, series or edition evidence conflict"
                             )
                             _log(
-                                log, "info",
+                                log,
+                                "info",
                                 "Metadata Engine: rejected description provider=%s reason=%s isbn=%s",
-                                provider_id, reason, donor.get("isbn"),
+                                provider_id,
+                                reason,
+                                donor.get("isbn"),
                             )
                 if not any(
                     requested_match(row) and not has_description(row)
@@ -888,13 +935,17 @@ class MetadataEngineSource(Source):
                     _log(log, "info", "Metadata Engine: matching description recovered")
                     return rows
             except Exception as exc:
-                _log(log, "error", 
+                _log(
+                    log,
+                    "error",
                     "Metadata Engine description retry provider %r failed: %s",
                     provider_id,
                     exc,
                 )
-        _log(log, "warning", 
-            "Metadata Engine: matching result remains without a description after configured sources"
+        _log(
+            log,
+            "warning",
+            "Metadata Engine: matching result remains without a description after configured sources",
         )
         return rows
 
@@ -983,7 +1034,9 @@ class MetadataEngineSource(Source):
                                     {"title": title, "authors": authors}, item
                                 )
                             ]
-                            _log(log, "info", 
+                            _log(
+                                log,
+                                "info",
                                 "Metadata Engine cover retry provider=%s candidates=%d matches=%d",
                                 provider_id,
                                 len(retry),
@@ -997,7 +1050,9 @@ class MetadataEngineSource(Source):
                         1 for row in provider_rows if row.get("cover_url")
                     )
                     if cover_count:
-                        _log(log, "info", 
+                        _log(
+                            log,
+                            "info",
                             "Metadata Engine provider %r returned %d cover candidate(s)",
                             provider_id,
                             cover_count,
@@ -1006,7 +1061,9 @@ class MetadataEngineSource(Source):
                     # A cover lookup is an aggregate provider operation. One provider
                     # failing (for example NYT returning 502) must not suppress covers
                     # returned by Open Library, Google Books, Hardcover, etc.
-                    _log(log, "error", 
+                    _log(
+                        log,
+                        "error",
                         "Metadata Engine cover provider %r failed: %s",
                         provider_id,
                         exc,
@@ -1041,7 +1098,9 @@ class MetadataEngineSource(Source):
                     rejected_identity += 1
                     continue
                 eligible.append(row)
-            _log(log, "info", 
+            _log(
+                log,
+                "info",
                 "Metadata Engine cover: records=%d missing_cover=%d rejected_identity=%d eligible=%d",
                 len(rows),
                 missing_cover,
@@ -1098,7 +1157,9 @@ class MetadataEngineSource(Source):
                             data,
                         )
                     )
-                    _log(log, "info", 
+                    _log(
+                        log,
+                        "info",
                         "Metadata Engine cover candidate source=%s size=%dx%d identifier_score=%d",
                         self._text(row.get("source")) or "unknown",
                         image.width(),
@@ -1108,7 +1169,9 @@ class MetadataEngineSource(Source):
                     # Keep the original as fallback if an enlarged URL fails.
                     break
                 except Exception as exc:
-                    _log(log, "error", 
+                    _log(
+                        log,
+                        "error",
                         "Metadata Engine cover candidate failed source=%r url=%s error=%s",
                         row.get("source"),
                         candidate_url,
@@ -1127,8 +1190,11 @@ class MetadataEngineSource(Source):
             return None
 
         if candidates:
-            _log(log, "error", 
-                "Metadata Engine exhausted %d cover candidate(s)", len(candidates)
+            _log(
+                log,
+                "error",
+                "Metadata Engine exhausted %d cover candidate(s)",
+                len(candidates),
             )
         else:
             _log(log, "error", "Metadata Engine returned no cover candidates")
@@ -1184,7 +1250,9 @@ class MetadataEngineSource(Source):
                     continue
                 visited.add(pair)
                 if not re.fullmatch(pattern, value):
-                    _log(log, "warning", 
+                    _log(
+                        log,
+                        "warning",
                         "Metadata Engine cover: invalid provider ID provider=%s",
                         provider,
                     )
@@ -1206,7 +1274,9 @@ class MetadataEngineSource(Source):
                             or not self._identity_consistent(target, row)
                             or not self._cover_identifier_score(row, identifiers)
                         ):
-                            _log(log, "warning", 
+                            _log(
+                                log,
+                                "warning",
                                 "Metadata Engine cover: rejected conflicting provider record provider=%s id=%s",
                                 provider,
                                 value,
@@ -1215,7 +1285,9 @@ class MetadataEngineSource(Source):
                         if row.get("cover_url"):
                             recovered.append(row)
                             accepted += 1
-                    _log(log, "info", 
+                    _log(
+                        log,
+                        "info",
                         "Metadata Engine cover: provider=%s id=%s records=%d with_cover=%d",
                         provider,
                         value,
@@ -1223,7 +1295,9 @@ class MetadataEngineSource(Source):
                         accepted,
                     )
                 except Exception as exc:
-                    _log(log, "error", 
+                    _log(
+                        log,
+                        "error",
                         "Metadata Engine cover: provider=%s id=%s lookup failed: %s",
                         provider,
                         value,
@@ -2067,8 +2141,16 @@ class MetadataEngineSource(Source):
         """Separate terminal edition decorations while retaining real subtitles."""
         head, separator, subtitle = title.partition(": ")
         words = {
-            "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
-            "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+            "first": 1,
+            "second": 2,
+            "third": 3,
+            "fourth": 4,
+            "fifth": 5,
+            "sixth": 6,
+            "seventh": 7,
+            "eighth": 8,
+            "ninth": 9,
+            "tenth": 10,
         }
         ordinal = r"\d+(?:st|nd|rd|th)?|" + "|".join(words)
         match = re.fullmatch(
@@ -2430,6 +2512,7 @@ class MetadataEngineSource(Source):
     @staticmethod
     def _fuller_description(current, candidate):
         """Prefer substantial same-edition prose over a very short blurb."""
+
         def visible(value):
             return " ".join(unescape(re.sub(r"<[^<>]+>", " ", value)).split())
 
@@ -2459,8 +2542,7 @@ class MetadataEngineSource(Source):
         current = cls._usable_description(winner.get("description"))
         description = cls._usable_description(donor.get("description"))
         if description and (
-            not current
-            or (edition and cls._fuller_description(current, description))
+            not current or (edition and cls._fuller_description(current, description))
         ):
             winner["description"] = description
         series = winner.get("series")
@@ -2496,7 +2578,8 @@ class MetadataEngineSource(Source):
             for person in cls._list(donor.get("authors")):
                 matching = next(
                     (
-                        index for index, current_person in enumerate(people)
+                        index
+                        for index, current_person in enumerate(people)
                         if cls._author_words_match(
                             cls._author_words(current_person), cls._author_words(person)
                         )
@@ -2505,7 +2588,9 @@ class MetadataEngineSource(Source):
                 )
                 if matching is None:
                     people.append(cls._canonical_author_name(person))
-                elif len(cls._author_words(person)) > len(cls._author_words(people[matching])):
+                elif len(cls._author_words(person)) > len(
+                    cls._author_words(people[matching])
+                ):
                     people[matching] = cls._canonical_author_name(person)
             if people:
                 winner["authors"] = people

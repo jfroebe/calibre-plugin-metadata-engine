@@ -22,30 +22,39 @@ def main():
     cases = [
         {
             "title": "Spice travels : a spice merchant's voyage of discovery",
-            "authors": ["Ian Rupert"], "isbn": "0732911516",
+            "authors": ["Ian Rupert"],
+            "isbn": "0732911516",
             "canonical_isbn": "9780732911515",
             "expected_authors": ["Ian Rupert Hemphill"],
-            "minimum_description": 80, "topic": "spice",
+            "minimum_description": 80,
+            "topic": "spice",
         },
         {
             "title": "Smoke & Spice",
-            "authors": ["Cheryl Alters Jamison"], "isbn": "9781558328365",
+            "authors": ["Cheryl Alters Jamison"],
+            "isbn": "9781558328365",
             "canonical_isbn": "9781558328365",
             "expected_authors": ["Cheryl Alters Jamison", "Bill Jamison"],
-            "minimum_description": 600, "topic": "barbecue",
+            "minimum_description": 600,
+            "topic": "barbecue",
         },
     ]
     for case in cases:
         queue = Queue()
         error = plugin.identify(
-            logging.getLogger("live-quality"), queue, Event(),
-            title=case["title"], authors=case["authors"],
-            identifiers={"isbn": case["isbn"]}, timeout=15,
+            logging.getLogger("live-quality"),
+            queue,
+            Event(),
+            title=case["title"],
+            authors=case["authors"],
+            identifiers={"isbn": case["isbn"]},
+            timeout=15,
         )
         if error:
             raise AssertionError(error)
         matching = [
-            row for row in list(queue.queue)
+            row
+            for row in list(queue.queue)
             if plugin._canonical_isbn(row.get_identifiers().get("isbn"))
             == case["canonical_isbn"]
         ]
@@ -53,7 +62,9 @@ def main():
         book = matching[0]
         assert book.authors == case["expected_authors"], book.authors
         description = plugin._usable_description(book.comments)
-        assert description and len(description) >= case["minimum_description"], "No full live synopsis for " + case["title"]
+        assert description and len(description) >= case["minimum_description"], (
+            "No full live synopsis for " + case["title"]
+        )
         assert case["topic"] in description.casefold(), "Synopsis has the wrong subject"
         assert book.tags, "Missing final subject tags"
         assert not any(
