@@ -2147,7 +2147,9 @@ class MetadataEngineSource(Source):
                     if name:
                         people.append(name)
 
-            return {value for value in (cls._author_words(name) for name in people) if value}
+            return {
+                value for value in (cls._author_words(name) for name in people) if value
+            }
 
         left_people, right_people = names(winner), names(donor)
 
