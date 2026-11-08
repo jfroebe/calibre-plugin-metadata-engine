@@ -35,8 +35,7 @@ def main():
     matching = [
         row
         for row in results
-        if plugin._canonical_isbn(row.get_identifiers().get("isbn"))
-        == "9780732911515"
+        if plugin._canonical_isbn(row.get_identifiers().get("isbn")) == "9780732911515"
     ]
     assert matching, "The reported ISBN was not identified"
     book = matching[0]
@@ -46,8 +45,7 @@ def main():
     assert "spice" in description.casefold(), "Synopsis has the wrong subject"
     assert book.tags, "Missing final subject tags"
     assert any(
-        "spice" in tag.casefold() or "condiment" in tag.casefold()
-        for tag in book.tags
+        "spice" in tag.casefold() or "condiment" in tag.casefold() for tag in book.tags
     )
     assert not any(
         tag.casefold() in {"archive.org", "inlibrary", "printdisabled", "work"}
