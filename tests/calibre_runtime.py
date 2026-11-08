@@ -104,7 +104,7 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(results[0].authors, ["Ian Rupert Hemphill"])
         self.assertEqual(results[0].comments, google["description"])
         self.assertIn("Condiments", results[0].tags)
-        self.assertIn("Spice trade", results[0].tags)
+        self.assertIn("Spice Trade", results[0].tags)
         self.assertNotIn("archive.org", results[0].tags)
         self.assertNotIn("Inlibrary", results[0].tags)
         self.assertNotIn("Printdisabled", results[0].tags)
