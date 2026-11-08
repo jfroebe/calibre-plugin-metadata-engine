@@ -129,8 +129,9 @@ jobs:
         run: |
           export CALIBRE_CONFIG_DIRECTORY="$(mktemp -d "$RUNNER_TEMP/calibre-live.XXXXXX")"
           trap 'rm -rf "$CALIBRE_CONFIG_DIRECTORY"' EXIT
+          mkdir -p reports
           "$CALIBRE_TEST_BIN/calibre-customize" -a Calibre-Metadata-Engine.zip
-          "$CALIBRE_TEST_BIN/calibre-debug" -e ci/live_quality_check.py 2>&1 | tee reports-live.log
+          "$CALIBRE_TEST_BIN/calibre-debug" -e ci/live_quality_check.py 2>&1 | tee reports/live-quality.log
       - name: Installed plugin, upgrade preferences and lifecycle
         if: always()
         run: |
@@ -183,4 +184,3 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
           QUALIFICATION_MODE: ${{ inputs.mode || 'ci' }}
         run: python3 ci/qualification.py
-
