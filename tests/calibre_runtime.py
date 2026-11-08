@@ -11,6 +11,8 @@ import subprocess
 import sys
 import unittest
 import urllib.request
+from copy import deepcopy
+from itertools import permutations
 from pathlib import Path
 from queue import Queue
 from threading import Barrier, Event
@@ -670,7 +672,7 @@ class InstalledPluginTests(unittest.TestCase):
                 dict(row, tags=["Sexuality", "Sacred Sexuality", "Sexual Instruction"]),
             ]
 
-        self.plugin.prefs["plugin_ids"] = "google_books"
+        self.plugin.prefs["plugin_ids"] = "google_books,tertulia_subjects"
         with patch.object(self.plugin, "_search", side_effect=search) as lookup:
             result = self.identify(
                 title=title, authors=authors, identifiers={"isbn": isbn}
@@ -683,6 +685,248 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(
             result[0].tags, ["Sexuality", "Sacred Sexuality", "Sexual Instruction"]
         )
+
+    def test_numbered_prefix_recovers_catalog_subjects_and_warning_labels(self):
+        """Merge a verified edition and supplemental warnings through real identify."""
+        title = "Wicked Darlings 1: A Court of Sugar and Spice"
+        base = "A Court of Sugar and Spice"
+        authors = ["Rebecca F. Kenney"]
+        isbn = "9798362685058"
+        referral = (
+            "Trigger and content warnings are available on the author's website "
+            "and in the front matter of the book."
+        )
+        sparse = dict(
+            title="Wicked Darlings 1",
+            subtitle=base,
+            authors=authors,
+            isbn=isbn,
+            description="A synopsis. " + referral,
+        )
+        self.plugin.prefs["plugin_ids"] = "isbnlab,storygraph"
+
+        def api(url, timeout):
+            parsed = urlsplit(url)
+            provider = parsed.path.split("/")[-2]
+            query = parse_qs(parsed.query)
+            self.assertEqual(query["query"], [base])
+            if provider == "isbnlab":
+                rows = [sparse]
+            elif provider == "google_books":
+                rows = [
+                    dict(
+                        sparse,
+                        title=base + ": A Nutcracker Romance Retelling",
+                        subtitle=None,
+                        genres=[
+                            "Fiction / Romance / Fantasy",
+                            "Fiction / Romance / Holiday",
+                        ],
+                    )
+                ]
+            else:
+                rows = [
+                    dict(
+                        title=base,
+                        authors=authors,
+                        trigger_warnings=["Violence", "Blood"],
+                    )
+                ]
+            return {"results": rows}
+
+        with patch.object(self.plugin, "_http_json", side_effect=api):
+            result = self.identify(
+                title=title, authors=authors, identifiers={"isbn": isbn}
+            )
+        matching = [row for row in result if row.get_identifiers().get("isbn") == isbn]
+        self.assertEqual(len(matching), 1)
+        book = matching[0]
+        self.assertIn("Fantasy", book.tags)
+        self.assertIn("Holiday", book.tags)
+        self.assertEqual(book.series, "Wicked Darlings")
+        self.assertEqual(book.series_index, 1.0)
+        self.assertTrue(book.comments.startswith("trigger warnings:"), book.comments)
+        self.assertIn("Violence", book.comments)
+        self.assertNotIn("available on", book.comments)
+
+    def test_prefix_matching_keeps_identity_and_series_guards(self):
+        """A shared ISBN cannot excuse a different author, book, or series number."""
+        left = dict(
+            title="Wicked Darlings 1: A Court of Sugar and Spice",
+            authors=["Rebecca F. Kenney"],
+            isbn="9798362685058",
+        )
+        right = dict(left, title="A Court of Sugar and Spice")
+        self.assertTrue(self.plugin._identity_consistent(left, right))
+        for wrong in (
+            dict(right, authors=["Different Writer"]),
+            dict(right, title="Wicked Darlings 2: A Court of Sugar and Spice"),
+            dict(right, title="A Court of Hearts and Hunger"),
+            dict(right, series=[{"name": "Wicked Darlings", "position": 2}]),
+            dict(right, isbn=None),
+        ):
+            self.assertFalse(self.plugin._identity_consistent(left, wrong))
+
+    def test_missing_warning_details_retry_without_subject_fallback(self):
+        """Retry a referral even with tags, without calling an unloaded provider."""
+        row = dict(
+            title="Example",
+            authors=["A Writer"],
+            genres=["Fantasy"],
+            description="A synopsis. Content warnings are available on the author's website.",
+        )
+        self.plugin.prefs["plugin_ids"] = "google_books,storygraph"
+        calls = []
+
+        def search(provider, query, authors, identifiers, timeout, **kwargs):
+            calls.append((provider, identifiers))
+            if provider == "storygraph" and not identifiers:
+                return [dict(row, content_warnings=["Violence"])]
+            return [dict(row)] if provider == "google_books" else []
+
+        with patch.object(self.plugin, "_search", side_effect=search):
+            result = self.identify(
+                title="Example",
+                authors=["A Writer"],
+                identifiers={"isbn": "9798362685058"},
+            )
+        self.assertIn("Violence", result[0].comments)
+        self.assertNotIn("available on", result[0].comments)
+        self.assertNotIn("tertulia_subjects", [provider for provider, _ in calls])
+
+    def test_inline_warning_list_moves_to_header_without_obfuscation(self):
+        """Use explicitly enumerated TW/CW labels, preserving the synopsis."""
+        row = dict(
+            title="Example",
+            authors=["A Writer"],
+            description="A synopsis. (TW/CW: family death, vio-lence, go-re, blo-od, se-x-ual threat, light bond-age, light C-NC)",
+        )
+        book = self.plugin._to_metadata(row, 0)
+        self.assertTrue(
+            book.comments.startswith(
+                "trigger warnings: family death, violence, gore, blood, sexual threat, light bondage, light CNC"
+            ),
+            book.comments,
+        )
+        self.assertTrue(book.comments.endswith("A synopsis."))
+        self.assertNotIn("TW/CW", book.comments)
+
+    def test_series_prefix_donor_cannot_become_a_catalog_subtitle(self):
+        """Keep prefix decoration from poisoning a same-edition title identity."""
+        row = dict(
+            title="A Court of Sugar and Spice",
+            authors=["Rebecca F. Kenney"],
+            isbn="9798362685058",
+        )
+        donor = dict(
+            row,
+            title="Wicked Darlings 1: A Court of Sugar and Spice",
+            series=[{"name": "Wicked Darlings", "position": 1}],
+        )
+        self.assertTrue(self.plugin._merge_metadata(row, donor))
+        self.assertNotIn("subtitle", row)
+        self.assertTrue(self.plugin._identity_consistent(row, donor))
+
+    def test_separate_series_heading_and_book_subtitle_match_verified_edition(self):
+        """Recognize the provider's actual split of series heading and work title."""
+        row = dict(
+            title="Wicked Darlings 1",
+            subtitle="A Court of Sugar and Spice",
+            authors=["Rebecca F. Kenney"],
+            isbn="9798362685058",
+        )
+        donor = dict(
+            row,
+            title="A Court of Sugar and Spice",
+            subtitle="A Nutcracker Romance Retelling",
+            series=[{"name": "Wicked Darlings", "position": 1}],
+        )
+        self.assertTrue(self.plugin._merge_metadata(row, donor))
+        metadata = self.plugin._to_metadata(row, 0)
+        self.assertEqual(metadata.title, "A Court of Sugar and Spice")
+        self.assertEqual(metadata.series, "Wicked Darlings")
+        self.assertEqual(metadata.series_index, 1)
+
+    def test_nameless_series_placeholder_does_not_block_prefix_enrichment(self):
+        """Ignore default series positions when the provider supplies no series name."""
+        title = "Wicked Darlings 1: A Court of Sugar and Spice"
+        row = dict(
+            title=title,
+            authors=["Rebecca F. Kenney"],
+            isbn="9798362685058",
+            series=[{"name": None, "position": 0}],
+        )
+        self.assertEqual(self.plugin._series_identity(row), ("", None))
+        enriched = self.plugin._with_requested_series(
+            row, title, row["authors"], {"isbn": row["isbn"]}
+        )
+        self.assertEqual(
+            enriched["series"], [{"name": "Wicked Darlings", "position": 1.0}]
+        )
+
+    def test_source_shape_order_preserves_complete_final_metadata(self):
+        """Keep split titles, blank series placeholders and donors order independent."""
+        title = "Wicked Darlings 1: A Court of Sugar and Spice"
+        authors = ["Rebecca F. Kenney"]
+        isbn = "9798362685058"
+        referral = "Content warnings are available on the author's website."
+        rows = [
+            {
+                "source": "isbnlab",
+                "title": "Wicked Darlings 1",
+                "subtitle": "A Court of Sugar and Spice",
+                "authors": authors,
+                "isbn": isbn,
+                "series": [{"name": None, "position": 0}],
+                "description": "A Nutcracker romance. " + referral,
+            },
+            {
+                "source": "google_books",
+                "title": "A Court of Sugar and Spice",
+                "subtitle": "A Nutcracker Romance Retelling",
+                "authors": ["Rebecca F Kenney"],
+                "isbn": isbn,
+                "genres": ["Fiction / Romance / Fantasy"],
+            },
+            {
+                "source": "goodreads",
+                "title": "A Court of Sugar and Spice (Wicked Darlings #1)",
+                "authors": authors,
+                "isbn": isbn,
+                "content_warnings": ["Violence", "Blood"],
+            },
+        ]
+        for ordered in permutations(rows):
+            with self.subTest(sources=[row["source"] for row in ordered]):
+                enriched = [
+                    self.plugin._with_requested_series(
+                        row, title, authors, {"isbn": isbn}
+                    )
+                    for row in deepcopy(ordered)
+                ]
+                # All fields are supplied by compatible initial records. A
+                # second network batch must not be needed to repair ordering.
+                with patch.object(self.plugin, "_initial_provider_batch") as retry:
+                    recovered = self.plugin._recover_supplements(
+                        self.log,
+                        self.abort,
+                        [],
+                        enriched,
+                        title,
+                        authors,
+                        {"isbn": isbn},
+                        5,
+                    )
+                retry.assert_not_called()
+                final = self.plugin._dedupe(recovered)
+                self.assertEqual(len(final), 1)
+                book = self.plugin._to_metadata(final[0], 0)
+                self.assertEqual(book.series, "Wicked Darlings")
+                self.assertEqual(book.series_index, 1.0)
+                self.assertIn("Fantasy", book.tags)
+                self.assertIn("Violence", book.comments)
+                self.assertIn("Blood", book.comments)
+                self.assertIsNone(self.plugin._warning_referral(book.comments))
 
     def test_catalog_tag_periods_are_removed_before_deduplication(self):
         """Split subject paths, discard terminal periods, and deduplicate."""
