@@ -40,7 +40,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 42)
+    version = (1, 1, 43)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -339,6 +339,9 @@ class MetadataEngineSource(Source):
                 self._with_requested_series(row, title, authors, identifiers)
                 for row in rows
             ]
+            rows = self._recover_supplements(
+                log, abort, provider_ids, rows, title, authors, identifiers, timeout
+            )
             rows = self._dedupe(rows)
             requested = {
                 "title": title,
@@ -373,7 +376,13 @@ class MetadataEngineSource(Source):
                 return confirmed, confirmed and has_synopsis, confidence
 
             rows.sort(key=rank, reverse=True)
-            if rows and isbn and rank(rows[0])[0] and not abort.is_set():
+            if (
+                rows
+                and isbn
+                and rank(rows[0])[0]
+                and not abort.is_set()
+                and "tertulia_subjects" in provider_ids
+            ):
                 self._recover_book_subjects(log, rows[0], isbn, timeout)
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
 
@@ -415,6 +424,7 @@ class MetadataEngineSource(Source):
                 {"isbn": isbn},
                 min(timeout, 5),
             )
+
         except Exception as exc:
             _log(log, "info", f"Metadata Engine subject lookup unavailable: {exc}")
             return
@@ -428,6 +438,66 @@ class MetadataEngineSource(Source):
                 "info",
                 "Metadata Engine found no catalog subjects for the matching ISBN",
             )
+
+    def _recover_supplements(
+        self, log, abort, provider_ids, rows, title, authors, identifiers, timeout
+    ):
+        """Retry missing subjects or referred warning details through enabled sources."""
+        matches = [
+            row
+            for row in self._dedupe(rows)
+            if self._matches_requested(row, title, authors, identifiers)
+        ]
+        if not matches:
+            return rows
+        candidate = matches[0]
+        needs_tags = not self._to_metadata(candidate, 0).tags
+        needs_warnings = self._warning_referral(candidate.get("description")) and not (
+            self._list(candidate.get("trigger_warnings"))
+            or self._list(candidate.get("content_warnings"))
+        )
+        if not needs_tags and not needs_warnings:
+            return rows
+        query = self._search_title(candidate.get("title"))
+        providers = [p for p in provider_ids if p not in {"isbnlab", "asintojson"}]
+        batch = self._initial_provider_batch(
+            providers,
+            query,
+            self._list(candidate.get("authors")),
+            {},
+            min(timeout, 5),
+            abort,
+        )
+        for provider in providers:
+            if abort.is_set():
+                return rows
+            for mode in (None, "books") if provider == "itunes" else (None,):
+                donors, error = batch[(provider, mode)]
+                if error is not None:
+                    _log(
+                        log,
+                        "info",
+                        "Metadata Engine supplement retry %s failed: %s",
+                        provider,
+                        error,
+                    )
+                    continue
+                for winner in rows:
+                    if not self._matches_requested(winner, title, authors, identifiers):
+                        continue
+                    for donor in donors:
+                        self._merge_metadata(winner, donor)
+        return rows
+
+    @staticmethod
+    def _warning_referral(value):
+        """Recognize a referral sentence, which contains no actual warning labels."""
+        return re.search(
+            r"(?:trigger\s+and\s+content|trigger|content)\s+warnings\s+"
+            r"(?:are\s+)?available\s+(?:on|in)\s+[^.!?]+[.!?]?",
+            value or "",
+            re.IGNORECASE,
+        )
 
     @staticmethod
     def _canonical_author_name(name):
@@ -1432,9 +1502,14 @@ class MetadataEngineSource(Source):
         returned = re.fullmatch(
             r"(.+?)\s+\(([^()]+)\)", cls._text(row.get("title")) or ""
         )
-        if not requested or not returned:
+        if not requested:
             return row
         name, position, book_title = requested.groups()
+        if not returned:
+            target = {"title": book_title, "authors": authors, "isbn": isbn}
+            if cls._work_description_matches(target, row):
+                return dict(row, series=[{"name": name, "position": float(position)}])
+            return row
         if cls._work_title(name)[0] != cls._work_title(returned[2])[0]:
             return row
         if not cls._work_description_matches(
@@ -1634,6 +1709,11 @@ class MetadataEngineSource(Source):
         # Some books carry their series only in a trailing "Series Book N".
         # Keep a structured provider series authoritative when available.
         inferred_series = None
+        prefix = self._numbered_title_prefix(title)
+        if prefix and row.get("series"):
+            name, position = self._series_identity(row)
+            if name == prefix[0].casefold() and position == float(prefix[1]):
+                title = prefix[2]
         match = re.fullmatch(
             r"(.+?)\s+\((.+?)\s+(?:Book\s*|#)(\d+(?:\.\d+)?)\)", title, re.IGNORECASE
         )
@@ -1824,16 +1904,21 @@ class MetadataEngineSource(Source):
         if extras:
             mi.comments = (mi.comments or "") + "\n\n" + "\n".join(extras)
         mi.comments = self._with_trigger_warnings(
-            mi.comments, self._list(row.get("trigger_warnings"))
+            mi.comments,
+            self._list(row.get("trigger_warnings"))
+            + self._list(row.get("content_warnings")),
         )
         return mi
 
-    @staticmethod
-    def _with_trigger_warnings(comments, warnings):
+    @classmethod
+    def _with_trigger_warnings(cls, comments, warnings):
         """Prefix verified warnings as a separate paragraph in either comment format."""
         if not warnings:
             return comments
         body = (comments or "").lstrip()
+        referral = cls._warning_referral(body)
+        if referral:
+            body = (body[: referral.start()] + body[referral.end() :]).strip()
         is_html = body.startswith("<")
         if is_html:
             pattern = r"<p>\s*trigger warnings:\s*([^<]+)</p>\s*"
@@ -1916,7 +2001,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.42",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.43",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -2045,12 +2130,23 @@ class MetadataEngineSource(Source):
     def _search_title(cls, value):
         """Remove a numbered series suffix without changing provider query case."""
         title = cls._text(value) or ""
+        prefix = cls._numbered_title_prefix(title)
+        if prefix:
+            title = prefix[2]
         match = re.fullmatch(
             r"(.+?)\s+\((.+?)\s+(?:book\s*|#)(\d+(?:\.\d+)?)\)",
             title,
             re.IGNORECASE,
         )
         return match.group(1).strip() if match else title
+
+    @classmethod
+    def _numbered_title_prefix(cls, value):
+        """Parse a possible series prefix; matching must corroborate its meaning."""
+        match = re.fullmatch(
+            r"(.+?)\s+(\d+(?:\.\d+)?)\s*:\s*(\S.*)", cls._text(value) or ""
+        )
+        return match.groups() if match else None
 
     @classmethod
     def _work_title(cls, value):
@@ -2178,6 +2274,30 @@ class MetadataEngineSource(Source):
             return False
         left_isbn = cls._canonical_isbn(left.get("isbn"))
         right_isbn = cls._canonical_isbn(right.get("isbn"))
+        for decorated, plain in ((left, right), (right, left)):
+            prefix = cls._numbered_title_prefix(decorated.get("title"))
+            if not prefix:
+                continue
+            name, number, base = prefix
+            name = cls._series_name_key(name.casefold())
+            evidence = [cls._series_identity(row) for row in (decorated, plain)]
+            if any(
+                series
+                and (
+                    cls._series_name_key(series) != name
+                    or (position is not None and position != float(number))
+                )
+                for series, position in evidence
+            ):
+                continue
+            corroborated = bool(left_isbn and left_isbn == right_isbn) or any(
+                cls._series_name_key(series) == name and position == float(number)
+                for series, position in evidence
+            )
+            if corroborated and cls._work_titles_compatible(
+                dict(decorated, title=base), plain
+            ):
+                return True
         if left_isbn and left_isbn == right_isbn:
             left_title, left_edition = cls._edition_title_key(left_title)
             right_title, right_edition = cls._edition_title_key(right_title)
@@ -2551,7 +2671,13 @@ class MetadataEngineSource(Source):
             if value and (not isinstance(value, str) or value.strip()):
                 winner["series"] = value
         # Merge work-level subjects and warning labels from compatible records.
-        for field in ("genres", "tags", "trigger_warnings", "parental_warnings"):
+        for field in (
+            "genres",
+            "tags",
+            "trigger_warnings",
+            "content_warnings",
+            "parental_warnings",
+        ):
             values = cls._list(winner.get(field)) + cls._list(donor.get(field))
             if values:
                 winner[field] = list(dict.fromkeys(values))

@@ -125,7 +125,14 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as output:
               print('CALIBRE_TEST_BIN=' + binary, file=output)
           PY
+      - name: Live regression against working-test metadata engine
+        run: |
+          export CALIBRE_CONFIG_DIRECTORY="$(mktemp -d "$RUNNER_TEMP/calibre-live.XXXXXX")"
+          trap 'rm -rf "$CALIBRE_CONFIG_DIRECTORY"' EXIT
+          "$CALIBRE_TEST_BIN/calibre-customize" -a Calibre-Metadata-Engine.zip
+          "$CALIBRE_TEST_BIN/calibre-debug" -e ci/live_quality_check.py 2>&1 | tee reports-live.log
       - name: Installed plugin, upgrade preferences and lifecycle
+        if: always()
         run: |
           python ci/run_runtime.py --calibre-bin "$CALIBRE_TEST_BIN" \
             --zip Calibre-Metadata-Engine.zip \
@@ -176,3 +183,4 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
           QUALIFICATION_MODE: ${{ inputs.mode || 'ci' }}
         run: python3 ci/qualification.py
+

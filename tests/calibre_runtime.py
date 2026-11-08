@@ -670,7 +670,7 @@ class InstalledPluginTests(unittest.TestCase):
                 dict(row, tags=["Sexuality", "Sacred Sexuality", "Sexual Instruction"]),
             ]
 
-        self.plugin.prefs["plugin_ids"] = "google_books"
+        self.plugin.prefs["plugin_ids"] = "google_books,tertulia_subjects"
         with patch.object(self.plugin, "_search", side_effect=search) as lookup:
             result = self.identify(
                 title=title, authors=authors, identifiers={"isbn": isbn}
@@ -683,6 +683,111 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(
             result[0].tags, ["Sexuality", "Sacred Sexuality", "Sexual Instruction"]
         )
+
+    def test_numbered_prefix_recovers_catalog_subjects_and_warning_labels(self):
+        """Merge a verified edition and supplemental warnings through real identify."""
+        title = "Wicked Darlings 1: A Court of Sugar and Spice"
+        base = "A Court of Sugar and Spice"
+        authors = ["Rebecca F. Kenney"]
+        isbn = "9798362685058"
+        referral = (
+            "Trigger and content warnings are available on the author's website "
+            "and in the front matter of the book."
+        )
+        sparse = dict(
+            title=title,
+            authors=authors,
+            isbn=isbn,
+            description="A synopsis. " + referral,
+        )
+        self.plugin.prefs["plugin_ids"] = "isbnlab,storygraph"
+
+        def api(url, timeout):
+            parsed = urlsplit(url)
+            provider = parsed.path.split("/")[-2]
+            query = parse_qs(parsed.query)
+            self.assertEqual(query["query"], [base])
+            if provider == "isbnlab":
+                rows = [sparse]
+            elif provider == "google_books":
+                rows = [
+                    dict(
+                        sparse,
+                        title=base + ": A Nutcracker Romance Retelling",
+                        genres=[
+                            "Fiction / Romance / Fantasy",
+                            "Fiction / Romance / Holiday",
+                        ],
+                    )
+                ]
+            else:
+                rows = [
+                    dict(
+                        title=base,
+                        authors=authors,
+                        trigger_warnings=["Violence", "Blood"],
+                    )
+                ]
+            return {"results": rows}
+
+        with patch.object(self.plugin, "_http_json", side_effect=api):
+            result = self.identify(
+                title=title, authors=authors, identifiers={"isbn": isbn}
+            )
+        matching = [row for row in result if row.get_identifiers().get("isbn") == isbn]
+        self.assertEqual(len(matching), 1)
+        book = matching[0]
+        self.assertIn("Fantasy", book.tags)
+        self.assertIn("Holiday", book.tags)
+        self.assertEqual(book.series, "Wicked Darlings")
+        self.assertEqual(book.series_index, 1.0)
+        self.assertTrue(book.comments.startswith("trigger warnings:"), book.comments)
+        self.assertIn("Violence", book.comments)
+        self.assertNotIn("available on", book.comments)
+
+    def test_prefix_matching_keeps_identity_and_series_guards(self):
+        """A shared ISBN cannot excuse a different author, book, or series number."""
+        left = dict(
+            title="Wicked Darlings 1: A Court of Sugar and Spice",
+            authors=["Rebecca F. Kenney"],
+            isbn="9798362685058",
+        )
+        right = dict(left, title="A Court of Sugar and Spice")
+        self.assertTrue(self.plugin._identity_consistent(left, right))
+        for wrong in (
+            dict(right, authors=["Different Writer"]),
+            dict(right, title="A Court of Hearts and Hunger"),
+            dict(right, series=[{"name": "Wicked Darlings", "position": 2}]),
+            dict(right, isbn=None),
+        ):
+            self.assertFalse(self.plugin._identity_consistent(left, wrong))
+
+    def test_missing_warning_details_retry_without_subject_fallback(self):
+        """Retry a referral even with tags, without calling an unloaded provider."""
+        row = dict(
+            title="Example",
+            authors=["A Writer"],
+            genres=["Fantasy"],
+            description="A synopsis. Content warnings are available on the author's website.",
+        )
+        self.plugin.prefs["plugin_ids"] = "google_books,storygraph"
+        calls = []
+
+        def search(provider, query, authors, identifiers, timeout, **kwargs):
+            calls.append((provider, identifiers))
+            if provider == "storygraph" and not identifiers:
+                return [dict(row, content_warnings=["Violence"])]
+            return [dict(row)] if provider == "google_books" else []
+
+        with patch.object(self.plugin, "_search", side_effect=search):
+            result = self.identify(
+                title="Example",
+                authors=["A Writer"],
+                identifiers={"isbn": "9798362685058"},
+            )
+        self.assertIn("Violence", result[0].comments)
+        self.assertNotIn("available on", result[0].comments)
+        self.assertNotIn("tertulia_subjects", [provider for provider, _ in calls])
 
     def test_catalog_tag_periods_are_removed_before_deduplication(self):
         """Split subject paths, discard terminal periods, and deduplicate."""

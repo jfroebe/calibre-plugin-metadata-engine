@@ -21,6 +21,16 @@ def main():
     plugin.prefs["plugin_ids"] = ""
     cases = [
         {
+            "title": "Wicked Darlings 1: A Court of Sugar and Spice",
+            "authors": ["Rebecca F. Kenney"],
+            "isbn": "9798362685058",
+            "canonical_isbn": "9798362685058",
+            "expected_authors": ["Rebecca F. Kenney"],
+            "minimum_description": 500,
+            "topic": "nutcracker",
+            "warnings": True,
+        },
+        {
             "title": "Spice travels : a spice merchant's voyage of discovery",
             "authors": ["Ian Rupert"],
             "isbn": "0732911516",
@@ -67,6 +77,11 @@ def main():
         )
         assert case["topic"] in description.casefold(), "Synopsis has the wrong subject"
         assert book.tags, "Missing final subject tags"
+        if case.get("warnings"):
+            assert "trigger warnings:" in book.comments.casefold(), book.comments
+            assert "warnings are available" not in book.comments.casefold()
+            assert book.series == "Wicked Darlings", book.series
+            assert book.series_index == 1.0, book.series_index
         assert not any(
             tag.casefold() in {"archive.org", "inlibrary", "printdisabled", "work"}
             for tag in book.tags
@@ -74,6 +89,8 @@ def main():
         print("LIVE_METADATA_QUALITY_PASS title=" + book.title)
         print("LIVE_DESCRIPTION_CHARACTERS=" + str(len(description)))
         print("LIVE_SUBJECTS=" + repr(book.tags))
+        if case.get("warnings"):
+            print("LIVE_COMMENTS=" + book.comments)
 
 
 if __name__ == "__main__":
