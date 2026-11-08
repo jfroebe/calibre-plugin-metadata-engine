@@ -63,6 +63,74 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertIsNone(error)
         return list(queue.queue)
 
+    def test_truncated_catalog_author_requires_corroborated_edition_evidence(self):
+        """Recover the reported Spice Travels lookup without trusting a lone ID."""
+        title = "Spice travels : a spice merchant's voyage of discovery"
+        google = {
+            "title": "Spice Travels",
+            "authors": ["Ian Rupert Hemphill"],
+            "isbn": "9780732911515",
+            "source": "google_books",
+            "description": "A spice merchant explores the origins and uses of spices.",
+            "genres": ["Condiments"],
+        }
+        archive = {
+            "title": title,
+            "authors": ["1949- Hemphill Ian R. (Ian Rupert)"],
+            "isbn": "0732911516",
+            "source": "internet_archive",
+            "description": "227 p. :",
+            "genres": ["Spice trade"],
+            "tags": ["internet-archive", "archive.org", "inlibrary", "printdisabled"],
+        }
+        library = dict(google, authors=["Ian R. Hemphill"], source="open_library")
+        inventory = {
+            "google_books": [google],
+            "internet_archive": [archive],
+            "open_library": [library],
+        }
+        self.plugin.prefs["plugin_ids"] = ",".join(inventory)
+
+        def search(provider, *args, **kwargs):
+            return [dict(row) for row in inventory.get(provider, [])]
+
+        with patch.object(self.plugin, "_search", side_effect=search):
+            results = self.identify(
+                title=title,
+                authors=["Ian Rupert"],
+                identifiers={"isbn": "0732911516"},
+            )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].authors, ["Ian Rupert Hemphill"])
+        self.assertEqual(results[0].comments, google["description"])
+        self.assertIn("Condiments", results[0].tags)
+        self.assertIn("Spice Trade", results[0].tags)
+        self.assertNotIn("archive.org", results[0].tags)
+        self.assertNotIn("Inlibrary", results[0].tags)
+        self.assertNotIn("Printdisabled", results[0].tags)
+        self.assertIn("voyage of discovery", results[0].title.casefold())
+        for rows in ([google], [google, dict(library, source="google_books")]):
+            self.assertEqual(
+                self.plugin._recover_incomplete_author(
+                    self.log, rows, title, ["Ian Rupert"], {"isbn": "0732911516"}
+                ),
+                ["Ian Rupert"],
+            )
+        self.assertEqual(
+            self.plugin._recover_incomplete_author(
+                self.log,
+                [google, archive],
+                title,
+                ["Ian Someone"],
+                {"isbn": "0732911516"},
+            ),
+            ["Ian Someone"],
+        )
+        conflict = dict(google, authors=["Ian Robert Hemphill"])
+        self.assertFalse(self.plugin._identity_consistent(google, conflict))
+        subtitle = dict(archive, title="Spice travels: A different book")
+        self.assertFalse(self.plugin._identity_consistent(archive, subtitle))
+
     def test_series_suffix_is_removed_before_initial_parallel_search(self):
         """Find the Eli Wray book and reject unrelated sugar-and-spice titles."""
         title = "Sugar And Spice (A Very Enby Christmas Book 1)"

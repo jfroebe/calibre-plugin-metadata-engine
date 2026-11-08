@@ -29,7 +29,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 39)
+    version = (1, 1, 40)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -237,6 +237,10 @@ class MetadataEngineSource(Source):
                             "Metadata Engine provider %r failed: %s", provider_id, exc
                         )
 
+            authors = self._recover_incomplete_author(
+                log, rows, title, authors, identifiers
+            )
+
             # An exact edition identifier ties the provider result to the
             # existing Calibre record even when the provider omits its authors.
             if authors:
@@ -311,7 +315,11 @@ class MetadataEngineSource(Source):
                 for row in rows
             ]
             rows = self._dedupe(rows)
-            requested = {"title": title, "authors": authors}
+            requested = {
+                "title": title,
+                "authors": authors,
+                "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
+            }
             compatible = [
                 row for row in rows if self._identity_consistent(requested, row)
             ]
@@ -325,7 +333,7 @@ class MetadataEngineSource(Source):
             isbn = self._canonical_isbn(
                 self._identifier(identifiers, "isbn", "isbn13", "isbn10")
             )
-            target = {"title": title, "authors": authors}
+            target = requested
 
             def rank(row):
                 confirmed = bool(
@@ -388,9 +396,106 @@ class MetadataEngineSource(Source):
         if not self._to_metadata(row, 0).tags:
             log.info("Metadata Engine found no catalog subjects for the matching ISBN")
 
+    @staticmethod
+    def _canonical_author_name(name):
+        """Expand explicit catalog given names and remove authority dates."""
+        value = re.sub(r"^\d{4}(?:-\d{0,4})?\s+", "", name.strip())
+        value = re.sub(r"(?:,\s*|\s+)\d{4}(?:-\d{0,4})?$", "", value).strip()
+        expanded = re.search(r"\(([^()]+)\)", value)
+        if expanded:
+            before = value[: expanded.start()].strip()
+            given = expanded[1].strip()
+            words = before.replace(",", " ").split()
+            if given and len(words) >= 2:
+                first = given.split()[0].casefold()
+                if "," in before and words[1].casefold() == first:
+                    return given + " " + before.split(",", 1)[0].strip()
+                if words[1].casefold() == first:
+                    return given + " " + words[0]
+                if words[0].casefold() == first:
+                    return given + " " + words[-1]
+        if "," in value:
+            surname, given = value.split(",", 1)
+            if surname.strip() and given.strip():
+                return given.strip() + " " + surname.strip()
+        return value
+
+    @classmethod
+    def _author_words(cls, name):
+        """Return comparable words without discarding author identity."""
+        return tuple(
+            re.findall(r"[^\W\d_]+", cls._canonical_author_name(name).casefold())
+        )
+
+    @staticmethod
+    def _author_words_match(left, right):
+        """Allow omitted middle names or initials, retaining first and last names."""
+        if left == right:
+            return True
+        if min(len(left), len(right)) < 2:
+            return False
+        if left[0] != right[0] or left[-1] != right[-1]:
+            return False
+        a, b = left[1:-1], right[1:-1]
+        if not a or not b:
+            return True
+        return len(a) == len(b) and all(
+            x == y
+            or (len(x) == 1 and y.startswith(x))
+            or (len(y) == 1 and x.startswith(y))
+            for x, y in zip(a, b)
+        )
+
+    def _recover_incomplete_author(self, log, rows, title, authors, identifiers):
+        """Recover a truncated single author from corroborated edition evidence."""
+        people = self._list(authors)
+        isbn = self._canonical_isbn(
+            self._identifier(identifiers, "isbn", "isbn13", "isbn10")
+        )
+        if len(people) != 1 or not isbn:
+            return authors
+        wanted = self._author_words(people[0])
+        if len(wanted) < 2:
+            return authors
+        target = {"title": title, "isbn": isbn}
+        candidates = [
+            row
+            for row in rows
+            if self._canonical_isbn(row.get("isbn")) == isbn
+            and self._work_titles_compatible(target, row)
+            and len(self._list(row.get("authors"))) == 1
+        ]
+        for row in candidates:
+            person = self._list(row.get("authors"))[0]
+            full = self._author_words(person)
+            if len(full) <= len(wanted) or full[: len(wanted)] != wanted:
+                continue
+            if not row.get("source"):
+                continue
+            witnesses = [
+                other
+                for other in candidates
+                if other.get("source")
+                and other["source"] != row["source"]
+                and self._work_description_matches(row, other)
+            ]
+            if witnesses:
+                corrected = self._canonical_author_name(person)
+                log.info(
+                    f"Metadata Engine recovered incomplete author {people[0]!r} "
+                    f"as {corrected!r} using corroborated ISBN {isbn}"
+                )
+                return [corrected]
+        return authors
+
     def _matches_requested(self, row, title, authors, identifiers):
         """Reject ID matches that contradict the requested title or contributors."""
-        if not self._identity_consistent({"title": title, "authors": authors}, row):
+        target = {
+            "title": title,
+            "authors": authors,
+            "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
+        }
+        if not self._identity_consistent(target, row):
             return False
         matched_identifier = False
         extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
@@ -1243,7 +1348,7 @@ class MetadataEngineSource(Source):
         if not description:
             return None
         visible = unescape(re.sub(r"<[^<>]+>", " ", description))
-        visible = " ".join(visible.split())
+        visible = " ".join(visible.split()).rstrip(" :;")
         if not visible or re.fullmatch(
             r"(?:(?:[ivxlcdm]+|\d+)\s*,\s*)?"
             r"\d+\s*(?:p(?:p)?\.?|pages?|leaves)"
@@ -1433,7 +1538,9 @@ class MetadataEngineSource(Source):
         if subtitle and subtitle.casefold() not in title.casefold():
             title = "%s: %s" % (title, subtitle)
 
-        authors = self._list(row.get("authors")) or ["Unknown"]
+        authors = [
+            self._canonical_author_name(name) for name in self._list(row.get("authors"))
+        ] or ["Unknown"]
         mi = Metadata(title, authors)
         mi.source_relevance = relevance
 
@@ -1469,6 +1576,14 @@ class MetadataEngineSource(Source):
             "itunes",
             "apple books",
             "open library",
+            "internet archive",
+            "archive.org",
+            "internetarchivebooks",
+            "inlibrary",
+            "printdisabled",
+            "library of congress",
+            "sru",
+            "z39.50",
             "google books",
             "storygraph",
             "trigger warning database",
@@ -1691,7 +1806,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.39",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.40",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -1910,6 +2025,15 @@ class MetadataEngineSource(Source):
         right_title, _, _ = cls._work_title(right.get("title"))
         if not left_title or not right_title:
             return False
+        left_isbn = cls._canonical_isbn(left.get("isbn"))
+        right_isbn = cls._canonical_isbn(right.get("isbn"))
+        if left_isbn and left_isbn == right_isbn and left_title != right_title:
+            a, _, a_sub = left_title.partition(": ")
+            b, _, b_sub = right_title.partition(": ")
+            a_sub = a_sub or cls._work_title(left.get("subtitle"))[0]
+            b_sub = b_sub or cls._work_title(right.get("subtitle"))[0]
+            if a == b and not (a_sub and b_sub and a_sub != b_sub):
+                return True
         if left_title == right_title:
             left_subtitle = cls._work_title(left.get("subtitle"))[0]
             right_subtitle = cls._work_title(right.get("subtitle"))[0]
@@ -2031,23 +2155,21 @@ class MetadataEngineSource(Source):
                     if name:
                         people.append(name)
 
-            def normalize(name):
-                if "," in name:
-                    parts = [part.strip() for part in name.split(",", 1)]
-                    if all(parts):
-                        name = parts[1] + " " + parts[0]
-                return re.sub(r"[\W_]+", "", name.casefold())
-
-            return {value for value in (normalize(name) for name in people) if value}
+            return {
+                value for value in (cls._author_words(name) for name in people) if value
+            }
 
         left_people, right_people = names(winner), names(donor)
-        # One source may list a subset of an anthology's authors or identify
-        # an editor as its author. Require a nonempty subset, never mere overlap
-        # between two conflicting contributor lists.
+
+        def subset(left, right):
+            return len(left) <= len(right) and all(
+                any(cls._author_words_match(a, b) for b in right) for a in left
+            )
+
         return bool(
             left_people
             and right_people
-            and (left_people <= right_people or right_people <= left_people)
+            and (subset(left_people, right_people) or subset(right_people, left_people))
         )
 
     @classmethod
@@ -2276,6 +2398,10 @@ class MetadataEngineSource(Source):
             winner["extra"] = winner_extra
 
         if edition:
+            if not winner.get("subtitle") and ":" not in str(winner.get("title") or ""):
+                parts = re.split(r"\s*:\s*", str(donor.get("title") or ""), maxsplit=1)
+                if len(parts) == 2:
+                    winner["subtitle"] = parts[1].strip()
             for field in (
                 "authors",
                 "publisher",
