@@ -1519,7 +1519,7 @@ class MetadataEngineSource(Source):
     @classmethod
     def _with_requested_series(cls, row, title, authors, identifiers):
         """Recover a numbered prefix corroborated by the matching edition."""
-        if row.get("series") or not authors or not row.get("authors"):
+        if cls._series_identity(row)[0] or not authors or not row.get("authors"):
             return row
         isbn = cls._canonical_isbn(
             cls._identifier(identifiers, "isbn", "isbn13", "isbn10")
@@ -2240,6 +2240,8 @@ class MetadataEngineSource(Source):
             name, number = cls._text(item), None
         name = (name or title_series or "").casefold().strip()
         name = re.sub(r"^.+?\s+\d+\s*:\s*", "", name)
+        if not name:
+            return "", None
         return name, number if number is not None else title_number
 
     @staticmethod

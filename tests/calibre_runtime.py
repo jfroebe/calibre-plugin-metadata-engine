@@ -823,6 +823,23 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("subtitle", row)
         self.assertTrue(self.plugin._identity_consistent(row, donor))
 
+    def test_nameless_series_placeholder_does_not_block_prefix_enrichment(self):
+        """Ignore default series positions when the provider supplies no series name."""
+        title = "Wicked Darlings 1: A Court of Sugar and Spice"
+        row = dict(
+            title=title,
+            authors=["Rebecca F. Kenney"],
+            isbn="9798362685058",
+            series=[{"name": None, "position": 0}],
+        )
+        self.assertEqual(self.plugin._series_identity(row), ("", None))
+        enriched = self.plugin._with_requested_series(
+            row, title, row["authors"], {"isbn": row["isbn"]}
+        )
+        self.assertEqual(
+            enriched["series"], [{"name": "Wicked Darlings", "position": 1.0}]
+        )
+
     def test_catalog_tag_periods_are_removed_before_deduplication(self):
         """Split subject paths, discard terminal periods, and deduplicate."""
         row = {
