@@ -340,7 +340,15 @@ class MetadataEngineSource(Source):
                 for row in rows
             ]
             rows = self._recover_supplements(
-                log, abort, provider_ids, rows, title, authors, identifiers, timeout
+                log,
+                abort,
+                provider_ids,
+                rows,
+                title,
+                authors,
+                identifiers,
+                timeout,
+                retried_providers,
             )
             rows = self._dedupe(rows)
             requested = {
@@ -442,9 +450,24 @@ class MetadataEngineSource(Source):
             )
 
     def _recover_supplements(
-        self, log, abort, provider_ids, rows, title, authors, identifiers, timeout
+        self,
+        log,
+        abort,
+        provider_ids,
+        rows,
+        title,
+        authors,
+        identifiers,
+        timeout,
+        retried_providers=None,
     ):
         """Retry missing subjects or referred warning details through enabled sources."""
+        # Preserve corroborating edition/series variants as bridges before
+        # deduplication chooses a single display title with a catalog subtitle.
+        for winner in rows:
+            for donor in rows:
+                if winner is not donor:
+                    self._merge_metadata(winner, donor)
         matches = [
             row
             for row in self._dedupe(rows)
@@ -461,7 +484,12 @@ class MetadataEngineSource(Source):
         if not needs_tags and not needs_warnings:
             return rows
         query = self._search_title(candidate.get("title"))
-        providers = [p for p in provider_ids if p not in {"isbnlab", "asintojson"}]
+        providers = [
+            p
+            for p in provider_ids
+            if p not in {"isbnlab", "asintojson"}
+            and (needs_warnings or p not in (retried_providers or set()))
+        ]
         batch = self._initial_provider_batch(
             providers,
             query,
@@ -1739,7 +1767,20 @@ class MetadataEngineSource(Source):
         if row.get("publisher"):
             mi.publisher = self._text(row["publisher"])
         description = self._usable_description(row.get("description"))
+        inline_warnings = []
         if description:
+
+            def collect_warnings(match):
+                inline_warnings.extend(re.split(r"[,;]", match[1]))
+                return ""
+
+            description = re.sub(
+                r"\((?:TW\s*/\s*CW|TW|CW|trigger warnings?|content warnings?)"
+                r"\s*:\s*([^()]+)\)",
+                collect_warnings,
+                description,
+                flags=re.IGNORECASE,
+            ).strip()
             # Remove explicit source-attribution lines, not names in prose.
             description = re.sub(
                 r"(?im)^\s*(?:metadata )?source\s*:\s*(?:amazon(?:\.com)?|audible|goodreads|hardcover|itunes|apple books|open library|google books|isbnlab|asintojson)\s*$",
@@ -1908,7 +1949,8 @@ class MetadataEngineSource(Source):
         mi.comments = self._with_trigger_warnings(
             mi.comments,
             self._list(row.get("trigger_warnings"))
-            + self._list(row.get("content_warnings")),
+            + self._list(row.get("content_warnings"))
+            + inline_warnings,
         )
         return mi
 
@@ -1933,6 +1975,17 @@ class MetadataEngineSource(Source):
         unique = {}
         for warning in warnings:
             label = warning.strip()
+            for obfuscated, normalized in (
+                ("vio-lence", "violence"),
+                ("go-re", "gore"),
+                ("blo-od", "blood"),
+                ("se-x-ual", "sexual"),
+                ("bond-age", "bondage"),
+                ("c-nc", "CNC"),
+            ):
+                label = re.sub(
+                    re.escape(obfuscated), normalized, label, flags=re.IGNORECASE
+                )
             if label and not cls._warning_referral(label):
                 unique.setdefault(label.casefold(), label)
         if not unique:

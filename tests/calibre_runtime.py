@@ -790,6 +790,23 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("available on", result[0].comments)
         self.assertNotIn("tertulia_subjects", [provider for provider, _ in calls])
 
+    def test_inline_warning_list_moves_to_header_without_obfuscation(self):
+        """Use explicitly enumerated TW/CW labels, preserving the synopsis."""
+        row = dict(
+            title="Example",
+            authors=["A Writer"],
+            description="A synopsis. (TW/CW: family death, vio-lence, go-re, blo-od, se-x-ual threat, light bond-age, light C-NC)",
+        )
+        book = self.plugin._to_metadata(row, 0)
+        self.assertTrue(
+            book.comments.startswith(
+                "trigger warnings: family death, violence, gore, blood, sexual threat, light bondage, light CNC"
+            ),
+            book.comments,
+        )
+        self.assertTrue(book.comments.endswith("A synopsis."))
+        self.assertNotIn("TW/CW", book.comments)
+
     def test_catalog_tag_periods_are_removed_before_deduplication(self):
         """Split subject paths, discard terminal periods, and deduplicate."""
         row = {

@@ -43,13 +43,6 @@ jobs:
           test "$(id -un)" = agent
           test -S /var/run/docker.sock
       - uses: actions/checkout@v4
-      - name: Inspect build worker availability
-        continue-on-error: true
-        timeout-minutes: 1
-        run: |
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 agent@chatgpt-build-02 'hostname
-          uptime
-          systemctl list-units --all --no-pager "actions.runner*"'
       - name: Isolate Python tools on the Meta worker
         run: |
           python3 -m venv "$RUNNER_TEMP/calibre-tools-$GITHUB_RUN_ID-$GITHUB_JOB-$GITHUB_RUN_ATTEMPT"

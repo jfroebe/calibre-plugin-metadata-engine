@@ -68,24 +68,32 @@ def main():
             if plugin._canonical_isbn(row.get_identifiers().get("isbn"))
             == case["canonical_isbn"]
         ]
-        assert len(matching) == 1, "Expected one verified result for " + case["title"]
+        if not len(matching) == 1:
+            raise AssertionError("Expected one verified result for " + case["title"])
         book = matching[0]
-        assert book.authors == case["expected_authors"], book.authors
+        if not book.authors == case["expected_authors"]:
+            raise AssertionError(book.authors)
         description = plugin._usable_description(book.comments)
-        assert description and len(description) >= case["minimum_description"], (
-            "No full live synopsis for " + case["title"]
-        )
-        assert case["topic"] in description.casefold(), "Synopsis has the wrong subject"
-        assert book.tags, "Missing final subject tags"
+        if not (description and len(description) >= case["minimum_description"]):
+            raise AssertionError("No full live synopsis for " + case["title"])
+        if case["topic"] not in description.casefold():
+            raise AssertionError("Synopsis has the wrong subject")
+        if not book.tags:
+            raise AssertionError("Missing final subject tags")
         if case.get("warnings"):
-            assert "trigger warnings:" in book.comments.casefold(), book.comments
-            assert "warnings are available" not in book.comments.casefold()
-            assert book.series == "Wicked Darlings", book.series
-            assert book.series_index == 1.0, book.series_index
-        assert not any(
+            if "trigger warnings:" not in book.comments.casefold():
+                raise AssertionError(book.comments)
+            if not "warnings are available" not in book.comments.casefold():
+                raise AssertionError("Live metadata requirement failed")
+            if not book.series == "Wicked Darlings":
+                raise AssertionError(book.series)
+            if not book.series_index == 1.0:
+                raise AssertionError(book.series_index)
+        if not not any(
             tag.casefold() in {"archive.org", "inlibrary", "printdisabled", "work"}
             for tag in book.tags
-        )
+        ):
+            raise AssertionError("Live metadata requirement failed")
         print("LIVE_METADATA_QUALITY_PASS title=" + book.title)
         print("LIVE_DESCRIPTION_CHARACTERS=" + str(len(description)))
         print("LIVE_SUBJECTS=" + repr(book.tags))
