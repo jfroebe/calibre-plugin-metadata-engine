@@ -24,6 +24,11 @@ def main():
             "title": "Wicked Darlings 1: A Court of Sugar and Spice",
             "authors": ["Rebecca F. Kenney"],
             "isbn": "9798362685058",
+            "identifiers": {
+                "barnesnoble": "1142815476",
+                "google": "bIeLzwEACAAJ",
+                "mobi-asin": "B0BLS8QDJZ",
+            },
             "canonical_isbn": "9798362685058",
             "expected_authors": ["Rebecca F. Kenney"],
             "minimum_description": 500,
@@ -57,7 +62,7 @@ def main():
             Event(),
             title=case["title"],
             authors=case["authors"],
-            identifiers={"isbn": case["isbn"]},
+            identifiers={"isbn": case["isbn"], **case.get("identifiers", {})},
             timeout=15,
         )
         if error:
