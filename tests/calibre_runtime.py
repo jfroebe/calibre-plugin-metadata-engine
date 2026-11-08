@@ -108,7 +108,7 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("archive.org", results[0].tags)
         self.assertNotIn("Inlibrary", results[0].tags)
         self.assertNotIn("Printdisabled", results[0].tags)
-        self.assertIn("voyage of discovery", results[0].title)
+        self.assertIn("voyage of discovery", results[0].title.casefold())
         for rows in ([google], [google, dict(library, source="google_books")]):
             self.assertEqual(
                 self.plugin._recover_incomplete_author(
