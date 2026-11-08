@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from queue import Queue
 from threading import Event
@@ -19,6 +20,53 @@ def main():
     )
     plugin.prefs["base_url"] = "http://192.168.0.59:14000"
     plugin.prefs["plugin_ids"] = ""
+    recover = plugin._recover_supplements
+
+    def inspect_supplements(*args):
+        rows = args[3]
+        same_isbn = [
+            row
+            for row in rows
+            if plugin._canonical_isbn(row.get("isbn")) == "9798362685058"
+        ]
+        for row in same_isbn:
+            print(
+                "LIVE_RAW_IDENTITY="
+                + json.dumps(
+                    {
+                        key: row.get(key)
+                        for key in (
+                            "source",
+                            "title",
+                            "subtitle",
+                            "authors",
+                            "isbn",
+                            "asin",
+                            "series",
+                            "published_year",
+                            "page_count",
+                        )
+                    }
+                )
+            )
+        for left in same_isbn:
+            for right in same_isbn:
+                if left is not right:
+                    print(
+                        "LIVE_PAIR="
+                        + repr(
+                            (
+                                left.get("source"),
+                                right.get("source"),
+                                plugin._compatible_identifiers(left, right),
+                                plugin._identity_consistent(left, right),
+                                plugin._work_description_matches(left, right),
+                            )
+                        )
+                    )
+        return recover(*args)
+
+    plugin._recover_supplements = inspect_supplements
     cases = [
         {
             "title": "Wicked Darlings 1: A Court of Sugar and Spice",
