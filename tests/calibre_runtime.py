@@ -81,6 +81,7 @@ class InstalledPluginTests(unittest.TestCase):
             "source": "internet_archive",
             "description": "227 p. :",
             "genres": ["Spice trade"],
+            "tags": ["internet-archive", "archive.org", "inlibrary", "printdisabled"],
         }
         library = dict(google, authors=["Ian R. Hemphill"], source="open_library")
         inventory = {
@@ -104,6 +105,9 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(results[0].comments, google["description"])
         self.assertIn("Condiments", results[0].tags)
         self.assertIn("Spice trade", results[0].tags)
+        self.assertNotIn("archive.org", results[0].tags)
+        self.assertNotIn("Inlibrary", results[0].tags)
+        self.assertNotIn("Printdisabled", results[0].tags)
         self.assertIn("voyage of discovery", results[0].title)
         for rows in ([google], [google, dict(library, source="google_books")]):
             self.assertEqual(
