@@ -822,7 +822,8 @@ class MetadataEngineSource(Source):
             "Metadata Engine: matching result has no description; trying configured sources"
         )
         retry_ids = [
-            provider for provider in provider_ids
+            provider
+            for provider in provider_ids
             if provider not in {"asintojson", "isbnlab"}
             and provider not in (retried_providers or set())
         ]

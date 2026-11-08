@@ -15,8 +15,8 @@ from pathlib import Path
 from queue import Queue
 from threading import Barrier, Event
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlsplit
 from urllib.error import URLError
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import ProxyHandler, build_opener, install_opener
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -100,7 +100,9 @@ class InstalledPluginTests(unittest.TestCase):
             return {"results": [row]}
 
         with patch.object(self.plugin, "_http_json", side_effect=api):
-            results = self.identify(title=title, authors=["Ian Rupert"], identifiers={"isbn": "0732911516"})
+            results = self.identify(
+                title=title, authors=["Ian Rupert"], identifiers={"isbn": "0732911516"}
+            )
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].authors, ["Ian Rupert Hemphill"])
         self.assertEqual(results[0].comments, synopsis)
@@ -112,15 +114,30 @@ class InstalledPluginTests(unittest.TestCase):
 
     def test_extent_variants_and_short_real_descriptions(self):
         """Reject physical catalog notes while preserving short genuine summaries."""
-        for value in ("1 volume", "2 volumes", "1 v.", "one volume", "1 volume (various pagings)", "227 p. :", "<p>&nbsp;</p>"):
+        for value in (
+            "1 volume",
+            "2 volumes",
+            "1 v.",
+            "one volume",
+            "1 volume (various pagings)",
+            "227 p. :",
+            "<p>&nbsp;</p>",
+        ):
             with self.subTest(value=value):
                 self.assertIsNone(self.plugin._usable_description(value))
-        for value in ("A journey through spice markets.", "One volume changes her life."):
+        for value in (
+            "A journey through spice markets.",
+            "One volume changes her life.",
+        ):
             self.assertEqual(self.plugin._usable_description(value), value)
 
     def test_transport_timeout_retries_once_without_retrying_http_failures(self):
         """Bound timeout recovery at the transport boundary used by all requests."""
-        with patch.object(importlib.import_module(self.plugin.__class__.__module__), "urlopen", side_effect=URLError(TimeoutError("timed out"))) as opening:
+        with patch.object(
+            importlib.import_module(self.plugin.__class__.__module__),
+            "urlopen",
+            side_effect=URLError(TimeoutError("timed out")),
+        ) as opening:
             with self.assertRaises(RuntimeError):
                 self.plugin._http_bytes(self.url + "/timeout", 2)
         self.assertEqual(opening.call_count, 2)
