@@ -65,6 +65,132 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertIsNone(error)
         return list(queue.queue)
 
+    def test_edition_decorated_donors_supply_full_synopsis_and_coauthors(self):
+        """Validate the final book through real request parsing and merge paths."""
+        title = "Smoke & Spice"
+        full_title = "Smoke & Spice : Cooking With Smoke, the Real Way to Barbecue"
+        isbn = "9781558328365"
+        synopsis = (
+            "This expanded cookbook explains how to cook slowly with smoke rather than "
+            "direct heat. It guides home cooks through selecting equipment, controlling "
+            "the fire, and preparing regional barbecue dishes. Detailed recipes cover "
+            "meat, fish, vegetables, sauces, side dishes, and desserts. Practical advice "
+            "helps readers understand the different results produced by charcoal grills, "
+            "water smokers, and wood-burning pits. The illustrated third edition includes "
+            "450 recipes and step-by-step guidance for planning a complete outdoor meal."
+        )
+        initial = {
+            "internet_archive": {
+                "title": full_title,
+                "authors": ["Cheryl Alters Jamison"],
+                "isbn": isbn,
+                "confidence": 0.99,
+                "description": None,
+                "genres": ["Barbecuing", "Smoked foods"],
+            },
+            "google_books": {
+                "title": "Smoke & Spice, Updated and Expanded 3rd Edition",
+                "authors": ["Cheryl Jamison", "Bill Jamison"],
+                "isbn": isbn,
+                "confidence": 0.95,
+                "description": "A practical guide to smoking food outdoors.",
+                "genres": ["Cooking"],
+            },
+            "goodreads": {
+                "title": "Smoke & Spice, Updated and Expanded 3rd Edition: Cooking With Smoke, the Real Way to Barbecue",
+                "authors": ["Cheryl Alters Jamison", "Bill Jamison"],
+                "isbn": isbn,
+                "confidence": 0.90,
+                "description": synopsis,
+                "genres": ["Cookbooks", "Food"],
+            },
+            "open_library": {
+                "title": "Smoke & Spice, Revised 2nd Edition",
+                "authors": ["Cheryl Alters Jamison", "Bill Jamison"],
+                "isbn": "9781558322615",
+                "confidence": 1.0,
+                "description": "OLDER EDITION CONTENT must not supply this synopsis.",
+            },
+        }
+
+        class CalibreLog:
+            """Record arguments as Calibre does, without printf interpolation."""
+
+            def __init__(self):
+                self.lines = []
+
+            def info(self, *parts):
+                self.lines.append(parts)
+
+            warning = info
+            error = info
+            exception = info
+
+        self.log = CalibreLog()
+        self.plugin.prefs["plugin_ids"] = ",".join(initial)
+
+        def api(url, timeout):
+            provider = urlsplit(url).path.split("/")[-2]
+            return (
+                {"results": [dict(initial[provider])]}
+                if provider in initial
+                else {"results": []}
+            )
+
+        with patch.object(self.plugin, "_http_json", side_effect=api):
+            results = self.identify(
+                title=title,
+                authors=["Cheryl Alters Jamison"],
+                identifiers={"isbn": isbn},
+            )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].comments, synopsis)
+        self.assertEqual(results[0].authors, ["Cheryl Alters Jamison", "Bill Jamison"])
+        self.assertIn("Cookbooks", results[0].tags)
+        self.assertIn("Barbecuing", results[0].tags)
+        self.assertEqual(results[0].get_identifiers()["isbn"], isbn)
+        self.assertTrue(all(len(parts) == 1 for parts in self.log.lines))
+        self.assertFalse(
+            any("%d" in str(parts) or "%s" in str(parts) for parts in self.log.lines)
+        )
+
+    def test_edition_title_normalization_requires_shared_valid_isbn(self):
+        """Keep differing editions, subtitles and identities distinct."""
+        isbn = "9781558328365"
+        base = {
+            "title": "Smoke & Spice",
+            "authors": ["Cheryl Alters Jamison"],
+            "isbn": isbn,
+        }
+        third = dict(base, title="Smoke and Spice, Updated and Expanded Third Edition")
+        second = dict(base, title="Smoke & Spice (2nd Edition)")
+        self.assertTrue(self.plugin._identity_consistent(base, third))
+        self.assertFalse(self.plugin._identity_consistent(second, third))
+        self.assertFalse(
+            self.plugin._identity_consistent(
+                dict(base, title="Smoke & Spice: Cooking With Smoke"),
+                dict(third, title="Smoke & Spice, 3rd Edition: Cooking With Gas"),
+            )
+        )
+        self.assertFalse(
+            self.plugin._identity_consistent(
+                base,
+                dict(third, title="An Unrelated Book, 3rd Edition"),
+            )
+        )
+        self.assertFalse(
+            self.plugin._work_titles_compatible(
+                {"title": base["title"]},
+                {"title": third["title"]},
+            )
+        )
+        self.assertFalse(
+            self.plugin._compatible_identifiers(
+                base,
+                dict(third, isbn="9781558322615"),
+            )
+        )
+
     def test_catalog_extent_triggers_real_search_path_recovery(self):
         """Recover meaningful prose after catalog-only initial results, not a stubbed search."""
         title = "Spice travels : a spice merchant's voyage of discovery"
