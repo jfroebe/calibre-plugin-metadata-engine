@@ -397,6 +397,8 @@ class MetadataEngineSource(Source):
                             missing.append("description")
                         if not mi.tags:
                             missing.append("tags")
+                        if self._warning_referral(mi.comments):
+                            missing.append("content warning details")
                         if missing:
                             _log(
                                 log,
@@ -1931,7 +1933,7 @@ class MetadataEngineSource(Source):
         unique = {}
         for warning in warnings:
             label = warning.strip()
-            if label:
+            if label and not cls._warning_referral(label):
                 unique.setdefault(label.casefold(), label)
         if not unique:
             return comments
@@ -2274,6 +2276,18 @@ class MetadataEngineSource(Source):
             return False
         left_isbn = cls._canonical_isbn(left.get("isbn"))
         right_isbn = cls._canonical_isbn(right.get("isbn"))
+        left_prefix = cls._numbered_title_prefix(left.get("title"))
+        right_prefix = cls._numbered_title_prefix(right.get("title"))
+        if (
+            left_prefix
+            and right_prefix
+            and (
+                cls._series_name_key(left_prefix[0].casefold())
+                != cls._series_name_key(right_prefix[0].casefold())
+                or float(left_prefix[1]) != float(right_prefix[1])
+            )
+        ):
+            return False
         for decorated, plain in ((left, right), (right, left)):
             prefix = cls._numbered_title_prefix(decorated.get("title"))
             if not prefix:

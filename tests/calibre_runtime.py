@@ -756,6 +756,7 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertTrue(self.plugin._identity_consistent(left, right))
         for wrong in (
             dict(right, authors=["Different Writer"]),
+            dict(right, title="Wicked Darlings 2: A Court of Sugar and Spice"),
             dict(right, title="A Court of Hearts and Hunger"),
             dict(right, series=[{"name": "Wicked Darlings", "position": 2}]),
             dict(right, isbn=None),
