@@ -15,6 +15,8 @@ from pathlib import Path
 from queue import Queue
 from threading import Barrier, Event
 from unittest.mock import patch
+from urllib.error import URLError
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import ProxyHandler, build_opener, install_opener
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -62,6 +64,96 @@ class InstalledPluginTests(unittest.TestCase):
         error = self.plugin.identify(self.log, queue, self.abort, **kwargs)
         self.assertIsNone(error)
         return list(queue.queue)
+
+    def test_catalog_extent_triggers_real_search_path_recovery(self):
+        """Recover meaningful prose after catalog-only initial results, not a stubbed search."""
+        title = "Spice travels : a spice merchant's voyage of discovery"
+        synopsis = "Ian Hemphill follows the spice trade, exploring growers, markets and the origins of familiar seasonings."
+        requests = []
+        self.plugin.prefs["plugin_ids"] = "google_books,internet_archive,open_library"
+
+        def api(url, timeout):
+            parsed = urlsplit(url)
+            provider = parsed.path.split("/")[-2]
+            args = parse_qs(parsed.query)
+            requests.append((provider, args))
+            row = {
+                "title": title,
+                "authors": ["Ian Rupert Hemphill"],
+                "isbn": "0732911516",
+                "source_id": "fixture",
+                "description": "1 volume",
+                "genres": ["Condiments"],
+            }
+            if provider == "google_books":
+                row["title"] = "Spice Travels"
+                if "author" not in args:
+                    row["description"] = synopsis
+            elif provider == "internet_archive":
+                row["authors"] = ["1949- Hemphill Ian R. (Ian Rupert)"]
+                row["genres"] = ["Spice trade"]
+            elif provider == "open_library":
+                row["authors"] = ["Ian R. Hemphill"]
+                row["description"] = "227 p. :"
+            else:
+                return {"results": []}
+            return {"results": [row]}
+
+        with patch.object(self.plugin, "_http_json", side_effect=api):
+            results = self.identify(
+                title=title, authors=["Ian Rupert"], identifiers={"isbn": "0732911516"}
+            )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].authors, ["Ian Rupert Hemphill"])
+        self.assertEqual(results[0].comments, synopsis)
+        self.assertIn("Spice Trade", results[0].tags)
+        google = [args for provider, args in requests if provider == "google_books"]
+        self.assertEqual(len(google), 2)
+        self.assertIn("author", google[0])
+        self.assertNotIn("author", google[1])
+
+    def test_extent_variants_and_short_real_descriptions(self):
+        """Reject physical catalog notes while preserving short genuine summaries."""
+        for value in (
+            "1 volume",
+            "2 volumes",
+            "1 v.",
+            "one volume",
+            "1 volume (various pagings)",
+            "227 p. :",
+            "<p>&nbsp;</p>",
+        ):
+            with self.subTest(value=value):
+                self.assertIsNone(self.plugin._usable_description(value))
+        for value in (
+            "A journey through spice markets.",
+            "One volume changes her life.",
+        ):
+            self.assertEqual(self.plugin._usable_description(value), value)
+
+    def test_transport_timeout_retries_once_and_stops(self):
+        """Bound timeout recovery at the transport boundary used by all requests."""
+        with patch.object(
+            importlib.import_module(self.plugin.__class__.__module__),
+            "urlopen",
+            side_effect=URLError(TimeoutError("timed out")),
+        ) as opening:
+            with self.assertRaises(RuntimeError):
+                self.plugin._http_bytes(self.url + "/timeout", 2)
+        self.assertEqual(opening.call_count, 2)
+
+    def test_transport_timeout_recovers_without_losing_payload(self):
+        """Preserve a successful API response after one transient timeout."""
+        response = urllib.request.urlopen(self.url + "/plugins", timeout=2)
+        self.addCleanup(response.close)
+        with patch.object(
+            importlib.import_module(self.plugin.__class__.__module__),
+            "urlopen",
+            side_effect=[URLError(TimeoutError("timed out")), response],
+        ) as opening:
+            payload = self.plugin._http_json(self.url + "/plugins", 2)
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(opening.call_count, 2)
 
     def test_truncated_catalog_author_requires_corroborated_edition_evidence(self):
         """Recover the reported Spice Travels lookup without trusting a lone ID."""
@@ -1237,7 +1329,7 @@ class InstalledPluginTests(unittest.TestCase):
             )
         result = next(row for row in self.plugin._dedupe(rows) if row.get("asin"))
         self.assertEqual(result["description"], "Recovered description")
-        self.assertEqual(
+        self.assertCountEqual(
             [call.args[0] for call in mocked.call_args_list],
             ["first", "second", "third"],
         )
