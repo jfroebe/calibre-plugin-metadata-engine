@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import ssl
+import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -29,7 +30,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 40)
+    version = (1, 1, 41)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -820,22 +821,26 @@ class MetadataEngineSource(Source):
         log.info(
             "Metadata Engine: matching result has no description; trying configured sources"
         )
-        for provider_id in provider_ids:
+        retry_ids = [
+            provider for provider in provider_ids
+            if provider not in {"asintojson", "isbnlab"}
+            and provider not in (retried_providers or set())
+        ]
+        if not authors and not identifiers and query.strip() == short_title:
+            return rows
+        # One bounded refinement batch. Independent sources start together;
+        # merging stays serial and retains the normal identity checks.
+        retry_batch = self._initial_provider_batch(
+            retry_ids, short_title, None, {}, min(timeout, 5), abort
+        )
+        for provider_id in retry_ids:
             if abort.is_set():
                 return rows
-            # These providers only support identifiers, already used above.
-            if provider_id in {"asintojson", "isbnlab"} or provider_id in (
-                retried_providers or set()
-            ):
-                continue
-            # Avoid issuing the same title-only request twice.
-            if not authors and not identifiers and query.strip() == short_title:
-                continue
             try:
-                kwargs = {"metadata_type": "books"} if provider_id == "itunes" else {}
-                found = self._search(
-                    provider_id, short_title, None, {}, timeout, **kwargs
-                )
+                mode = "books" if provider_id == "itunes" else None
+                found, error = retry_batch[(provider_id, mode)]
+                if error is not None:
+                    raise error
                 log.info(
                     "Metadata Engine: description retry provider=%r candidates=%d",
                     provider_id,
@@ -1349,6 +1354,13 @@ class MetadataEngineSource(Source):
             return None
         visible = unescape(re.sub(r"<[^<>]+>", " ", description))
         visible = " ".join(visible.split()).rstrip(" :;")
+        if re.fullmatch(
+            r"(?:\d+|one)\s+(?:v(?:ol)?\.?|volumes?|parts?|audio\s+discs?|discs?)"
+            r"(?:\s*\([^)]*\))?(?:\s*[:;]\s*.*)?\.?",
+            visible,
+            re.IGNORECASE,
+        ):
+            return None
         if not visible or re.fullmatch(
             r"(?:(?:[ivxlcdm]+|\d+)\s*,\s*)?"
             r"\d+\s*(?:p(?:p)?\.?|pages?|leaves)"
@@ -1806,7 +1818,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.40",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.41",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -1818,16 +1830,24 @@ class MetadataEngineSource(Source):
             "verify_ssl", True
         ):
             context = ssl._create_unverified_context()
-        try:
-            with urlopen(
-                req, timeout=max(1, int(timeout)), context=context
-            ) as response:
-                return response.read()
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")
-            raise RuntimeError("HTTP %s: %s" % (exc.code, detail or exc.reason))
-        except URLError as exc:
-            raise RuntimeError(str(exc.reason))
+        deadline = time.monotonic() + max(1, float(timeout))
+        for attempt in range(2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Metadata Engine request retry budget exhausted")
+            try:
+                with urlopen(
+                    req, timeout=remaining / (2 - attempt), context=context
+                ) as response:
+                    return response.read()
+            except HTTPError as exc:
+                detail = exc.read().decode("utf-8", "replace")
+                raise RuntimeError("HTTP %s: %s" % (exc.code, detail or exc.reason))
+            except (TimeoutError, URLError) as exc:
+                reason = getattr(exc, "reason", exc)
+                if attempt == 0 and isinstance(reason, TimeoutError):
+                    continue
+                raise RuntimeError(str(reason)) from exc
 
     def _base_url(self):
         return str(self.prefs.get("base_url", "") or "").strip().rstrip("/")
