@@ -752,6 +752,7 @@ class InstalledPluginTests(unittest.TestCase):
     def test_numbered_anthology_recovers_series_and_same_edition_subjects(self):
         """Use a discovered ISBN and keep disputed contributor data out of Calibre."""
         heading = "Tales from Alternate Earths 2"
+        series = "Tales From Alternate Earths"
         subtitle = "Eleven New Broadcasts from Parallel Dimensions"
         authors = [
             "Daniel M. Bensen",
@@ -781,6 +782,7 @@ class InstalledPluginTests(unittest.TestCase):
             "tags": ["goodreads", "audiobooks"],
         }
         self.plugin.prefs["plugin_ids"] = "goodreads"
+        goodreads_requests = []
 
         def api(url, timeout):
             parsed = urlsplit(url)
@@ -788,7 +790,8 @@ class InstalledPluginTests(unittest.TestCase):
             params = parse_qs(parsed.query)
             if provider == "google_books":
                 return {"results": [row]}
-            if params.get("query") != [heading] or params.get("isbn") != [isbn]:
+            goodreads_requests.append(params)
+            if params.get("query") != [f"{series} 2"] or params.get("isbn") != [isbn]:
                 return {"results": []}
             self.assertNotIn("author", params)
             return {
@@ -811,10 +814,11 @@ class InstalledPluginTests(unittest.TestCase):
                 identifiers={"mobi-asin": "B07GBH1YNV"},
             )
         self.assertEqual(len(result), 1)
+        self.assertEqual(sum("isbn" not in query for query in goodreads_requests), 1)
         book = result[0]
         self.assertEqual(book.title.casefold(), f"{heading}: {subtitle}".casefold())
         self.assertEqual(book.authors, authors)
-        self.assertEqual(book.series, "Tales From Alternate Earths")
+        self.assertEqual(book.series, series)
         self.assertEqual(book.series_index, 2.0)
         self.assertEqual(book.tags, ["Alternate History", "History"])
         self.assertIsNone(

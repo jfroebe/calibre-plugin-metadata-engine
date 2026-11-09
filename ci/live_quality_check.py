@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from queue import Queue
 from threading import Event
 from urllib.request import ProxyHandler, build_opener, install_opener
@@ -130,6 +131,7 @@ def main():
     ]
     for case in cases:
         queue = Queue()
+        started = time.monotonic()
         error = plugin.identify(
             logging.getLogger("live-quality"),
             queue,
@@ -144,6 +146,7 @@ def main():
         )
         if error:
             raise AssertionError(error)
+        print(f"LIVE_LOOKUP_SECONDS={time.monotonic() - started:.2f}", flush=True)
         matching = [
             row
             for row in list(queue.queue)

@@ -197,6 +197,15 @@ class MetadataEngineSource(Source):
                                 "open_library",
                                 "itunes",
                             }
+                            # Once a catalog has identified the edition, use its
+                            # ISBN in the next tier instead of broad author retries.
+                            and not any(
+                                self._canonical_isbn(row.get("isbn"))
+                                and self._matches_requested(
+                                    row, title, authors, identifiers
+                                )
+                                for row in rows
+                            )
                         ):
                             short_title = self._search_title(title)
                             variants = [None, *self._list(authors)[:3]]
@@ -493,15 +502,11 @@ class MetadataEngineSource(Source):
             and (needs_warnings or p not in (retried_providers or set()))
         ]
         isbn = self._canonical_isbn(candidate.get("isbn"))
-        if (
-            needs_tags
-            and not needs_warnings
-            and isbn
-            and self._numbered_volume(candidate)
-        ):
+        volume = self._numbered_volume(candidate)
+        if needs_tags and not needs_warnings and isbn and volume:
             # The subtitle describes the volume. Catalogs index the numbered
             # heading and may disagree on the complete anthology author list.
-            query = candidate["title"].partition(":")[0].strip()
+            query = f"{volume[0]} {volume[1]:g}"
             retry_authors = None
             retry_ids = {"isbn": isbn}
             providers = [
