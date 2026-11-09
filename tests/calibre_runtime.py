@@ -767,12 +767,21 @@ class InstalledPluginTests(unittest.TestCase):
             "Bonnie Milani",
         ]
         isbn = "9781718159075"
+        description = (
+            "The successor to the Sidewise Award winning Tales From Alternate Earths is here. "
+            "Step into the worlds that might have been, with time travel and fairy beings. "
+            "All this and more. There are Americas of a different tilt. "
+            "Authors Jessica Holmes, Daniel M. Bensen, Rob Edwards, Leo McBride, "
+            "Christopher Edwards, Gideon Marcus, Casia Courtier, Jeff Provine, "
+            "Cindy Tomamichel, Brent A. Harris and Bonnie Milani show us the world "
+            "that might have been."
+        )
         row = {
             "title": heading,
             "subtitle": subtitle,
             "authors": authors,
             "isbn": isbn,
-            "description": "The successor to the Sidewise Award winning Tales From Alternate Earths is here.",
+            "description": description,
         }
         donor = {
             "title": heading,
@@ -817,16 +826,74 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(sum("isbn" not in query for query in goodreads_requests), 1)
         book = result[0]
         self.assertEqual(book.title.casefold(), f"{heading}: {subtitle}".casefold())
-        self.assertEqual(book.authors, authors)
+        self.assertEqual(book.authors, [*authors, "Leo McBride"])
         self.assertEqual(book.series, series)
         self.assertEqual(book.series_index, 2.0)
-        self.assertEqual(book.tags, ["Alternate History", "History"])
+        self.assertEqual(
+            book.tags,
+            [
+                "Alternate History",
+                "Science Fiction",
+                "Fantasy",
+                "Anthology",
+                "Anthologies",
+            ],
+        )
+        from calibre.library.comments import comments_to_html
+
+        rendered = comments_to_html(book.comments)
+        self.assertEqual(rendered.count("<p>"), 4)
+        self.assertEqual(
+            book.comments.replace("</p><p>", " ")
+            .removeprefix("<p>")
+            .removesuffix("</p>"),
+            description,
+        )
+        self.assertEqual(
+            self.plugin._with_edition_correction(
+                dict(row, description=f"<div>\n<p>{description}</p></div>")
+            )["description"],
+            book.comments,
+        )
+        unrelated = dict(row, title="Unrelated title", tags=["History"])
+        self.assertEqual(self.plugin._with_edition_correction(unrelated), unrelated)
         self.assertIsNone(
             self.plugin._to_metadata(
                 dict(row, title="Python 3: A Practical Guide", description="A guide."),
                 0,
             ).series
         )
+
+    def test_description_credits_keep_real_and_pen_names(self):
+        """Accept explicit credit forms and ignore prose and contributor roles."""
+        for description, author, expected in (
+            (
+                "<p>Authors: Richard Bachman (Stephen King)</p>",
+                "Richard Bachman",
+                ["Richard Bachman", "Stephen King"],
+            ),
+            (
+                "Stephen King writing as Richard Bachman",
+                "Stephen King",
+                ["Stephen King", "Richard Bachman"],
+            ),
+            (
+                "<p>Authors: Richard Bachman (Stephen King)</p>",
+                "Richard Bachman (Stephen King)",
+                ["Richard Bachman", "Stephen King"],
+            ),
+            (
+                "This novel was inspired by Stephen King and Richard Bachman.",
+                "Stephen King",
+                ["Stephen King"],
+            ),
+            ("Authors: Stephen King (Editor)", "Stephen King", ["Stephen King"]),
+            ("Authors: Stephen King (Richard Bachman)", "Jane Doe", ["Jane Doe"]),
+        ):
+            with self.subTest(description=description, author=author):
+                self.assertEqual(
+                    self.plugin._description_authors(description, [author]), expected
+                )
 
     def test_prefix_matching_keeps_identity_and_series_guards(self):
         """A shared ISBN cannot excuse a different author, book, or series number."""

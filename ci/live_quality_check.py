@@ -122,8 +122,17 @@ def main():
             ],
             "identifiers": {"mobi-asin": "B07GBH1YNV"},
             "canonical_isbn": "9781718159075",
+            "additional_authors": ["Leo McBride"],
             "minimum_description": 500,
             "expected_subjects": {"alternate history"},
+            "exact_tags": [
+                "Alternate History",
+                "Science Fiction",
+                "Fantasy",
+                "Anthology",
+                "Anthologies",
+            ],
+            "paragraphs": 4,
             "topic": "alternate history",
             "series": ("Tales From Alternate Earths", 2.0),
             "timeout": 30,
@@ -178,7 +187,10 @@ def main():
             raise AssertionError(book.authors)
         if not expected_authors:
             actual = {plugin._author_words(person) for person in book.authors}
-            expected = {plugin._author_words(person) for person in case["authors"]}
+            expected = {
+                plugin._author_words(person)
+                for person in [*case["authors"], *case.get("additional_authors", [])]
+            }
             if actual != expected:
                 raise AssertionError(book.authors)
         description = plugin._usable_description(book.comments)
@@ -191,6 +203,10 @@ def main():
         subjects = {tag.casefold() for tag in book.tags}
         if not case["expected_subjects"].intersection(subjects):
             raise AssertionError("No relevant subjects for " + case["title"])
+        if case.get("exact_tags") and book.tags != case["exact_tags"]:
+            raise AssertionError(book.tags)
+        if case.get("paragraphs") and description.count("<p>") != case["paragraphs"]:
+            raise AssertionError("Missing synopsis paragraphs for " + case["title"])
         if case.get("warnings"):
             if "trigger warnings:" not in book.comments.casefold():
                 raise AssertionError(book.comments)
