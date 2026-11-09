@@ -10,6 +10,7 @@ import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from hashlib import md5
 from html import escape, unescape
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
@@ -40,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 47)
+    version = (1, 1, 48)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -906,7 +907,41 @@ class MetadataEngineSource(Source):
                         lookup = "goodreads:" + value if kind == "goodreads" else value
                         if provider == "open_library" and kind in {"lccn", "oclc"}:
                             lookup = kind.upper() + ":" + value
-                        found = self._search(provider, lookup, None, {}, timeout)
+                        found = []
+                        anchor_extra = anchor.get("extra") if anchor else None
+                        if (
+                            kind == "goodreads"
+                            and isinstance(anchor_extra, dict)
+                            and anchor_extra.get("goodreads_url")
+                        ):
+                            asin = self._cover_asin(identifiers)
+                            if re.fullmatch(r"B[A-Z0-9]{9}", asin):
+                                try:
+                                    edition = self._goodreads_kindle_edition(
+                                        value, asin, min(timeout, 8)
+                                    )
+                                    if (
+                                        edition
+                                        and edition["description"]
+                                        and edition["genres"]
+                                        and self._matches_requested(
+                                            edition, title, authors, identifiers
+                                        )
+                                        and self._compatible_identifiers(
+                                            anchor, edition
+                                        )
+                                        and self._identity_consistent(anchor, edition)
+                                    ):
+                                        found.append(edition)
+                                except (OSError, RuntimeError, ValueError) as exc:
+                                    _log(
+                                        log,
+                                        "warning",
+                                        "Metadata Engine Goodreads edition lookup failed: %s",
+                                        exc,
+                                    )
+                        if not found:
+                            found = self._search(provider, lookup, None, {}, timeout)
                     accepted = []
                     for candidate in found:
                         candidate_values = {value_for(candidate, kind)}
@@ -964,6 +999,80 @@ class MetadataEngineSource(Source):
                         exc,
                     )
         return rows
+
+    def _goodreads_kindle_edition(self, goodreads_id, asin, timeout):
+        """Read the Goodreads edition page only when its book ID and ASIN agree."""
+        url = f"https://www.goodreads.com/en/book/show/{goodreads_id}"
+        html = self._http_bytes(url, timeout).decode("utf-8", "replace")
+        script = re.search(
+            r'<script\b[^>]*\bid=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not script:
+            return None
+        data = json.loads(script[1])
+        if not isinstance(data, dict):
+            return None
+        props = data.get("props")
+        page = props.get("pageProps") if isinstance(props, dict) else None
+        state = page.get("apolloState") if isinstance(page, dict) else None
+        if not isinstance(state, dict):
+            return None
+
+        def linked(edge):
+            key = edge.get("__ref") if isinstance(edge, dict) else None
+            record = state.get(key) if isinstance(key, str) else None
+            return record if isinstance(record, dict) else {}
+
+        for book in state.values():
+            if (
+                not isinstance(book, dict)
+                or book.get("__typename") != "Book"
+                or str(book.get("legacyId")) != goodreads_id
+            ):
+                continue
+            details = book.get("details")
+            if not isinstance(details, dict) or details.get("asin") != asin:
+                return None
+            author = book.get("primaryContributorEdge")
+            person = linked(author.get("node")) if isinstance(author, dict) else {}
+            title = self._text(book.get("titleComplete") or book.get("title"))
+            authors = self._list(person.get("name"))
+            if not title or not authors:
+                return None
+            genres = [
+                genre["name"]
+                for entry in book.get("bookGenres") or []
+                if isinstance(entry, dict)
+                and isinstance(genre := entry.get("genre"), dict)
+                and self._text(genre.get("name"))
+            ]
+            series = []
+            for entry in book.get("bookSeries") or []:
+                if isinstance(entry, dict):
+                    name = self._text(linked(entry.get("series")).get("title"))
+                    if name:
+                        series.append(
+                            {"name": name, "position": entry.get("userPosition")}
+                        )
+            return {
+                "source": "goodreads",
+                "source_id": goodreads_id,
+                "title": unescape(title),
+                "authors": authors,
+                "asin": asin,
+                "isbn": self._canonical_isbn(
+                    details.get("isbn13") or details.get("isbn")
+                ),
+                "description": self._usable_description(book.get("description")),
+                "genres": genres,
+                "series": series,
+                "publisher": self._text(details.get("publisher")),
+                "cover_url": self._text(book.get("imageUrl")),
+                "extra": {"goodreads_id": goodreads_id, "goodreads_url": url},
+            }
+        return None
 
     def _recover_descriptions(
         self,
@@ -1097,6 +1206,21 @@ class MetadataEngineSource(Source):
         """Prefer the largest decodable cover among verified editions."""
         identifiers = identifiers or {}
         candidates = self._kindle_cover_candidates(identifiers)
+        google_id = self._identifier(
+            identifiers, "metadata_engine_google_books", "google"
+        )
+        if google_id and re.fullmatch(r"[A-Za-z0-9_-]{6,32}", google_id):
+            candidates.append(
+                {
+                    "source": "google_books",
+                    "source_id": google_id,
+                    "native_google_cover": True,
+                    "cover_url": (
+                        f"https://books.google.com/books?id={google_id}"
+                        "&printsec=frontcover&img=1&zoom=0"
+                    ),
+                }
+            )
 
         cached = self._cached_cover(identifiers)
         if cached:
@@ -1278,6 +1402,18 @@ class MetadataEngineSource(Source):
                             dict(item, isbn=row["isbn"])
                             for item in self._kindle_cover_candidates(row)
                         )
+            if "itunes" in provider_ids and not abort.is_set():
+                try:
+                    candidates.extend(
+                        self._apple_cover_candidates(target, min(timeout, 4))
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    _log(
+                        log,
+                        "warning",
+                        "Metadata Engine Apple ISBN lookup failed: %s",
+                        exc,
+                    )
             candidates.extend(rows)
 
         from qt.core import QImage
@@ -1302,11 +1438,13 @@ class MetadataEngineSource(Source):
                 continue
             urls = [url]
             host = (urlsplit(url).hostname or "").casefold()
-            if host == "mzstatic.com" or host.endswith(".mzstatic.com"):
+            if row.get("native_google_cover"):
+                urls.append(url.removesuffix("0") + "1")
+            elif host == "mzstatic.com" or host.endswith(".mzstatic.com"):
                 size = re.search(r"/(\d+)x(\d+)bb(?=\.)", url)
-                if size and max(int(size[1]), int(size[2])) < 2200:
+                if size and max(int(size[1]), int(size[2])) < 10000:
                     urls.insert(
-                        0, url[: size.start()] + "/2200x2200bb" + url[size.end() :]
+                        0, url[: size.start()] + "/10000x10000bb" + url[size.end() :]
                     )
             urls = [item for item in urls if item not in seen_urls]
             if urls:
@@ -1327,10 +1465,16 @@ class MetadataEngineSource(Source):
                     if image.isNull() or image.width() <= 0 or image.height() <= 0:
                         raise ValueError("downloaded image cannot be decoded")
                     if (
-                        row.get("source") == "kindle"
-                        and min(image.width(), image.height()) < 100
-                    ):
-                        raise ValueError("Kindle image is too small to be a cover")
+                        row.get("source") == "kindle" or row.get("native_google_cover")
+                    ) and min(image.width(), image.height()) < 100:
+                        raise ValueError("Image is too small to be a cover")
+                    if row.get("native_google_cover") and md5(
+                        data, usedforsecurity=False
+                    ).hexdigest() in {
+                        "0de4383ebad0adad5eeb8975cd796657",
+                        "a64fa89d7ebc97075c1d363fc5fea71f",
+                    }:
+                        raise ValueError("Google Books returned a placeholder image")
                     score = self._cover_identifier_score(row, identifiers)
                     _log(
                         log,
@@ -1344,6 +1488,8 @@ class MetadataEngineSource(Source):
                     pixels = image.width() * image.height()
                     if best is None or pixels > best[1]:
                         best = (score, pixels, row, candidate_url, data)
+                    if row.get("native_google_cover"):
+                        break
                 except Exception as exc:
                     _log(
                         log,
@@ -1382,6 +1528,48 @@ class MetadataEngineSource(Source):
         else:
             _log(log, "error", "Metadata Engine returned no cover candidates")
         return None
+
+    def _apple_cover_candidates(self, target, timeout):
+        """Find Apple Books artwork for the exact ISBN before ranking covers."""
+        isbn = self._canonical_isbn(target.get("isbn"))
+        if not isbn:
+            return []
+        params = urlencode(
+            {
+                "isbn": isbn,
+                "entity": "ebook",
+                "limit": 10,
+                "version": 2,
+                "country": "US",
+            }
+        )
+        payload = self._http_json(f"https://itunes.apple.com/lookup?{params}", timeout)
+        results = payload.get("results")
+        if not isinstance(results, list):
+            return []
+        covers = []
+        for item in results:
+            if not isinstance(item, dict) or item.get("kind") != "ebook":
+                continue
+            url = urlsplit(self._text(item.get("artworkUrl100")))
+            if url.scheme != "https" or not (url.hostname or "").endswith(
+                ".mzstatic.com"
+            ):
+                continue
+            row = {
+                "source": "itunes",
+                "title": self._text(item.get("trackName")),
+                "authors": self._list(item.get("artistName")),
+                "isbn": isbn,
+                "cover_url": url.geturl(),
+            }
+            if (
+                row["title"]
+                and row["authors"]
+                and self._identity_consistent(target, row)
+            ):
+                covers.append(row)
+        return covers
 
     @classmethod
     def _kindle_cover_candidates(cls, identifiers):
@@ -2308,7 +2496,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.47",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.48",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -2374,6 +2562,11 @@ class MetadataEngineSource(Source):
             row_goodreads = cls._text(row.get("source_id"))
         if wanted_goodreads and row_goodreads:
             return 2 if wanted_goodreads == row_goodreads else 0
+
+        if row.get("native_google_cover") and row.get("source_id") == cls._identifier(
+            identifiers, "metadata_engine_google_books", "google"
+        ):
+            return 2
 
         return 1
 

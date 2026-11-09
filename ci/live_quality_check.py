@@ -13,84 +13,165 @@ from tempfile import TemporaryDirectory
 from threading import Event
 from urllib.request import urlopen
 
-from calibre.customize.ui import add_plugin, metadata_plugins
+from calibre.customize.ui import add_plugin, all_metadata_plugins, metadata_plugins
+from calibre.ebooks.metadata.sources.base import Source
+from calibre.ebooks.metadata.sources.covers import Worker
+from calibre.ebooks.metadata.sources.identify import merge_identify_results
 from calibre.utils.logging import ThreadSafeLog
 from qt.core import QImage
 
+COVER_REFERENCES = {
+    "Apple Books covers": (
+        "362859",
+        "e3543ccc0455f476b1f02ebce6b68818a2e999cd05b5dba824f8d0224b4979bf",
+    ),
+    "Goodreads": (
+        "130638",
+        "a940b53392e9b14768d464c2bcdf0857a17652a42b3e8239b85862d27329eaf5",
+    ),
+    "Kindle hi-res covers": (
+        "286970",
+        "592f0322a1697229c15d1b93b2095e60abf66fa5c84a238acefba443d8a4ae94",
+    ),
+}
 
-def install_kindle_reference():
-    """Install the published, pinned Kindle hi-res plugin in disposable Calibre."""
-    with urlopen(
-        "https://plugins.calibre-ebook.com/286970.zip", timeout=20
-    ) as response:
-        archive = response.read()
-    if sha256(archive).hexdigest() != (
-        "592f0322a1697229c15d1b93b2095e60abf66fa5c84a238acefba443d8a4ae94"
-    ):
-        raise AssertionError("Kindle hi-res covers 0.5.1 archive checksum mismatch")
+
+def install_cover_references():
+    """Install published, checksum-pinned plugins in disposable Calibre."""
     with TemporaryDirectory() as temporary:
-        path = Path(temporary) / "kindle-hi-res.zip"
-        path.write_bytes(archive)
-        add_plugin(str(path))
-    return next(
-        p for p in metadata_plugins(("cover",)) if p.name == "Kindle hi-res covers"
-    )
+        for name, (archive_id, digest) in COVER_REFERENCES.items():
+            url = f"https://plugins.calibre-ebook.com/{archive_id}.zip"
+            with urlopen(url, timeout=20) as response:
+                archive = response.read()
+            if sha256(archive).hexdigest() != digest:
+                raise AssertionError(f"{name} archive checksum mismatch")
+            path = Path(temporary) / f"{archive_id}.zip"
+            path.write_bytes(archive)
+            add_plugin(str(path))
+    # Calibre's Google Books source implements cover download but currently
+    # advertises only identify. Include implemented downloaders as well.
+    sources = [
+        source
+        for source in all_metadata_plugins()
+        if "cover" in source.capabilities
+        or type(source).download_cover is not Source.download_cover
+    ]
+    missing = ({"Google"} | COVER_REFERENCES.keys()) - {p.name for p in sources}
+    if missing:
+        raise AssertionError(f"Missing cover comparison plugins: {sorted(missing)}")
+    return sources
 
 
-def check_cover_quality(engine, kindle, book, case):
-    """Fail when the best Metadata Engine cover loses to Kindle on pixel area."""
-    identifiers = book.get_identifiers()
-    expected_asin = case["identifiers"]["mobi-asin"]
-    if engine._cover_asin(identifiers) != expected_asin:
+def pixels(size):
+    """Measure the area of a decoded cover."""
+    return size[0] * size[1]
+
+
+def check_cover_quality(engine, sources, book, case, stalled_sources):
+    """Compare cover results from Calibre workers using only merged identifiers."""
+    book.identify_plugin = engine
+    book.relevance_in_source = 0
+    (merged,) = merge_identify_results({engine: [book]}, ThreadSafeLog())
+    identifiers = merged.get_identifiers()
+    expected_asin = case.get("identifiers", {}).get("mobi-asin")
+    if expected_asin and engine._cover_asin(identifiers) != expected_asin:
         raise AssertionError(
-            f"Identify result lost Kindle ASIN {expected_asin}: {book.title}"
+            f"Identify result lost Kindle ASIN {expected_asin}: {merged.title}"
         )
-    log = ThreadSafeLog()
 
-    def sizes(plugin, best_only):
-        queue = Queue()
-        plugin.download_cover(
-            log,
-            queue,
+    workers = {}
+    report = {}
+    timeout = case.get("timeout", 30)
+    deadline = time.monotonic() + timeout + 25
+    for source in sources:
+        if source.name in stalled_sources or not source.is_configured():
+            report[source.name] = {
+                "status": "previous_timeout"
+                if source.name in stalled_sources
+                else "unconfigured"
+            }
+            continue
+        worker = Worker(
+            source,
             Event(),
-            title=book.title,
-            authors=book.authors,
-            identifiers=identifiers,
-            timeout=case.get("timeout", 30),
-            get_best_cover=best_only,
+            merged.title,
+            list(merged.authors),
+            dict(identifiers),
+            timeout,
+            Queue(),
+            get_best_cover=(
+                source.name == engine.name
+                or source.name in case.get("isbn_first_covers", ())
+            ),
         )
-        images = [QImage.fromData(data) for _, data in list(queue.queue)]
-        return [
+        workers[source.name] = worker
+        worker.start()
+
+    for name, worker in workers.items():
+        worker.join(max(0, deadline - time.monotonic()))
+        if worker.is_alive():
+            worker.abort.set()
+            stalled_sources.add(name)
+        with worker.rq.mutex:
+            downloads = list(worker.rq.queue)
+        images = [QImage.fromData(data) for _, data in downloads]
+        sizes = [
             (image.width(), image.height())
             for image in images
             if not image.isNull() and min(image.width(), image.height()) >= 100
         ]
+        report[name] = {
+            "status": (
+                "timeout"
+                if name in stalled_sources
+                else "returned"
+                if sizes
+                else "error"
+                if "Traceback" in worker.buf.getvalue()
+                else "no_cover"
+            ),
+            "size": max(sizes, key=pixels, default=None),
+            "seconds": worker.time_spent,
+        }
 
-    def pixels(size):
-        return size[0] * size[1]
-
-    started = time.monotonic()
-    reference = max(sizes(kindle, False), key=pixels, default=None)
-    reference_seconds = time.monotonic() - started
-    if reference is None:
-        if case.get("require_kindle_cover"):
-            raise AssertionError(
-                "Known Kindle reference cover unavailable: " + book.title
-            )
-        print("LIVE_KINDLE_COVER_UNAVAILABLE=" + book.title, flush=True)
-        return
-    started = time.monotonic()
-    actual = max(sizes(engine, True), key=pixels, default=None)
-    engine_seconds = time.monotonic() - started
+    # Image searches may return artwork unrelated to this edition. Record their
+    # results, but use only catalog sources in the size gate.
+    catalog_names = {
+        source.name
+        for source in sources
+        if source.name != engine.name
+        and (
+            "identify" in source.capabilities
+            or source.name in COVER_REFERENCES
+            or source.name == "Open Library"
+        )
+        and source.name != "Google Images"
+    }
+    actual = report[engine.name].get("size")
     print(
-        f"LIVE_COVER_COMPARISON title={book.title!r} engine={actual} kindle={reference} "
-        f"engine_seconds={engine_seconds:.2f} kindle_seconds={reference_seconds:.2f}",
+        "LIVE_COVER_COMPARISON="
+        + json.dumps(
+            {
+                "title": merged.title,
+                "identifiers": identifiers,
+                "catalog_references": sorted(catalog_names),
+                "sources": report,
+            },
+            sort_keys=True,
+        ),
         flush=True,
     )
-    if actual is None or pixels(actual) < pixels(reference):
-        raise AssertionError(
-            f"Metadata Engine cover {actual} is smaller than Kindle {reference}: {book.title}"
-        )
+    failures = []
+    for name in case.get("required_covers", ()):
+        if not report[name].get("size"):
+            failures.append(f"Known {name} reference unavailable: {merged.title}")
+    for name in sorted(catalog_names):
+        reference = report[name].get("size")
+        if reference and (actual is None or pixels(actual) < pixels(reference)):
+            failures.append(
+                f"{merged.title}: Metadata Engine {actual} is smaller than {name} {reference}"
+            )
+    return failures
 
 
 def main():
@@ -99,7 +180,9 @@ def main():
     for key in ("no_proxy", "NO_PROXY"):
         os.environ[key] = ",".join(filter(None, (os.environ.get(key), "192.168.0.59")))
     logging.basicConfig(level=logging.INFO)
-    kindle = install_kindle_reference()
+    cover_sources = install_cover_references()
+    stalled_sources = set()
+    cover_failures = []
     plugin = next(
         p for p in metadata_plugins(("identify",)) if p.name == "Metadata Engine"
     )
@@ -169,6 +252,7 @@ def main():
             "topic": "nutcracker",
             "warnings": True,
             "series": ("Wicked Darlings", 1.0),
+            "required_covers": ("Goodreads",),
         },
         {
             "title": "Spice travels : a spice merchant's voyage of discovery",
@@ -179,6 +263,7 @@ def main():
             "minimum_description": 80,
             "expected_subjects": {"spice trade", "condiments"},
             "topic": "spice",
+            "required_covers": ("Open Library",),
         },
         {
             "title": "Smoke & Spice",
@@ -189,6 +274,7 @@ def main():
             "minimum_description": 600,
             "expected_subjects": {"cooking", "cookbooks"},
             "topic": "barbecue",
+            "required_covers": ("Google",),
         },
         {
             "title": "Tales From Alternate Earths 2: Eleven new broadcasts from parallel dimensions",
@@ -217,9 +303,33 @@ def main():
                 "Anthologies",
             ],
             "paragraphs": 4,
-            "require_kindle_cover": True,
+            "required_covers": ("Kindle hi-res covers",),
             "topic": "alternate history",
             "series": ("Tales From Alternate Earths", 2.0),
+            "timeout": 30,
+        },
+        {
+            "title": "Dark Town, A Fantasy LitRPG Adventure: Level One of the Dragon's Crawl (Tales of Temerity Book 1)",
+            "authors": ["Palmer Pickering"],
+            "identifiers": {"mobi-asin": "B0CYWJ48TS"},
+            "canonical_isbn": "9781960530028",
+            "expected_goodreads": "210280433",
+            "minimum_description": 340,
+            "expected_subjects": {"fantasy", "litrpg", "cozy fantasy"},
+            "topic": "haverly arms",
+            "series": ("Tales of Temerity", 1.0),
+            "timeout": 30,
+        },
+        {
+            "title": "The Hobbit",
+            "authors": ["J. R. R. Tolkien"],
+            "isbn": "9780547951973",
+            "canonical_isbn": "9780547951973",
+            "cover_only": True,
+            "required_covers": ("Apple Books covers",),
+            # Apple's first result is the ISBN match. Its title search also
+            # suggests covers for illustrated and graphic-novel adaptations.
+            "isbn_first_covers": ("Apple Books covers",),
             "timeout": 30,
         },
     ]
@@ -247,6 +357,13 @@ def main():
             if plugin._canonical_isbn(row.get_identifiers().get("isbn"))
             == case["canonical_isbn"]
         ]
+        if case.get("cover_only"):
+            # Select the exact title when the same ISBN has subtitle variants.
+            matching = [
+                row
+                for row in matching
+                if row.title.casefold() == case["title"].casefold()
+            ]
         if len(matching) != 1:
             raise AssertionError(
                 "Expected one verified result for "
@@ -267,6 +384,14 @@ def main():
                 )
             )
         book = matching[0]
+        goodreads = case.get("expected_goodreads")
+        if goodreads and book.get_identifiers().get("goodreads") != goodreads:
+            raise AssertionError(f"Wrong Goodreads edition for {book.title}")
+        if case.get("cover_only"):
+            cover_failures.extend(
+                check_cover_quality(plugin, cover_sources, book, case, stalled_sources)
+            )
+            continue
         expected_authors = case.get("expected_authors")
         if expected_authors and book.authors != expected_authors:
             raise AssertionError(book.authors)
@@ -312,8 +437,11 @@ def main():
         print("LIVE_SUBJECTS=" + repr(book.tags))
         if case.get("warnings"):
             print("LIVE_COMMENTS=" + book.comments)
-        if case.get("identifiers", {}).get("mobi-asin"):
-            check_cover_quality(plugin, kindle, book, case)
+        cover_failures.extend(
+            check_cover_quality(plugin, cover_sources, book, case, stalled_sources)
+        )
+    if cover_failures:
+        raise AssertionError("\n".join(cover_failures))
 
 
 if __name__ == "__main__":

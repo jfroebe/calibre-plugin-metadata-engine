@@ -1,5 +1,28 @@
 # Preventing incomplete metadata regressions
 
+For every reported issue, identify the failure and expand both the regression
+suite and the integration checks before qualifying the fix.
+
+- Reproduce the original input and failure in an isolated regression. Add
+  closely related positive and negative cases based on the cause. Confirm the
+  regression detects the original failure and passes with the fix.
+- Exercise the installed plugin through the same Calibre entry point and
+  handoff the user used. Check the final data and downloaded assets that reach
+  Calibre. Include relevant provider failures, fallback paths, and identity
+  conflicts in the regression coverage.
+- Run integration through the Metadata Engine core, each adapter on the
+  affected path, and every applicable provider. Use the enabled book provider
+  inventory for Calibre and include cover sources available to Calibre itself.
+  Record the component revisions and each source's result, including outages.
+- Record the cause and the added coverage in the pull request. Run both
+  suites on the approved Meta workers and retain the exact tested ZIP and its
+  qualification evidence before distributing it.
+
+Run the frameworks on `chatgpt-dev` and `chatgpt-build-02`. Keep the test inputs
+and entry points in the checkout so the local machines can execute the suites.
+Use GitHub Actions for required check orchestration and evidence, with execution
+on the self-hosted Meta workers.
+
 A successful HTTP lookup or a matching ISBN does not establish that the final
 Calibre result is complete. Catalogs may split a series heading into `title`
 and the actual book name into `subtitle`; another catalog may supply the same
@@ -12,6 +35,10 @@ names, missing series names, and every source ordering. Keep negative cases for
 conflicting authors, work titles, ISBNs, and series positions. A shared ISBN must
 not override a contradictory identity.
 
+Give each scenario a fresh copy of provider records because enrichment can
+mutate them. Verify that a rejection case reaches the intended provider call
+and assert which fields are absent from the final Calibre result.
+
 Validate the final installed-plugin output through the real identify path:
 one result for the verified edition, useful subject tags, the correct series
 and number, and actual enumerated warning labels when supported by sources.
@@ -23,6 +50,21 @@ Keep the reported live lookups in `ci/live_quality_check.py`. Require relevant
 subjects, actual warning labels, and no duplicate same-ISBN results. Fixture
 success and packaging success alone cannot establish live metadata quality.
 Failures must remain visible in the required Meta-worker checks.
+
+Compare covers for every live lookup using the identifiers produced by
+Calibre's metadata merger. Install checksum-pinned Apple Books, Goodreads and
+Kindle cover plugins in the disposable test profile, and run every configured
+cover source available there, including Calibre's built-in Google Books source.
+Record the decoded dimensions and status for each source. A larger catalog
+cover fails the comparison, while general image-search results are recorded
+separately because they may show unrelated artwork.
+Require known live covers from Kindle, Apple Books, Google Books, Goodreads,
+and Open Library. For the Apple Books ebook fixture, use the ISBN result so
+the cover of a graphic-novel adaptation cannot set the size target.
+
+Keep the Kindle-only input for `Dark Town` in the live checks. Confirm that
+the Goodreads follow-up supplies the synopsis and genres, preserves the
+Kindle ASIN, and selects the correct ISBN and `Tales of Temerity` series.
 
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
