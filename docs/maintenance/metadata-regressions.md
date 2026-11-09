@@ -66,6 +66,11 @@ Keep the Kindle-only input for `Dark Town` in the live checks. Confirm that
 the Goodreads follow-up supplies the synopsis and genres, preserves the
 Kindle ASIN, and selects the correct ISBN and `Tales of Temerity` series.
 
+Keep `Every Layout` as an identifier-free query with a missing subtitle
+separator, a trailing year and one of two authors. Verify the canonical
+title, both authors, the synopsis and relevant tags. An identifier-free
+fallback must avoid assigning another edition's cover or publication data.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.
