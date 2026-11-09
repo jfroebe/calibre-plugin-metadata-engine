@@ -1670,7 +1670,7 @@ class MetadataEngineSource(Source):
             words = name.split()
             minimum = 1 if alias and alias[2] else 2
             if not minimum <= len(words) <= 8 or not all(
-                re.fullmatch(r"[^\W\d_][^\W\d_.'’\-]*", word)
+                re.fullmatch(r"[^\W\d_]+(?:[.'’\-][^\W\d_]+)*\.?", word)
                 and (
                     word[0].isupper()
                     or word in {"da", "de", "del", "di", "la", "van", "von"}
@@ -1704,11 +1704,10 @@ class MetadataEngineSource(Source):
         )
         if not credits:
             return authors
-        expanded = [
-            name
-            for author in authors
-            for name in (cls._author_credit_names(author) or [author])
-        ]
+        expanded = []
+        for author in authors:
+            names = cls._author_credit_names(author)
+            expanded.extend(names if len(names) == 2 else [author])
         known = {cls._author_words(name) for name in expanded}
         additional = []
         for credit in credits:
