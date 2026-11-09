@@ -40,7 +40,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 43)
+    version = (1, 1, 44)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -484,17 +484,36 @@ class MetadataEngineSource(Source):
         if not needs_tags and not needs_warnings:
             return rows
         query = self._search_title(candidate.get("title"), candidate.get("subtitle"))
+        retry_authors = self._list(candidate.get("authors"))
+        retry_ids = {}
         providers = [
             p
             for p in provider_ids
             if p not in {"isbnlab", "asintojson"}
             and (needs_warnings or p not in (retried_providers or set()))
         ]
+        isbn = self._canonical_isbn(candidate.get("isbn"))
+        if (
+            needs_tags
+            and not needs_warnings
+            and isbn
+            and self._numbered_volume(candidate)
+        ):
+            # The subtitle describes the volume. Catalogs index the numbered
+            # heading and may disagree on the complete anthology author list.
+            query = candidate["title"].partition(":")[0].strip()
+            retry_authors = None
+            retry_ids = {"isbn": isbn}
+            providers = [
+                p
+                for p in provider_ids
+                if p in {"goodreads", "google_books", "hardcover", "open_library"}
+            ]
         batch = self._initial_provider_batch(
             providers,
             query,
-            self._list(candidate.get("authors")),
-            {},
+            retry_authors,
+            retry_ids,
             min(timeout, 5),
             abort,
         )
@@ -516,7 +535,9 @@ class MetadataEngineSource(Source):
                     if not self._matches_requested(winner, title, authors, identifiers):
                         continue
                     for donor in donors:
-                        self._merge_metadata(winner, donor)
+                        merged = self._merge_metadata(winner, donor)
+                        if not merged and retry_ids and needs_tags:
+                            self._merge_anthology_subjects(winner, donor)
         return rows
 
     @staticmethod
@@ -1912,6 +1933,7 @@ class MetadataEngineSource(Source):
                     pass
 
         if not mi.series:
+            inferred_series = inferred_series or self._numbered_volume(row)
             if inferred_series is None:
                 volume = re.fullmatch(
                     r"(.+?)(?:\s*[:,–—-]\s*|\s+)Volume\s+(\d+(?:\.\d+)?)",
@@ -2056,7 +2078,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.43",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.44",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -2203,6 +2225,24 @@ class MetadataEngineSource(Source):
             value += ": " + cls._text(subtitle)
         match = re.fullmatch(r"(.+?)\s+(\d+(?:\.\d+)?)\s*:\s*(\S.*)", value)
         return match.groups() if match else None
+
+    @classmethod
+    def _numbered_volume(cls, row):
+        """Recognize a numbered heading when its synopsis names the preceding work."""
+        prefix = cls._numbered_title_prefix(row.get("title"), row.get("subtitle"))
+        if not prefix or float(prefix[1]) <= 1:
+            return None
+        name, position, _ = prefix
+        description = unescape(
+            re.sub(r"<[^<>]+>", " ", cls._text(row.get("description")) or "")
+        )
+        match = re.search(
+            r"\b(?:sequel|successor|follow[- ]up)\s+to\s+[^.!?]{0,80}?"
+            rf"\b({re.escape(name)})(?!\w|\s+\d)",
+            " ".join(description.split()),
+            re.IGNORECASE,
+        )
+        return (match[1], float(position)) if match else None
 
     @classmethod
     def _work_title(cls, value):
@@ -2833,6 +2873,34 @@ class MetadataEngineSource(Source):
             # titles and author ordering when identifiers do not conflict.
             winner["cover_url"] = donor["cover_url"]
         return True
+
+    @classmethod
+    def _merge_anthology_subjects(cls, winner, donor):
+        """Copy subjects only when an ISBN and most contributors corroborate a donor."""
+        isbn = cls._canonical_isbn(winner.get("isbn"))
+        if (
+            not isbn
+            or isbn != cls._canonical_isbn(donor.get("isbn"))
+            or not cls._compatible_identifiers(winner, donor)
+            or not cls._identity_consistent(
+                dict(winner, authors=[]), dict(donor, authors=[])
+            )
+        ):
+            return
+        left = {cls._author_words(name) for name in cls._list(winner.get("authors"))}
+        right = {cls._author_words(name) for name in cls._list(donor.get("authors"))}
+        # Count overlap in both directions so an abbreviated name cannot
+        # stand in for several different contributors.
+        shared = min(
+            sum(any(cls._author_words_match(a, b) for b in other) for a in names)
+            for names, other in ((left, right), (right, left))
+        )
+        if shared < 3 or shared * 5 < 4 * max(len(left), len(right)):
+            return
+        for field in ("genres", "tags"):
+            values = cls._list(winner.get(field)) + cls._list(donor.get(field))
+            if values:
+                winner[field] = list(dict.fromkeys(values))
 
     @classmethod
     def _dedupe(cls, rows):
