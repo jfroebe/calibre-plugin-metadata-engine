@@ -31,6 +31,9 @@ cover source available there, including Calibre's built-in Google Books source.
 Record the decoded dimensions and status for each source. A larger catalog
 cover fails the comparison, while general image-search results are recorded
 separately because they may show unrelated artwork.
+Require known live covers from Kindle, Apple Books, Google Books, Goodreads,
+and Open Library. For the Apple Books ebook fixture, use the ISBN result so
+the cover of a graphic-novel adaptation cannot set the size target.
 
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original

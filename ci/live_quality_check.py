@@ -99,7 +99,10 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
             dict(identifiers),
             timeout,
             Queue(),
-            get_best_cover=source.name == engine.name,
+            get_best_cover=(
+                source.name == engine.name
+                or source.name in case.get("isbn_first_covers", ())
+            ),
         )
         workers[source.name] = worker
         worker.start()
@@ -312,6 +315,9 @@ def main():
             "canonical_isbn": "9780547951973",
             "cover_only": True,
             "required_covers": ("Apple Books covers",),
+            # Apple's first result is the ISBN match. Its title search also
+            # suggests covers for illustrated and graphic-novel adaptations.
+            "isbn_first_covers": ("Apple Books covers",),
             "timeout": 30,
         },
     ]

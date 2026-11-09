@@ -2575,27 +2575,35 @@ class InstalledPluginTests(unittest.TestCase):
                 )
 
     def test_apple_cover_requests_native_dimensions(self):
-        """Request Apple's full-size artwork and retain the original as fallback."""
+        """Use Apple's ISBN result and retain its original artwork as fallback."""
         isbn = "9780547951973"
         base = "https://is1-ssl.mzstatic.com/image/thumb/Publication/cover.jpg/"
         original = base + "100x100bb.jpg"
         native = base + "10000x10000bb.jpg"
-        row = {
-            "title": "The Hobbit",
-            "authors": ["J. R. R. Tolkien"],
-            "isbn": isbn,
-            "cover_url": original,
+        lookup = (
+            "https://itunes.apple.com/lookup?"
+            f"isbn={isbn}&entity=ebook&limit=10&version=2&country=US"
+        )
+        ebook = {
+            "kind": "ebook",
+            "trackName": "The Hobbit",
+            "artistName": "J. R. R. Tolkien",
+            "artworkUrl100": original,
         }
+        wrong = dict(
+            ebook, trackName="A Different Book", artworkUrl100=base + "wrong.jpg"
+        )
+        payload = json.dumps({"results": [wrong, ebook]}).encode()
         small = png(67, 100)
         full = png(1600, 2400)
         self.plugin.prefs["plugin_ids"] = "itunes"
         for native_data, expected in ((full, full), (b"invalid", small)):
             with self.subTest(native_available=expected == full):
                 self.plugin._cover_urls.clear()
-                images = {native: native_data, original: small}
+                images = {lookup: payload, native: native_data, original: small}
                 queue = Queue()
                 with (
-                    patch.object(self.plugin, "_search", return_value=[row]),
+                    patch.object(self.plugin, "_search", return_value=[]),
                     patch.object(
                         self.plugin,
                         "_http_bytes",
@@ -2606,14 +2614,58 @@ class InstalledPluginTests(unittest.TestCase):
                         self.log,
                         queue,
                         Event(),
-                        title=row["title"],
-                        authors=row["authors"],
+                        title=ebook["trackName"],
+                        authors=[ebook["artistName"]],
                         identifiers={"isbn": isbn},
                         get_best_cover=True,
                     )
                 self.assertEqual(queue.get_nowait()[1], expected)
                 self.assertEqual(
-                    {call.args[0] for call in fetch.call_args_list}, {native, original}
+                    {call.args[0] for call in fetch.call_args_list}, set(images)
+                )
+
+    def test_google_cover_uses_saved_volume_id(self):
+        """Rank native Google artwork and retry the lower zoom when needed."""
+        google_id = "pD6arNyKyi8C"
+        isbn = "9780547951973"
+        title = "The Hobbit"
+        authors = ["J. R. R. Tolkien"]
+        frontcover = f"https://books.google.com/books?id={google_id}&printsec=frontcover&img=1&zoom="
+        original = "https://example.test/thumbnail.png"
+        catalog = dict(title=title, authors=authors, isbn=isbn, cover_url=original)
+        full = png(1744, 2616)
+        fallback = png(500, 750)
+        self.plugin.prefs["plugin_ids"] = "fixture"
+        for image, expected in ((full, full), (b"invalid", fallback)):
+            with self.subTest(native_available=image == full):
+                self.plugin._cover_urls.clear()
+                queue = Queue()
+                images = {original: png(317, 475), frontcover + "0": image}
+                if image != full:
+                    images[frontcover + "1"] = fallback
+                with (
+                    patch.object(self.plugin, "_search", return_value=[catalog]),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=lambda url, _: images[url],
+                    ) as fetch,
+                ):
+                    self.plugin.download_cover(
+                        self.log,
+                        queue,
+                        Event(),
+                        title=title,
+                        authors=authors,
+                        identifiers={
+                            "isbn": isbn,
+                            "metadata_engine_google_books": google_id,
+                        },
+                        get_best_cover=True,
+                    )
+                self.assertEqual(queue.get_nowait()[1], expected)
+                self.assertEqual(
+                    {call.args[0] for call in fetch.call_args_list}, set(images)
                 )
 
     def test_calibre_cover_uses_asin_from_merged_identify_result(self):
