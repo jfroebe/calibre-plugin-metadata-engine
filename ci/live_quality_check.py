@@ -309,6 +309,18 @@ def main():
             "timeout": 30,
         },
         {
+            "title": "Dark Town, A Fantasy LitRPG Adventure: Level One of the Dragon's Crawl (Tales of Temerity Book 1)",
+            "authors": ["Palmer Pickering"],
+            "identifiers": {"mobi-asin": "B0CYWJ48TS"},
+            "canonical_isbn": "9781960530028",
+            "expected_goodreads": "210280433",
+            "minimum_description": 340,
+            "expected_subjects": {"fantasy", "litrpg", "cozy fantasy"},
+            "topic": "haverly arms",
+            "series": ("Tales of Temerity", 1.0),
+            "timeout": 30,
+        },
+        {
             "title": "The Hobbit",
             "authors": ["J. R. R. Tolkien"],
             "isbn": "9780547951973",
@@ -372,6 +384,9 @@ def main():
                 )
             )
         book = matching[0]
+        goodreads = case.get("expected_goodreads")
+        if goodreads and book.get_identifiers().get("goodreads") != goodreads:
+            raise AssertionError(f"Wrong Goodreads edition for {book.title}")
         if case.get("cover_only"):
             cover_failures.extend(
                 check_cover_quality(plugin, cover_sources, book, case, stalled_sources)

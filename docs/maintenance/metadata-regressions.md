@@ -35,6 +35,10 @@ Require known live covers from Kindle, Apple Books, Google Books, Goodreads,
 and Open Library. For the Apple Books ebook fixture, use the ISBN result so
 the cover of a graphic-novel adaptation cannot set the size target.
 
+Keep the Kindle-only input for `Dark Town` in the live checks. Confirm that
+the Goodreads follow-up supplies the synopsis and genres, preserves the
+Kindle ASIN, and selects the correct ISBN and `Tales of Temerity` series.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.

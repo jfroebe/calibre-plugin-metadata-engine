@@ -393,6 +393,75 @@ class InstalledPluginTests(unittest.TestCase):
         initial = calls.call_args_list[:2]
         self.assertEqual({call.args[1] for call in initial}, {"Sugar And Spice"})
 
+    def test_goodreads_kindle_followup_recovers_only_verified_edition(self):
+        """Recover synopsis, subjects and series from the exact Goodreads edition."""
+        author = "Palmer Pickering"
+        title = "Dark Town, A Fantasy LitRPG Adventure: Level One of the Dragon's Crawl"
+        series = "Tales of Temerity"
+        asin = "B0CYWJ48TS"
+        isbn = "9781960530028"
+        goodreads_id = "210280433"
+        url = f"https://www.goodreads.com/en/book/show/{goodreads_id}"
+        sparse = {
+            "title": title,
+            "authors": [author],
+            "source": "goodreads",
+            "source_id": goodreads_id,
+            "extra": {"goodreads_id": goodreads_id, "goodreads_url": url},
+        }
+        book = {
+            "__typename": "Book",
+            "legacyId": int(goodreads_id),
+            "titleComplete": f"{title} ({series} Book 1)",
+            "description": "Temerity enters the underground Dragon's Game.",
+            "details": {"asin": asin, "isbn13": isbn, "publisher": "Mythology Press"},
+            "primaryContributorEdge": {"node": {"__ref": "Contributor:1"}},
+            "bookGenres": [{"genre": {"name": "Fantasy"}}],
+            "bookSeries": [{"userPosition": "1", "series": {"__ref": "Series:1"}}],
+        }
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for returned_asin in (asin, "B000000001"):
+            with self.subTest(returned_asin=returned_asin):
+                state = {
+                    "Book:1": dict(
+                        book, details=dict(book["details"], asin=returned_asin)
+                    ),
+                    "Contributor:1": {"name": author},
+                    "Series:1": {"title": series},
+                }
+                payload = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                html = f'<script id="__NEXT_DATA__" type="application/json">{payload}</script>'
+
+                def search(provider, query, *args, **kwargs):
+                    return (
+                        [sparse] if provider == "goodreads" and query == title else []
+                    )
+
+                with (
+                    patch.object(self.plugin, "_search", side_effect=search),
+                    patch.object(
+                        self.plugin, "_http_bytes", return_value=html.encode()
+                    ) as fetch,
+                ):
+                    (result,) = self.identify(
+                        title=f"{title} ({series} Book 1)",
+                        authors=[author],
+                        identifiers={"mobi-asin": asin},
+                    )
+                fetch.assert_called_once_with(url, 8)
+                self.assertEqual(result.get_identifiers()["asin"], asin)
+                if returned_asin == asin:
+                    self.assertEqual(result.get_identifiers()["isbn"], isbn)
+                    self.assertEqual(result.tags, ["Fantasy"])
+                    self.assertEqual(result.comments, book["description"])
+                    self.assertEqual(
+                        (result.series, result.series_index), (series, 1.0)
+                    )
+                else:
+                    self.assertNotIn("isbn", result.get_identifiers())
+                    self.assertFalse(result.comments)
+                    self.assertFalse(result.tags)
+
     def test_initial_provider_requests_overlap_for_metadata_and_covers(self):
         """A barrier must admit every provider before any initial call completes."""
         providers = ["google_books", "goodreads", "open_library"]

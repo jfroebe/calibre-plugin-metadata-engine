@@ -907,7 +907,41 @@ class MetadataEngineSource(Source):
                         lookup = "goodreads:" + value if kind == "goodreads" else value
                         if provider == "open_library" and kind in {"lccn", "oclc"}:
                             lookup = kind.upper() + ":" + value
-                        found = self._search(provider, lookup, None, {}, timeout)
+                        found = []
+                        anchor_extra = anchor.get("extra") if anchor else None
+                        if (
+                            kind == "goodreads"
+                            and isinstance(anchor_extra, dict)
+                            and anchor_extra.get("goodreads_url")
+                        ):
+                            asin = self._cover_asin(identifiers)
+                            if re.fullmatch(r"B[A-Z0-9]{9}", asin):
+                                try:
+                                    edition = self._goodreads_kindle_edition(
+                                        value, asin, min(timeout, 8)
+                                    )
+                                    if (
+                                        edition
+                                        and edition["description"]
+                                        and edition["genres"]
+                                        and self._matches_requested(
+                                            edition, title, authors, identifiers
+                                        )
+                                        and self._compatible_identifiers(
+                                            anchor, edition
+                                        )
+                                        and self._identity_consistent(anchor, edition)
+                                    ):
+                                        found.append(edition)
+                                except (OSError, RuntimeError, ValueError) as exc:
+                                    _log(
+                                        log,
+                                        "warning",
+                                        "Metadata Engine Goodreads edition lookup failed: %s",
+                                        exc,
+                                    )
+                        if not found:
+                            found = self._search(provider, lookup, None, {}, timeout)
                     accepted = []
                     for candidate in found:
                         candidate_values = {value_for(candidate, kind)}
@@ -965,6 +999,80 @@ class MetadataEngineSource(Source):
                         exc,
                     )
         return rows
+
+    def _goodreads_kindle_edition(self, goodreads_id, asin, timeout):
+        """Read the Goodreads edition page only when its book ID and ASIN agree."""
+        url = f"https://www.goodreads.com/en/book/show/{goodreads_id}"
+        html = self._http_bytes(url, timeout).decode("utf-8", "replace")
+        script = re.search(
+            r'<script\b[^>]*\bid=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not script:
+            return None
+        data = json.loads(script[1])
+        if not isinstance(data, dict):
+            return None
+        props = data.get("props")
+        page = props.get("pageProps") if isinstance(props, dict) else None
+        state = page.get("apolloState") if isinstance(page, dict) else None
+        if not isinstance(state, dict):
+            return None
+
+        def linked(edge):
+            key = edge.get("__ref") if isinstance(edge, dict) else None
+            record = state.get(key) if isinstance(key, str) else None
+            return record if isinstance(record, dict) else {}
+
+        for book in state.values():
+            if (
+                not isinstance(book, dict)
+                or book.get("__typename") != "Book"
+                or str(book.get("legacyId")) != goodreads_id
+            ):
+                continue
+            details = book.get("details")
+            if not isinstance(details, dict) or details.get("asin") != asin:
+                return None
+            author = book.get("primaryContributorEdge")
+            person = linked(author.get("node")) if isinstance(author, dict) else {}
+            title = self._text(book.get("titleComplete") or book.get("title"))
+            authors = self._list(person.get("name"))
+            if not title or not authors:
+                return None
+            genres = [
+                genre["name"]
+                for entry in book.get("bookGenres") or []
+                if isinstance(entry, dict)
+                and isinstance(genre := entry.get("genre"), dict)
+                and self._text(genre.get("name"))
+            ]
+            series = []
+            for entry in book.get("bookSeries") or []:
+                if isinstance(entry, dict):
+                    name = self._text(linked(entry.get("series")).get("title"))
+                    if name:
+                        series.append(
+                            {"name": name, "position": entry.get("userPosition")}
+                        )
+            return {
+                "source": "goodreads",
+                "source_id": goodreads_id,
+                "title": unescape(title),
+                "authors": authors,
+                "asin": asin,
+                "isbn": self._canonical_isbn(
+                    details.get("isbn13") or details.get("isbn")
+                ),
+                "description": self._usable_description(book.get("description")),
+                "genres": genres,
+                "series": series,
+                "publisher": self._text(details.get("publisher")),
+                "cover_url": self._text(book.get("imageUrl")),
+                "extra": {"goodreads_id": goodreads_id, "goodreads_url": url},
+            }
+        return None
 
     def _recover_descriptions(
         self,
