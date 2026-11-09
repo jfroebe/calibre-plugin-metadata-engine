@@ -2574,6 +2574,48 @@ class InstalledPluginTests(unittest.TestCase):
                     self.plugin._cached_cover({"mobi-asin": asin}), kindle_url
                 )
 
+    def test_apple_cover_requests_native_dimensions(self):
+        """Request Apple's full-size artwork and retain the original as fallback."""
+        isbn = "9780547951973"
+        base = "https://is1-ssl.mzstatic.com/image/thumb/Publication/cover.jpg/"
+        original = base + "100x100bb.jpg"
+        native = base + "10000x10000bb.jpg"
+        row = {
+            "title": "The Hobbit",
+            "authors": ["J. R. R. Tolkien"],
+            "isbn": isbn,
+            "cover_url": original,
+        }
+        small = png(67, 100)
+        full = png(1600, 2400)
+        self.plugin.prefs["plugin_ids"] = "itunes"
+        for native_data, expected in ((full, full), (b"invalid", small)):
+            with self.subTest(native_available=expected == full):
+                self.plugin._cover_urls.clear()
+                images = {native: native_data, original: small}
+                queue = Queue()
+                with (
+                    patch.object(self.plugin, "_search", return_value=[row]),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=lambda url, _: images[url],
+                    ) as fetch,
+                ):
+                    self.plugin.download_cover(
+                        self.log,
+                        queue,
+                        Event(),
+                        title=row["title"],
+                        authors=row["authors"],
+                        identifiers={"isbn": isbn},
+                        get_best_cover=True,
+                    )
+                self.assertEqual(queue.get_nowait()[1], expected)
+                self.assertEqual(
+                    {call.args[0] for call in fetch.call_args_list}, {native, original}
+                )
+
     def test_calibre_cover_uses_asin_from_merged_identify_result(self):
         """A verified ISBN-only provider result must retain the input Kindle ASIN."""
         from calibre.ebooks.metadata.sources.identify import identify

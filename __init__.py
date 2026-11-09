@@ -40,7 +40,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 47)
+    version = (1, 1, 48)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1304,9 +1304,9 @@ class MetadataEngineSource(Source):
             host = (urlsplit(url).hostname or "").casefold()
             if host == "mzstatic.com" or host.endswith(".mzstatic.com"):
                 size = re.search(r"/(\d+)x(\d+)bb(?=\.)", url)
-                if size and max(int(size[1]), int(size[2])) < 2200:
+                if size and max(int(size[1]), int(size[2])) < 10000:
                     urls.insert(
-                        0, url[: size.start()] + "/2200x2200bb" + url[size.end() :]
+                        0, url[: size.start()] + "/10000x10000bb" + url[size.end() :]
                     )
             urls = [item for item in urls if item not in seen_urls]
             if urls:
@@ -2308,7 +2308,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.47",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.48",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

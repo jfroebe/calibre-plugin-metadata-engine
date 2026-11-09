@@ -137,7 +137,11 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
         source.name
         for source in sources
         if source.name != engine.name
-        and ("identify" in source.capabilities or source.name in COVER_REFERENCES)
+        and (
+            "identify" in source.capabilities
+            or source.name in COVER_REFERENCES
+            or source.name == "Open Library"
+        )
         and source.name != "Google Images"
     }
     actual = report[engine.name].get("size")
@@ -155,10 +159,9 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
         flush=True,
     )
     failures = []
-    if case.get("require_kindle_cover") and not report["Kindle hi-res covers"].get(
-        "size"
-    ):
-        failures.append(f"Known Kindle reference unavailable: {merged.title}")
+    for name in case.get("required_covers", ()):
+        if not report[name].get("size"):
+            failures.append(f"Known {name} reference unavailable: {merged.title}")
     for name in sorted(catalog_names):
         reference = report[name].get("size")
         if reference and (actual is None or pixels(actual) < pixels(reference)):
@@ -294,9 +297,18 @@ def main():
                 "Anthologies",
             ],
             "paragraphs": 4,
-            "require_kindle_cover": True,
+            "required_covers": ("Kindle hi-res covers",),
             "topic": "alternate history",
             "series": ("Tales From Alternate Earths", 2.0),
+            "timeout": 30,
+        },
+        {
+            "title": "The Hobbit",
+            "authors": ["J. R. R. Tolkien"],
+            "isbn": "9780547951973",
+            "canonical_isbn": "9780547951973",
+            "cover_only": True,
+            "required_covers": ("Apple Books covers",),
             "timeout": 30,
         },
     ]
@@ -344,6 +356,11 @@ def main():
                 )
             )
         book = matching[0]
+        if case.get("cover_only"):
+            cover_failures.extend(
+                check_cover_quality(plugin, cover_sources, book, case, stalled_sources)
+            )
+            continue
         expected_authors = case.get("expected_authors")
         if expected_authors and book.authors != expected_authors:
             raise AssertionError(book.authors)
