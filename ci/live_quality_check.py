@@ -237,6 +237,18 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Every Layout Relearn CSS layout, by example (2019)",
+            "authors": ["Heydon Pickering"],
+            "expected_authors": ["Heydon Pickering", "Andy Bell"],
+            "expected_title": "Every Layout: Relearn CSS layout, by example",
+            "expected_goodreads": "48932917",
+            "minimum_description": 300,
+            "expected_subjects": {"programming", "web"},
+            "topic": "css layout",
+            "metadata_only": True,
+            "timeout": 30,
+        },
+        {
             "title": "Wicked Darlings 1: A Court of Sugar and Spice",
             "authors": ["Rebecca F. Kenney"],
             "isbn": "9798362685058",
@@ -354,8 +366,13 @@ def main():
         matching = [
             row
             for row in list(queue.queue)
-            if plugin._canonical_isbn(row.get_identifiers().get("isbn"))
-            == case["canonical_isbn"]
+            if (
+                plugin._canonical_isbn(row.get_identifiers().get("isbn"))
+                == case["canonical_isbn"]
+                if "canonical_isbn" in case
+                else row.get_identifiers().get("goodreads")
+                == case["expected_goodreads"]
+            )
         ]
         if case.get("cover_only"):
             # Select the exact title when the same ISBN has subtitle variants.
@@ -384,6 +401,12 @@ def main():
                 )
             )
         book = matching[0]
+        if case.get("expected_title") and book.title != case["expected_title"]:
+            raise AssertionError(f"Wrong catalog title: {book.title}")
+        if case.get("metadata_only") and (
+            book.pubdate or book.get_identifiers().keys() & {"isbn", "asin"}
+        ):
+            raise AssertionError(f"Unverified edition metadata for {book.title}")
         goodreads = case.get("expected_goodreads")
         if goodreads and book.get_identifiers().get("goodreads") != goodreads:
             raise AssertionError(f"Wrong Goodreads edition for {book.title}")
@@ -437,9 +460,10 @@ def main():
         print("LIVE_SUBJECTS=" + repr(book.tags))
         if case.get("warnings"):
             print("LIVE_COMMENTS=" + book.comments)
-        cover_failures.extend(
-            check_cover_quality(plugin, cover_sources, book, case, stalled_sources)
-        )
+        if not case.get("metadata_only"):
+            cover_failures.extend(
+                check_cover_quality(plugin, cover_sources, book, case, stalled_sources)
+            )
     if cover_failures:
         raise AssertionError("\n".join(cover_failures))
 

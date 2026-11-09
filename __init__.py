@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 48)
+    version = (1, 1, 49)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -377,6 +377,16 @@ class MetadataEngineSource(Source):
                     f"Metadata Engine rejected {rejected} conflicting title/author results",
                 )
             rows = compatible
+            if not rows and not identifiers and "goodreads" in provider_ids:
+                try:
+                    rows = self._goodreads_work_fallback(title, authors, abort, timeout)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    _log(
+                        log,
+                        "warning",
+                        "Metadata Engine Goodreads title fallback failed: %s",
+                        exc,
+                    )
 
             isbn = self._canonical_isbn(
                 self._identifier(identifiers, "isbn", "isbn13", "isbn10")
@@ -1002,6 +1012,62 @@ class MetadataEngineSource(Source):
 
     def _goodreads_kindle_edition(self, goodreads_id, asin, timeout):
         """Read the Goodreads edition page only when its book ID and ASIN agree."""
+        row = self._goodreads_book(goodreads_id, timeout)
+        return row if row and row.get("asin") == asin else None
+
+    def _goodreads_work_fallback(self, title, authors, abort, timeout):
+        """Recover work metadata from Goodreads when no catalog finds a match."""
+        authors = self._list(authors)
+        if not title or not authors or abort.is_set():
+            return []
+
+        def title_key(value):
+            normalized, _, _ = self._work_title(value)
+            return " ".join(re.sub(r"[:,]", " ", normalized).split())
+
+        query = re.sub(r"\s+\((?:18|19|20)\d{2}\)$", "", self._search_title(title))
+        if not query:
+            return []
+        deadline = time.monotonic() + min(timeout, 8)
+        params = urlencode({"q": f"{query} {authors[0]}"})
+        html = self._http_bytes(
+            f"https://www.goodreads.com/book/auto_complete?{params}",
+            min(timeout, 4),
+        ).decode("utf-8", "replace")
+        ids = dict.fromkeys(re.findall(r'\bbook_id=["\'](\d{1,16})["\']', html))
+        series, position = self._series_identity({"title": title})
+        for goodreads_id in list(ids)[:3]:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or abort.is_set():
+                break
+            row = self._goodreads_book(goodreads_id, min(remaining, 4))
+            if not row or title_key(query) != title_key(row["title"]):
+                continue
+            target = {"title": row["title"], "authors": authors}
+            if series:
+                target["series"] = [{"name": series, "position": position}]
+            if self._identity_consistent(target, row):
+                # A title-only lookup establishes the work but cannot verify an
+                # edition's identifiers, cover, or publication details.
+                return [
+                    {
+                        key: row[key]
+                        for key in (
+                            "title",
+                            "authors",
+                            "description",
+                            "genres",
+                            "series",
+                            "source",
+                            "source_id",
+                            "extra",
+                        )
+                    }
+                ]
+        return []
+
+    def _goodreads_book(self, goodreads_id, timeout):
+        """Read work and edition fields from the requested Goodreads book page."""
         url = f"https://www.goodreads.com/en/book/show/{goodreads_id}"
         html = self._http_bytes(url, timeout).decode("utf-8", "replace")
         script = re.search(
@@ -1033,12 +1099,20 @@ class MetadataEngineSource(Source):
             ):
                 continue
             details = book.get("details")
-            if not isinstance(details, dict) or details.get("asin") != asin:
-                return None
-            author = book.get("primaryContributorEdge")
-            person = linked(author.get("node")) if isinstance(author, dict) else {}
+            if not isinstance(details, dict):
+                details = {}
+            contributors = [book.get("primaryContributorEdge")]
+            contributors.extend(book.get("secondaryContributorEdges") or [])
             title = self._text(book.get("titleComplete") or book.get("title"))
-            authors = self._list(person.get("name"))
+            authors = list(
+                dict.fromkeys(
+                    name
+                    for edge in contributors
+                    if isinstance(edge, dict)
+                    and edge.get("role") in (None, "Author", "Co-Author")
+                    and (name := self._text(linked(edge.get("node")).get("name")))
+                )
+            )
             if not title or not authors:
                 return None
             genres = [
@@ -1061,7 +1135,7 @@ class MetadataEngineSource(Source):
                 "source_id": goodreads_id,
                 "title": unescape(title),
                 "authors": authors,
-                "asin": asin,
+                "asin": self._text(details.get("asin")),
                 "isbn": self._canonical_isbn(
                     details.get("isbn13") or details.get("isbn")
                 ),
@@ -2496,7 +2570,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.48",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.49",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

@@ -393,6 +393,87 @@ class InstalledPluginTests(unittest.TestCase):
         initial = calls.call_args_list[:2]
         self.assertEqual({call.args[1] for call in initial}, {"Sugar And Spice"})
 
+    def test_goodreads_title_fallback_recovers_work_without_assigning_edition(self):
+        """Match a year-decorated title and coauthors without assigning edition data."""
+        title = "Every Layout Relearn CSS layout, by example (2019)"
+        canonical = "Every Layout: Relearn CSS layout, by example"
+        author = "Heydon Pickering"
+        goodreads_id = "48932917"
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for candidate_title, candidate_author in (
+            (canonical, author),
+            (canonical, "A Different Writer"),
+            ("Every Layout: Relearn JavaScript layout, by example", author),
+        ):
+            with self.subTest(title=candidate_title, author=candidate_author):
+                book = {
+                    "__typename": "Book",
+                    "legacyId": int(goodreads_id),
+                    "title": candidate_title,
+                    "description": "Learn to design reusable layouts with CSS.",
+                    "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                    "secondaryContributorEdges": [
+                        {"role": "Author", "node": {"__ref": "Author:2"}},
+                        {"role": "Editor", "node": {"__ref": "Author:3"}},
+                    ],
+                    "bookGenres": [{"genre": {"name": "Programming"}}],
+                    "imageUrl": "https://example.test/first-edition.jpg",
+                    "details": {
+                        "asin": "B0FSK9TC34",
+                        "isbn13": "9780547951973",
+                        "publisher": "Other Edition Press",
+                    },
+                }
+                state = {
+                    "Book:1": book,
+                    "Author:1": {"name": candidate_author},
+                    "Author:2": {"name": "Andy Bell"},
+                    "Author:3": {"name": "Editor Name"},
+                }
+                payload = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                with (
+                    patch.object(self.plugin, "_search", return_value=[]),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            f"<span book_id='{goodreads_id}'></span>".encode(),
+                            f'<script id="__NEXT_DATA__">{payload}</script>'.encode(),
+                        ],
+                    ) as fetch,
+                ):
+                    results = self.identify(
+                        title=title, authors=[author], identifiers={}
+                    )
+                self.assertEqual(fetch.call_count, 2)
+                query = parse_qs(urlsplit(fetch.call_args_list[0].args[0]).query)
+                self.assertEqual(
+                    query["q"],
+                    ["Every Layout Relearn CSS layout, by example Heydon Pickering"],
+                )
+                self.assertEqual(
+                    fetch.call_args_list[1].args[0],
+                    f"https://www.goodreads.com/en/book/show/{goodreads_id}",
+                )
+                if (candidate_title, candidate_author) != (canonical, author):
+                    self.assertFalse(results)
+                    continue
+                (result,) = results
+                self.assertEqual(result.title, canonical)
+                self.assertEqual(result.authors, [author, "Andy Bell"])
+                self.assertEqual(result.tags, ["Programming"])
+                self.assertEqual(result.comments, book["description"])
+                self.assertEqual(
+                    result.get_identifiers(),
+                    {
+                        "goodreads": goodreads_id,
+                        "metadata_engine_goodreads": goodreads_id,
+                    },
+                )
+                self.assertIsNone(result.publisher)
+                self.assertIsNone(result.pubdate)
+                self.assertIsNone(self.plugin._cached_cover(result.get_identifiers()))
+
     def test_goodreads_kindle_followup_recovers_only_verified_edition(self):
         """Recover synopsis, subjects and series from the exact Goodreads edition."""
         author = "Palmer Pickering"
