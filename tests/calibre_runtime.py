@@ -2512,6 +2512,68 @@ class InstalledPluginTests(unittest.TestCase):
             ],
         )
 
+    def test_direct_kindle_cover_beats_smaller_isbn_cover(self):
+        """Pick the larger verified Kindle cover even when an ISBN is present."""
+        asin = "B07GBH1YNV"
+        isbn = "9781718159075"
+        kindle_url = f"https://ec2.images-amazon.com/images/P/{asin}.01.MAIN._SCRM_.jpg"
+        title = "Tales from Alternate Earths 2"
+        authors = ["Daniel M. Bensen"]
+        catalog_url = "https://example.test/isbn-cover.png"
+        images = {catalog_url: png(333, 500), kindle_url: png(1563, 2180)}
+        catalog = {
+            "title": title,
+            "authors": authors,
+            "isbn": isbn,
+            "cover_url": catalog_url,
+        }
+        self.plugin.prefs["plugin_ids"] = "fixture"
+        for identifiers in (
+            {"isbn": isbn, "mobi-asin": asin},
+            {"isbn": isbn, "amazon_uk": asin},
+            {"isbn": isbn},
+        ):
+            with self.subTest(identifiers=identifiers):
+                self.plugin._cover_urls.clear()
+                rows = (
+                    [dict(catalog, asin=asin)]
+                    if len(identifiers) == 1
+                    else [
+                        catalog,
+                        dict(
+                            catalog,
+                            asin="B000000001",
+                            cover_url="https://example.test/conflicting-asin.png",
+                        ),
+                    ]
+                )
+                queue = Queue()
+                with (
+                    patch.object(self.plugin, "_search", return_value=rows),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=lambda url, _: images[url],
+                    ) as download,
+                ):
+                    self.plugin.download_cover(
+                        self.log,
+                        queue,
+                        self.abort,
+                        title=title,
+                        authors=authors,
+                        identifiers=identifiers,
+                        get_best_cover=True,
+                    )
+                self.assertEqual(queue.get_nowait()[1], images[kindle_url])
+                self.assertTrue(queue.empty())
+                self.assertEqual(
+                    {call.args[0] for call in download.call_args_list}, set(images)
+                )
+                self.assertEqual(
+                    self.plugin._cached_cover({"mobi-asin": asin}), kindle_url
+                )
+
     def test_sparse_goodreads_search_recovers_cover_by_verified_id(self):
         """A sparse title search must recover its matching Goodreads cover."""
         sparse = {
