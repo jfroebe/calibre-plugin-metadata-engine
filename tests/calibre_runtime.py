@@ -434,7 +434,9 @@ class InstalledPluginTests(unittest.TestCase):
 
                 def search(provider, query, *args, **kwargs):
                     return (
-                        [sparse] if provider == "goodreads" and query == title else []
+                        [deepcopy(sparse)]
+                        if provider == "goodreads" and query == title
+                        else []
                     )
 
                 with (
