@@ -2574,6 +2574,63 @@ class InstalledPluginTests(unittest.TestCase):
                     self.plugin._cached_cover({"mobi-asin": asin}), kindle_url
                 )
 
+    def test_calibre_cover_uses_asin_from_merged_identify_result(self):
+        """A verified ISBN-only provider result must retain the input Kindle ASIN."""
+        from calibre.ebooks.metadata.sources.identify import identify
+        from calibre.utils.logging import DevNull
+
+        asin = "B07GBH1YNV"
+        title = "Tales from Alternate Earths 2"
+        authors = ["Daniel M. Bensen"]
+        isbn = "9781718159075"
+        kindle_url = f"https://ec2.images-amazon.com/images/P/{asin}.01.MAIN._SCRM_.jpg"
+        catalog_url = "https://example.test/isbn-cover.png"
+        catalog = {
+            "title": title,
+            "authors": authors,
+            "isbn": isbn,
+            "description": "An alternate history anthology.",
+            "tags": ["Alternate History"],
+            "cover_url": catalog_url,
+        }
+        images = {catalog_url: png(333, 500), kindle_url: png(1563, 2180)}
+        self.plugin.prefs["plugin_ids"] = "fixture"
+        for provider_asin in (None, "B000000001"):
+            with self.subTest(provider_asin=provider_asin):
+                row = dict(catalog, asin=provider_asin)
+                with patch.object(self.plugin, "_search", return_value=[row]):
+                    books = identify(
+                        DevNull(),
+                        Event(),
+                        title=title,
+                        authors=authors,
+                        identifiers={"mobi-asin": asin},
+                        timeout=5,
+                        allowed_plugins=["Metadata Engine"],
+                    )
+                    self.assertEqual(len(books), 1)
+                    book = books[0]
+                    identifiers = book.get_identifiers()
+                    self.assertEqual(identifiers.get("asin"), provider_asin or asin)
+                    if provider_asin:
+                        continue
+                    queue = Queue()
+                    with patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=lambda url, _: images[url],
+                    ):
+                        self.plugin.download_cover(
+                            self.log,
+                            queue,
+                            Event(),
+                            title=book.title,
+                            authors=book.authors,
+                            identifiers=identifiers,
+                            get_best_cover=True,
+                        )
+                    self.assertEqual(queue.get_nowait()[1], images[kindle_url])
+
     def test_sparse_goodreads_search_recovers_cover_by_verified_id(self):
         """A sparse title search must recover its matching Goodreads cover."""
         sparse = {

@@ -39,7 +39,12 @@ def install_kindle_reference():
 
 def check_cover_quality(engine, kindle, book, case):
     """Fail when the best Metadata Engine cover loses to Kindle on pixel area."""
-    identifiers = {**book.get_identifiers(), **case["identifiers"]}
+    identifiers = book.get_identifiers()
+    expected_asin = case["identifiers"]["mobi-asin"]
+    if engine._cover_asin(identifiers) != expected_asin:
+        raise AssertionError(
+            f"Identify result lost Kindle ASIN {expected_asin}: {book.title}"
+        )
     log = ThreadSafeLog()
 
     def sizes(plugin, best_only):

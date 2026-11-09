@@ -40,7 +40,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 46)
+    version = (1, 1, 47)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -402,6 +402,7 @@ class MetadataEngineSource(Source):
             ):
                 self._recover_book_subjects(log, rows[0], isbn, timeout)
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
+            requested_asin = self._cover_asin(identifiers)
 
             for relevance, row in enumerate(rows[:maximum]):
                 if abort.is_set():
@@ -410,6 +411,12 @@ class MetadataEngineSource(Source):
                 if mi is not None:
                     mi.authors = self._description_authors(mi.comments, mi.authors)
                     if self._matches_requested(row, title, authors, identifiers):
+                        # Calibre passes the result's identifiers to its cover
+                        # workers. Catalog records may omit the saved Kindle ID.
+                        if not row.get("asin") and re.fullmatch(
+                            r"B[A-Z0-9]{9}", requested_asin
+                        ):
+                            mi.set_identifier("asin", requested_asin)
                         missing = []
                         if not self._usable_description(mi.comments):
                             missing.append("description")
@@ -2301,7 +2308,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.46",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.47",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
