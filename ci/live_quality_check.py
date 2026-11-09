@@ -4,18 +4,97 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
+from hashlib import sha256
+from pathlib import Path
 from queue import Queue
+from tempfile import TemporaryDirectory
 from threading import Event
-from urllib.request import ProxyHandler, build_opener, install_opener
+from urllib.request import urlopen
 
-from calibre.customize.ui import metadata_plugins
+from calibre.customize.ui import add_plugin, metadata_plugins
+from calibre.utils.logging import ThreadSafeLog
+from qt.core import QImage
+
+
+def install_kindle_reference():
+    """Install the published, pinned Kindle hi-res plugin in disposable Calibre."""
+    with urlopen(
+        "https://plugins.calibre-ebook.com/286970.zip", timeout=20
+    ) as response:
+        archive = response.read()
+    if sha256(archive).hexdigest() != (
+        "592f0322a1697229c15d1b93b2095e60abf66fa5c84a238acefba443d8a4ae94"
+    ):
+        raise AssertionError("Kindle hi-res covers 0.5.1 archive checksum mismatch")
+    with TemporaryDirectory() as temporary:
+        path = Path(temporary) / "kindle-hi-res.zip"
+        path.write_bytes(archive)
+        add_plugin(str(path))
+    return next(
+        p for p in metadata_plugins(("cover",)) if p.name == "Kindle hi-res covers"
+    )
+
+
+def check_cover_quality(engine, kindle, book, case):
+    """Fail when the best Metadata Engine cover loses to Kindle on pixel area."""
+    identifiers = {**book.get_identifiers(), **case["identifiers"]}
+    log = ThreadSafeLog()
+
+    def sizes(plugin, best_only):
+        queue = Queue()
+        plugin.download_cover(
+            log,
+            queue,
+            Event(),
+            title=book.title,
+            authors=book.authors,
+            identifiers=identifiers,
+            timeout=case.get("timeout", 30),
+            get_best_cover=best_only,
+        )
+        images = [QImage.fromData(data) for _, data in list(queue.queue)]
+        return [
+            (image.width(), image.height())
+            for image in images
+            if not image.isNull() and min(image.width(), image.height()) >= 100
+        ]
+
+    def pixels(size):
+        return size[0] * size[1]
+
+    started = time.monotonic()
+    reference = max(sizes(kindle, False), key=pixels, default=None)
+    reference_seconds = time.monotonic() - started
+    if reference is None:
+        if case.get("require_kindle_cover"):
+            raise AssertionError(
+                "Known Kindle reference cover unavailable: " + book.title
+            )
+        print("LIVE_KINDLE_COVER_UNAVAILABLE=" + book.title, flush=True)
+        return
+    started = time.monotonic()
+    actual = max(sizes(engine, True), key=pixels, default=None)
+    engine_seconds = time.monotonic() - started
+    print(
+        f"LIVE_COVER_COMPARISON title={book.title!r} engine={actual} kindle={reference} "
+        f"engine_seconds={engine_seconds:.2f} kindle_seconds={reference_seconds:.2f}",
+        flush=True,
+    )
+    if actual is None or pixels(actual) < pixels(reference):
+        raise AssertionError(
+            f"Metadata Engine cover {actual} is smaller than Kindle {reference}: {book.title}"
+        )
 
 
 def main():
     """Require correct identities, full synopses and useful final subjects."""
-    install_opener(build_opener(ProxyHandler({})))
+    # Only bypass the relay for the LAN engine. External cover sources use it.
+    for key in ("no_proxy", "NO_PROXY"):
+        os.environ[key] = ",".join(filter(None, (os.environ.get(key), "192.168.0.59")))
     logging.basicConfig(level=logging.INFO)
+    kindle = install_kindle_reference()
     plugin = next(
         p for p in metadata_plugins(("identify",)) if p.name == "Metadata Engine"
     )
@@ -133,6 +212,7 @@ def main():
                 "Anthologies",
             ],
             "paragraphs": 4,
+            "require_kindle_cover": True,
             "topic": "alternate history",
             "series": ("Tales From Alternate Earths", 2.0),
             "timeout": 30,
@@ -227,6 +307,8 @@ def main():
         print("LIVE_SUBJECTS=" + repr(book.tags))
         if case.get("warnings"):
             print("LIVE_COMMENTS=" + book.comments)
+        if case.get("identifiers", {}).get("mobi-asin"):
+            check_cover_quality(plugin, kindle, book, case)
 
 
 if __name__ == "__main__":

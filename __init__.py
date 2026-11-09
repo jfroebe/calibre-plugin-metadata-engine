@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from html import escape, unescape
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from calibre.ebooks.metadata.book.base import Metadata
@@ -40,7 +40,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 45)
+    version = (1, 1, 46)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1087,9 +1087,9 @@ class MetadataEngineSource(Source):
         timeout=30,
         get_best_cover=False,
     ):
-        """Queue matching covers ranked by edition evidence and image dimensions."""
+        """Prefer the largest decodable cover among verified editions."""
         identifiers = identifiers or {}
-        candidates = []
+        candidates = self._kindle_cover_candidates(identifiers)
 
         cached = self._cached_cover(identifiers)
         if cached:
@@ -1103,11 +1103,25 @@ class MetadataEngineSource(Source):
 
         query = self._make_query(title, authors, identifiers)
         if query:
-            provider_ids = self._book_provider_ids(log, timeout, abort)
+            target = {
+                "title": title,
+                "authors": authors,
+                "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
+            }
+            provider_ids = self._book_provider_ids(log, min(timeout, 5), abort)
 
             initial = self._initial_provider_batch(
-                provider_ids, query, authors, identifiers, timeout, abort
+                provider_ids, query, authors, identifiers, min(timeout, 8), abort
             )
+            confirmed = any(
+                row.get("cover_url")
+                and self._cover_identifier_score(row, identifiers) > 1
+                and self._identity_consistent(target, row)
+                for provider_rows, error in initial.values()
+                if error is None
+                for row in provider_rows
+            )
+            retry_deadline = time.monotonic() + min(timeout, 5)
             rows = []
             for provider_id in provider_ids:
                 if abort.is_set():
@@ -1116,13 +1130,16 @@ class MetadataEngineSource(Source):
                     provider_rows, error = initial[(provider_id, None)]
                     if error is not None:
                         raise error
+                    rows.extend(provider_rows)
                     if provider_id == "itunes":
                         books, error = initial[(provider_id, "books")]
                         if error is not None:
                             raise error
+                        rows.extend(books)
                         provider_rows.extend(books)
                     if (
                         title
+                        and not confirmed
                         and len(self._list(authors)) > 1
                         and provider_id
                         in {
@@ -1133,21 +1150,22 @@ class MetadataEngineSource(Source):
                             "itunes",
                         }
                         and not any(
-                            self._work_description_matches(
-                                {"title": title, "authors": authors}, item
-                            )
+                            self._work_description_matches(target, item)
                             for item in provider_rows
                         )
                     ):
                         for person in [None, *self._list(authors)[:3]]:
                             if abort.is_set():
                                 return None
+                            remaining = retry_deadline - time.monotonic()
+                            if remaining <= 0:
+                                break
                             retry = self._search(
                                 provider_id,
                                 self._search_title(title),
                                 [person] if person else None,
                                 {},
-                                timeout,
+                                remaining,
                                 **(
                                     {"metadata_type": "books"}
                                     if provider_id == "itunes"
@@ -1157,9 +1175,7 @@ class MetadataEngineSource(Source):
                             matching = [
                                 item
                                 for item in retry
-                                if self._work_description_matches(
-                                    {"title": title, "authors": authors}, item
-                                )
+                                if self._work_description_matches(target, item)
                             ]
                             _log(
                                 log,
@@ -1170,9 +1186,9 @@ class MetadataEngineSource(Source):
                                 len(matching),
                             )
                             if matching:
+                                rows.extend(matching)
                                 provider_rows.extend(matching)
                                 break
-                    rows.extend(provider_rows)
                     cover_count = sum(
                         1 for row in provider_rows if row.get("cover_url")
                     )
@@ -1198,11 +1214,17 @@ class MetadataEngineSource(Source):
 
             rows.extend(
                 self._recover_cover_records(
-                    log, abort, provider_ids, rows, title, authors, identifiers, timeout
+                    log,
+                    abort,
+                    provider_ids,
+                    rows,
+                    title,
+                    authors,
+                    identifiers,
+                    min(timeout, 5),
                 )
             )
 
-            target = {"title": title, "authors": authors}
             eligible = []
             missing_cover = rejected_identity = 0
             for row in rows:
@@ -1242,31 +1264,54 @@ class MetadataEngineSource(Source):
                 ),
                 reverse=True,
             )
+            if not any(row.get("source") == "kindle" for row in candidates):
+                for row in rows:
+                    if self._cover_identifier_score(row, identifiers) == 3:
+                        candidates.extend(
+                            dict(item, isbn=row["isbn"])
+                            for item in self._kindle_cover_candidates(row)
+                        )
             candidates.extend(rows)
-
-        from urllib.parse import urlsplit
 
         from qt.core import QImage
 
         seen_urls = set()
-        covers = []
+        requests = []
+        candidates.sort(
+            key=lambda row: (
+                row.get("source") == "kindle",
+                self._cover_identifier_score(row, identifiers),
+            ),
+            reverse=True,
+        )
         # Bound network work while still allowing several sources and sizes.
-        for row in candidates[:12]:
+        for row in candidates:
             if abort.is_set():
                 return None
+            if len(requests) >= 12:
+                break
             url = self._text(row.get("cover_url"))
             if not url:
                 continue
             urls = [url]
             host = (urlsplit(url).hostname or "").casefold()
             if host == "mzstatic.com" or host.endswith(".mzstatic.com"):
-                larger = re.sub(r"/\d+x\d+bb(?=\.)", "/2200x2200bb", url)
-                if larger != url:
-                    urls.insert(0, larger)
+                size = re.search(r"/(\d+)x(\d+)bb(?=\.)", url)
+                if size and max(int(size[1]), int(size[2])) < 2200:
+                    urls.insert(
+                        0, url[: size.start()] + "/2200x2200bb" + url[size.end() :]
+                    )
+            urls = [item for item in urls if item not in seen_urls]
+            if urls:
+                seen_urls.update(urls)
+                requests.append((row, urls))
+
+        def download(request):
+            row, urls = request
+            best = None
             for candidate_url in urls:
-                if candidate_url in seen_urls:
-                    continue
-                seen_urls.add(candidate_url)
+                if abort.is_set():
+                    return None
                 try:
                     data = self._http_bytes(candidate_url, min(timeout, 10))
                     if not self._looks_like_image(data):
@@ -1274,16 +1319,12 @@ class MetadataEngineSource(Source):
                     image = QImage.fromData(data)
                     if image.isNull() or image.width() <= 0 or image.height() <= 0:
                         raise ValueError("downloaded image cannot be decoded")
+                    if (
+                        row.get("source") == "kindle"
+                        and min(image.width(), image.height()) < 100
+                    ):
+                        raise ValueError("Kindle image is too small to be a cover")
                     score = self._cover_identifier_score(row, identifiers)
-                    covers.append(
-                        (
-                            score,
-                            image.width() * image.height(),
-                            row,
-                            candidate_url,
-                            data,
-                        )
-                    )
                     _log(
                         log,
                         "info",
@@ -1293,8 +1334,9 @@ class MetadataEngineSource(Source):
                         image.height(),
                         score,
                     )
-                    # Keep the original as fallback if an enlarged URL fails.
-                    break
+                    pixels = image.width() * image.height()
+                    if best is None or pixels > best[1]:
+                        best = (score, pixels, row, candidate_url, data)
                 except Exception as exc:
                     _log(
                         log,
@@ -1304,16 +1346,23 @@ class MetadataEngineSource(Source):
                         candidate_url,
                         exc,
                     )
+            return best
+
+        covers = []
+        if requests:
+            with ThreadPoolExecutor(max_workers=min(len(requests), 12)) as executor:
+                covers = [item for item in executor.map(download, requests) if item]
 
         if covers:
-            covers.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            covers.sort(key=lambda item: (item[0] > 1, item[1], item[0]), reverse=True)
             for score, pixels, row, url, data in covers:
                 if abort.is_set():
                     return None
                 result_queue.put((self, data))
                 if get_best_cover:
                     break
-            self._remember_cover(covers[0][2])
+            winner = covers[0]
+            self._remember_cover(dict(winner[2], cover_url=winner[3]))
             return None
 
         if candidates:
@@ -1326,6 +1375,35 @@ class MetadataEngineSource(Source):
         else:
             _log(log, "error", "Metadata Engine returned no cover candidates")
         return None
+
+    @classmethod
+    def _kindle_cover_candidates(cls, identifiers):
+        """Use the native Amazon image for an explicitly identified Kindle edition."""
+        asin = cls._cover_asin(identifiers)
+        if not re.fullmatch(r"B[A-Z0-9]{9}", asin):
+            return []
+        row = {
+            "asin": asin,
+            "source": "kindle",
+            "cover_url": (
+                f"https://ec2.images-amazon.com/images/P/{asin}.01.MAIN._SCRM_.jpg"
+            ),
+        }
+        return [row]
+
+    @classmethod
+    def _cover_asin(cls, identifiers):
+        """Read saved Kindle and regional Amazon identifiers without guessing an ASIN."""
+        explicit = cls._identifier(identifiers, "asin")
+        if explicit:
+            return explicit.upper()
+        amazon_ids = {
+            str(value).strip().upper()
+            for key, value in identifiers.items()
+            if str(key).lower().startswith("amazon")
+            and re.fullmatch(r"B[A-Z0-9]{9}", str(value).strip(), re.IGNORECASE)
+        }
+        return next(iter(amazon_ids)) if len(amazon_ids) == 1 else ""
 
     def _recover_cover_records(
         self,
@@ -1351,7 +1429,12 @@ class MetadataEngineSource(Source):
             ),
         )
         recovered = []
-        target = {"title": title, "authors": authors}
+        deadline = time.monotonic() + timeout
+        target = {
+            "title": title,
+            "authors": authors,
+            "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
+        }
         visited = set()
         for provider, aliases, extra_key, pattern, prefix in strategies:
             if provider not in provider_ids:
@@ -1370,7 +1453,8 @@ class MetadataEngineSource(Source):
                 ):
                     ids.append(value)
             for value in list(dict.fromkeys(ids))[:4]:
-                if abort.is_set():
+                remaining = deadline - time.monotonic()
+                if abort.is_set() or remaining <= 0:
                     return recovered
                 pair = (provider, value)
                 if pair in visited:
@@ -1385,7 +1469,7 @@ class MetadataEngineSource(Source):
                     )
                     continue
                 try:
-                    found = self._search(provider, prefix + value, None, {}, timeout)
+                    found = self._search(provider, prefix + value, None, {}, remaining)
                     accepted = 0
                     for row in found:
                         extra = (
@@ -2176,7 +2260,10 @@ class MetadataEngineSource(Source):
 
     def _cached_cover(self, identifiers):
         for key, value in identifiers.items():
-            url = self._cover_urls.get((str(key).lower(), str(value)))
+            key = str(key).lower()
+            url = self._cover_urls.get(
+                ("asin" if key == "mobi-asin" else key, str(value))
+            )
             if url:
                 return url
         return None
@@ -2214,13 +2301,13 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.45",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.46",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
-        if token:
-            headers["Authorization"] = "Bearer " + token
         req = Request(url, headers=headers)
+        if token and urlsplit(url)[:2] == urlsplit(self._base_url())[:2]:
+            req.add_unredirected_header("Authorization", "Bearer " + token)
         context = None
         if url.lower().startswith("https://") and not self.prefs.get(
             "verify_ssl", True
@@ -2258,25 +2345,18 @@ class MetadataEngineSource(Source):
     @classmethod
     def _cover_identifier_score(cls, row, identifiers):
         """Prefer an exact edition identifier before generic confidence ranking."""
-        wanted_isbn = cls._identifier(identifiers, "isbn", "isbn13", "isbn10")
-        row_isbn = cls._text(row.get("isbn"))
-        if wanted_isbn and row_isbn:
-
-            def normalize(value):
-                return "".join(
-                    ch for ch in str(value).upper() if ch.isdigit() or ch == "X"
-                )
-
-            if normalize(wanted_isbn) == normalize(row_isbn):
-                return 3
-            return 0
-
-        wanted_asin = cls._identifier(identifiers, "asin")
+        wanted_isbn = cls._canonical_isbn(
+            cls._identifier(identifiers, "isbn", "isbn13", "isbn10")
+        )
+        row_isbn = cls._canonical_isbn(row.get("isbn"))
+        wanted_asin = cls._cover_asin(identifiers)
         row_asin = cls._text(row.get("asin"))
-        if wanted_asin and row_asin and wanted_asin.upper() == row_asin.upper():
-            return 2
-        if wanted_asin and row_asin:
+        if wanted_asin and row_asin and wanted_asin.upper() != row_asin.upper():
             return 0
+        if wanted_isbn and row_isbn:
+            return 3 if wanted_isbn == row_isbn else 0
+        if wanted_asin and row_asin:
+            return 2
 
         wanted_goodreads = cls._identifier(
             identifiers, "goodreads", "metadata_engine_goodreads"
