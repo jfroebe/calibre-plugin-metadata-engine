@@ -24,6 +24,14 @@ subjects, actual warning labels, and no duplicate same-ISBN results. Fixture
 success and packaging success alone cannot establish live metadata quality.
 Failures must remain visible in the required Meta-worker checks.
 
+Compare covers for every live lookup using the identifiers produced by
+Calibre's metadata merger. Install checksum-pinned Apple Books, Goodreads and
+Kindle cover plugins in the disposable test profile, and run every configured
+cover source available there, including Calibre's built-in Google Books source.
+Record the decoded dimensions and status for each source. A larger catalog
+cover fails the comparison, while general image-search results are recorded
+separately because they may show unrelated artwork.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.
