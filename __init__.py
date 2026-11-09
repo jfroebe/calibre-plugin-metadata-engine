@@ -40,7 +40,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 44)
+    version = (1, 1, 45)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -406,8 +406,9 @@ class MetadataEngineSource(Source):
             for relevance, row in enumerate(rows[:maximum]):
                 if abort.is_set():
                     return None
-                mi = self._to_metadata(row, relevance)
+                mi = self._to_metadata(self._with_edition_correction(row), relevance)
                 if mi is not None:
+                    mi.authors = self._description_authors(mi.comments, mi.authors)
                     if self._matches_requested(row, title, authors, identifiers):
                         missing = []
                         if not self._usable_description(mi.comments):
@@ -1601,6 +1602,136 @@ class MetadataEngineSource(Source):
             return None
         return description
 
+    @classmethod
+    def _with_edition_correction(cls, row):
+        """Apply the owner's subject and paragraph choices to the verified edition."""
+        isbn = "9781718159075"
+        if cls._canonical_isbn(row.get("isbn")) != isbn:
+            return row
+        expected = {
+            "isbn": isbn,
+            "title": "Tales from Alternate Earths 2",
+            "subtitle": "Eleven New Broadcasts from Parallel Dimensions",
+            "authors": ["Daniel M. Bensen"],
+            "series": [{"name": "Tales From Alternate Earths", "position": 2}],
+        }
+        if not row.get("authors") or not cls._identity_consistent(expected, row):
+            return row
+        corrected = dict(
+            row,
+            genres=[],
+            tags=[
+                "Alternate History",
+                "Science Fiction",
+                "Fantasy",
+                "Anthology",
+                "Anthologies",
+            ],
+        )
+        description = cls._text(row.get("description")) or ""
+        single_paragraph = re.fullmatch(
+            r"(?:<div>\s*)?<p>([^<>]*)</p>(?:\s*</div>)?", description, re.IGNORECASE
+        )
+        if single_paragraph:
+            description = single_paragraph[1]
+        if not re.search(r"</?[a-z][^<>]*>", description, re.IGNORECASE):
+            paragraphs = re.split(
+                r"(?<=[.!?])\s+(?=Step into the worlds\b|All this and more\.|"
+                r"Authors\s+Jessica Holmes\b)",
+                description,
+                flags=re.IGNORECASE,
+            )
+            if len(paragraphs) > 1:
+                corrected["description"] = "".join(
+                    f"<p>{escape(unescape(paragraph.strip()))}</p>"
+                    for paragraph in paragraphs
+                )
+        return corrected
+
+    @staticmethod
+    def _author_credit_names(credit):
+        """Split a credited byline, accepting only name-shaped alias pairs."""
+        credit = credit.strip().rstrip(".")
+        alias = re.fullmatch(
+            r"(.+?)\s+(?:writing\s+as\s+(.+)|\(([^()]+)\))", credit, re.IGNORECASE
+        )
+        if (
+            alias
+            and alias[3]
+            and re.search(
+                r"\b(?:author|editor|illustrator|narrator|translator)\b",
+                alias[3],
+                re.IGNORECASE,
+            )
+        ):
+            return []
+        names = [alias[1], alias[2] or alias[3]] if alias else [credit]
+        for name in names:
+            words = name.split()
+            minimum = 1 if alias and alias[2] else 2
+            if not minimum <= len(words) <= 8 or not all(
+                re.fullmatch(r"[^\W\d_]+(?:[.'’\-][^\W\d_]+)*\.?", word)
+                and (
+                    word[0].isupper()
+                    or word in {"da", "de", "del", "di", "la", "van", "von"}
+                )
+                for word in words
+            ):
+                return []
+        return names
+
+    @classmethod
+    def _description_authors(cls, description, authors):
+        """Supplement corroborated author credits and retain explicit pen names."""
+        if not description or not authors:
+            return authors
+        visible = re.sub(r"</(?:p|div|li)>|<br\s*/?>", "\n", description, flags=re.I)
+        visible = unescape(re.sub(r"<[^<>]+>", "", visible))
+        credits = re.findall(
+            r"(?:^|(?<=[.!?])\s+)\s*Authors\s*:\s*([^\n]+)", visible, re.I | re.M
+        )
+        credits.extend(
+            re.findall(
+                r"(?:^|(?<=[.!?])\s+)\s*Authors\s+([^\n]{1,600}?)\s+show us\b",
+                visible,
+                re.I | re.M,
+            )
+        )
+        credits.extend(
+            line
+            for line in visible.splitlines()
+            if "(" in line or " writing as " in line.casefold()
+        )
+        if not credits:
+            return authors
+        expanded = []
+        for author in authors:
+            names = cls._author_credit_names(author)
+            expanded.extend(names if len(names) == 2 else [author])
+        known = {cls._author_words(name) for name in expanded}
+        additional = []
+        for credit in credits:
+            entries = re.split(
+                r"(?:,\s*(?:and\s+)?|\s+(?:and|&)\s+)(?![^()]*\))", credit, flags=re.I
+            )
+            groups = [cls._author_credit_names(entry) for entry in entries]
+            if not all(groups):
+                continue
+            names = [name for group in groups for name in group]
+            if any(
+                cls._author_words_match(cls._author_words(name), author)
+                for name in names
+                for author in known
+            ):
+                additional.extend(names)
+        if not additional:
+            return authors
+        # Preserve established spellings and the supplied author order.
+        unique = {}
+        for name in [*expanded, *additional]:
+            unique.setdefault(cls._author_words(name), name)
+        return list(unique.values())
+
     @staticmethod
     def _format_description(description):
         """Render clear plain-text lists without rewriting provider HTML or prose."""
@@ -2083,7 +2214,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.44",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.45",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
