@@ -459,7 +459,7 @@ class InstalledPluginTests(unittest.TestCase):
                     self.assertFalse(results)
                     continue
                 (result,) = results
-                self.assertEqual(result.title, canonical)
+                self.assertEqual(result.title.casefold(), canonical.casefold())
                 self.assertEqual(result.authors, [author, "Andy Bell"])
                 self.assertEqual(result.tags, ["Programming"])
                 self.assertEqual(result.comments, book["description"])

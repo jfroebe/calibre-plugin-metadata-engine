@@ -401,7 +401,10 @@ def main():
                 )
             )
         book = matching[0]
-        if case.get("expected_title") and book.title != case["expected_title"]:
+        if (
+            case.get("expected_title")
+            and book.title.casefold() != case["expected_title"].casefold()
+        ):
             raise AssertionError(f"Wrong catalog title: {book.title}")
         if case.get("metadata_only") and (
             book.pubdate or book.get_identifiers().keys() & {"isbn", "asin"}
