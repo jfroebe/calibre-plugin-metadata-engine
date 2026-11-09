@@ -249,6 +249,7 @@ def main():
             "topic": "nutcracker",
             "warnings": True,
             "series": ("Wicked Darlings", 1.0),
+            "required_covers": ("Goodreads",),
         },
         {
             "title": "Spice travels : a spice merchant's voyage of discovery",
@@ -259,6 +260,7 @@ def main():
             "minimum_description": 80,
             "expected_subjects": {"spice trade", "condiments"},
             "topic": "spice",
+            "required_covers": ("Open Library",),
         },
         {
             "title": "Smoke & Spice",
@@ -269,6 +271,7 @@ def main():
             "minimum_description": 600,
             "expected_subjects": {"cooking", "cookbooks"},
             "topic": "barbecue",
+            "required_covers": ("Google",),
         },
         {
             "title": "Tales From Alternate Earths 2: Eleven new broadcasts from parallel dimensions",
@@ -336,6 +339,11 @@ def main():
             if plugin._canonical_isbn(row.get_identifiers().get("isbn"))
             == case["canonical_isbn"]
         ]
+        if case.get("cover_only"):
+            # Select the exact title when the same ISBN has subtitle variants.
+            matching = [
+                row for row in matching if row.title.casefold() == case["title"].casefold()
+            ]
         if len(matching) != 1:
             raise AssertionError(
                 "Expected one verified result for "
