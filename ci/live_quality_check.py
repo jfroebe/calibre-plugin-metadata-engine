@@ -14,6 +14,7 @@ from threading import Event
 from urllib.request import urlopen
 
 from calibre.customize.ui import add_plugin, metadata_plugins
+from calibre.utils.logging import ThreadSafeLog
 from qt.core import QImage
 
 
@@ -39,7 +40,7 @@ def install_kindle_reference():
 def check_cover_quality(engine, kindle, book, case):
     """Fail when the best Metadata Engine cover loses to Kindle on pixel area."""
     identifiers = {**book.get_identifiers(), **case["identifiers"]}
-    log = logging.getLogger("live-cover-quality")
+    log = ThreadSafeLog()
 
     def sizes(plugin, best_only):
         queue = Queue()
