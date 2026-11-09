@@ -342,7 +342,9 @@ def main():
         if case.get("cover_only"):
             # Select the exact title when the same ISBN has subtitle variants.
             matching = [
-                row for row in matching if row.title.casefold() == case["title"].casefold()
+                row
+                for row in matching
+                if row.title.casefold() == case["title"].casefold()
             ]
         if len(matching) != 1:
             raise AssertionError(
