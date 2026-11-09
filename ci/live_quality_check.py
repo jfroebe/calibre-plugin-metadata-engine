@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from queue import Queue
 from threading import Event
 from urllib.request import ProxyHandler, build_opener, install_opener
@@ -83,6 +84,7 @@ def main():
             "expected_subjects": {"fantasy", "romance"},
             "topic": "nutcracker",
             "warnings": True,
+            "series": ("Wicked Darlings", 1.0),
         },
         {
             "title": "Spice travels : a spice merchant's voyage of discovery",
@@ -104,20 +106,47 @@ def main():
             "expected_subjects": {"cooking", "cookbooks"},
             "topic": "barbecue",
         },
+        {
+            "title": "Tales From Alternate Earths 2: Eleven new broadcasts from parallel dimensions",
+            "authors": [
+                "Daniel M Bensen",
+                "Brent A. Harris",
+                "Rob Edwards",
+                "Christopher Edwards",
+                "Casia Courtier",
+                "Jessica Holmes",
+                "Gideon Marcus",
+                "Jeff Provine",
+                "Cindy Tomamichel",
+                "Bonnie Milani",
+            ],
+            "identifiers": {"mobi-asin": "B07GBH1YNV"},
+            "canonical_isbn": "9781718159075",
+            "minimum_description": 500,
+            "expected_subjects": {"alternate history"},
+            "topic": "alternate history",
+            "series": ("Tales From Alternate Earths", 2.0),
+            "timeout": 30,
+        },
     ]
     for case in cases:
         queue = Queue()
+        started = time.monotonic()
         error = plugin.identify(
             logging.getLogger("live-quality"),
             queue,
             Event(),
             title=case["title"],
             authors=case["authors"],
-            identifiers={"isbn": case["isbn"], **case.get("identifiers", {})},
-            timeout=15,
+            identifiers={
+                **({"isbn": case["isbn"]} if "isbn" in case else {}),
+                **case.get("identifiers", {}),
+            },
+            timeout=case.get("timeout", 15),
         )
         if error:
             raise AssertionError(error)
+        print(f"LIVE_LOOKUP_SECONDS={time.monotonic() - started:.2f}", flush=True)
         matching = [
             row
             for row in list(queue.queue)
@@ -144,8 +173,14 @@ def main():
                 )
             )
         book = matching[0]
-        if book.authors != case["expected_authors"]:
+        expected_authors = case.get("expected_authors")
+        if expected_authors and book.authors != expected_authors:
             raise AssertionError(book.authors)
+        if not expected_authors:
+            actual = {plugin._author_words(person) for person in book.authors}
+            expected = {plugin._author_words(person) for person in case["authors"]}
+            if actual != expected:
+                raise AssertionError(book.authors)
         description = plugin._usable_description(book.comments)
         if not (description and len(description) >= case["minimum_description"]):
             raise AssertionError("No full live synopsis for " + case["title"])
@@ -164,10 +199,8 @@ def main():
             labels = book.comments.splitlines()[0].partition(":")[2].strip()
             if not labels or not any(label.isalpha() for label in labels):
                 raise AssertionError("Missing actual warning labels")
-            if book.series != "Wicked Darlings":
-                raise AssertionError(book.series)
-            if book.series_index != 1.0:
-                raise AssertionError(book.series_index)
+        if case.get("series") and (book.series, book.series_index) != case["series"]:
+            raise AssertionError((book.series, book.series_index))
         if any(
             tag.casefold() in {"archive.org", "inlibrary", "printdisabled", "work"}
             for tag in book.tags

@@ -749,6 +749,85 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertIn("Violence", book.comments)
         self.assertNotIn("available on", book.comments)
 
+    def test_numbered_anthology_recovers_series_and_same_edition_subjects(self):
+        """Use a discovered ISBN and keep disputed contributor data out of Calibre."""
+        heading = "Tales from Alternate Earths 2"
+        series = "Tales From Alternate Earths"
+        subtitle = "Eleven New Broadcasts from Parallel Dimensions"
+        authors = [
+            "Daniel M. Bensen",
+            "Brent A. Harris",
+            "Rob Edwards",
+            "Christopher Edwards",
+            "Casia Courtier",
+            "Jessica Holmes",
+            "Gideon Marcus",
+            "Jeff Provine",
+            "Cindy Tomamichel",
+            "Bonnie Milani",
+        ]
+        isbn = "9781718159075"
+        row = {
+            "title": heading,
+            "subtitle": subtitle,
+            "authors": authors,
+            "isbn": isbn,
+            "description": "The successor to the Sidewise Award winning Tales From Alternate Earths is here.",
+        }
+        donor = {
+            "title": heading,
+            "authors": [*authors[:4], "Casia Pickering", *authors[5:], "Leo McBride"],
+            "isbn": isbn,
+            "genres": ["Alternate History", "History"],
+            "tags": ["goodreads", "audiobooks"],
+        }
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        goodreads_requests = []
+
+        def api(url, timeout):
+            parsed = urlsplit(url)
+            provider = parsed.path.split("/")[-2]
+            params = parse_qs(parsed.query)
+            if provider == "google_books":
+                return {"results": [row]}
+            goodreads_requests.append(params)
+            if params.get("query") != [f"{series} 2"] or params.get("isbn") != [isbn]:
+                return {"results": []}
+            self.assertNotIn("author", params)
+            return {
+                "results": [
+                    dict(
+                        donor,
+                        title="Tales from Alternate Earths 3",
+                        tags=["Wrong volume"],
+                    ),
+                    dict(donor, isbn="9798362685058", tags=["Wrong edition"]),
+                    dict(donor, authors=["Unrelated Writer"], tags=["Wrong author"]),
+                    donor,
+                ]
+            }
+
+        with patch.object(self.plugin, "_http_json", side_effect=api):
+            result = self.identify(
+                title=f"{heading}: {subtitle}",
+                authors=authors,
+                identifiers={"mobi-asin": "B07GBH1YNV"},
+            )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(sum("isbn" not in query for query in goodreads_requests), 1)
+        book = result[0]
+        self.assertEqual(book.title.casefold(), f"{heading}: {subtitle}".casefold())
+        self.assertEqual(book.authors, authors)
+        self.assertEqual(book.series, series)
+        self.assertEqual(book.series_index, 2.0)
+        self.assertEqual(book.tags, ["Alternate History", "History"])
+        self.assertIsNone(
+            self.plugin._to_metadata(
+                dict(row, title="Python 3: A Practical Guide", description="A guide."),
+                0,
+            ).series
+        )
+
     def test_prefix_matching_keeps_identity_and_series_guards(self):
         """A shared ISBN cannot excuse a different author, book, or series number."""
         left = dict(
