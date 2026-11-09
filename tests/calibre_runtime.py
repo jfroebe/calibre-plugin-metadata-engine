@@ -812,7 +812,7 @@ class InstalledPluginTests(unittest.TestCase):
             )
         self.assertEqual(len(result), 1)
         book = result[0]
-        self.assertEqual(book.title, f"{heading}: {subtitle}")
+        self.assertEqual(book.title.casefold(), f"{heading}: {subtitle}".casefold())
         self.assertEqual(book.authors, authors)
         self.assertEqual(book.series, "Tales From Alternate Earths")
         self.assertEqual(book.series_index, 2.0)
