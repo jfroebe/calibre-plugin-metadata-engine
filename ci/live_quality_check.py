@@ -63,7 +63,9 @@ def check_cover_quality(engine, kindle, book, case):
     def pixels(size):
         return size[0] * size[1]
 
+    started = time.monotonic()
     reference = max(sizes(kindle, False), key=pixels, default=None)
+    reference_seconds = time.monotonic() - started
     if reference is None:
         if case.get("require_kindle_cover"):
             raise AssertionError(
@@ -71,9 +73,12 @@ def check_cover_quality(engine, kindle, book, case):
             )
         print("LIVE_KINDLE_COVER_UNAVAILABLE=" + book.title, flush=True)
         return
+    started = time.monotonic()
     actual = max(sizes(engine, True), key=pixels, default=None)
+    engine_seconds = time.monotonic() - started
     print(
-        f"LIVE_COVER_COMPARISON title={book.title!r} engine={actual} kindle={reference}",
+        f"LIVE_COVER_COMPARISON title={book.title!r} engine={actual} kindle={reference} "
+        f"engine_seconds={engine_seconds:.2f} kindle_seconds={reference_seconds:.2f}",
         flush=True,
     )
     if actual is None or pixels(actual) < pixels(reference):
