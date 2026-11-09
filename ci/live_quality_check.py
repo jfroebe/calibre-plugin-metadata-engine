@@ -14,6 +14,7 @@ from threading import Event
 from urllib.request import urlopen
 
 from calibre.customize.ui import add_plugin, all_metadata_plugins, metadata_plugins
+from calibre.ebooks.metadata.sources.base import Source
 from calibre.ebooks.metadata.sources.covers import Worker
 from calibre.ebooks.metadata.sources.identify import merge_identify_results
 from calibre.utils.logging import ThreadSafeLog
@@ -47,7 +48,14 @@ def install_cover_references():
             path = Path(temporary) / f"{archive_id}.zip"
             path.write_bytes(archive)
             add_plugin(str(path))
-    sources = [p for p in all_metadata_plugins() if "cover" in p.capabilities]
+    # Calibre's Google Books source implements cover download but currently
+    # advertises only identify. Include implemented downloaders as well.
+    sources = [
+        source
+        for source in all_metadata_plugins()
+        if "cover" in source.capabilities
+        or type(source).download_cover is not Source.download_cover
+    ]
     missing = ({"Google"} | COVER_REFERENCES.keys()) - {p.name for p in sources}
     if missing:
         raise AssertionError(f"Missing cover comparison plugins: {sorted(missing)}")
