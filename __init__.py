@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 49)
+    version = (1, 1, 50)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -360,6 +360,10 @@ class MetadataEngineSource(Source):
                 timeout,
                 retried_providers,
             )
+            if "goodreads" in provider_ids:
+                self._recover_catalog_series(
+                    log, rows, title, authors, identifiers, abort, timeout
+                )
             rows = self._dedupe(rows)
             requested = {
                 "title": title,
@@ -1014,6 +1018,85 @@ class MetadataEngineSource(Source):
         """Read the Goodreads edition page only when its book ID and ASIN agree."""
         row = self._goodreads_book(goodreads_id, timeout)
         return row if row and row.get("asin") == asin else None
+
+    def _recover_catalog_series(
+        self, log, rows, title, authors, identifiers, abort, timeout
+    ):
+        """Split catalog titles only when another source confirms the series and volume."""
+        numbers = {
+            word: index
+            for index, word in enumerate(
+                (
+                    "one",
+                    "two",
+                    "three",
+                    "four",
+                    "five",
+                    "six",
+                    "seven",
+                    "eight",
+                    "nine",
+                    "ten",
+                ),
+                1,
+            )
+        }
+        candidates = []
+        for row in rows:
+            display = self._text(row.get("title")) or ""
+            subtitle = self._text(row.get("subtitle"))
+            if subtitle and subtitle.casefold() not in display.casefold():
+                display += f": {subtitle}"
+            match = re.fullmatch(
+                r"(.+?)\s*:\s*([^:]+?)\s*:\s*(?:book\s+)?(\d+(?:\.\d+)?|"
+                + "|".join(numbers)
+                + r")",
+                display,
+                re.IGNORECASE,
+            )
+            if not match:
+                continue
+            base, name, number = match.groups()
+            work = dict(row, title=base, subtitle=None)
+            if self._matches_requested(work, title, authors, identifiers):
+                position = numbers.get(number.casefold(), number)
+                candidates.append(
+                    (row, work, self._series_name_key(name.casefold()), float(position))
+                )
+        if not candidates or abort.is_set():
+            return
+        try:
+            donors = self._goodreads_work_fallback(
+                candidates[0][1]["title"], authors, abort, timeout
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log(
+                log,
+                "warning",
+                "Metadata Engine Goodreads series lookup failed: %s",
+                exc,
+            )
+            return
+        for donor in donors:
+            name, position = self._series_identity(donor)
+            series = self._series_name_key(name), position
+            work_fields = {
+                key: donor[key] for key in ("title", "authors", "genres", "series")
+            }
+            for row, work, expected_name, expected_position in candidates:
+                if series == (
+                    expected_name,
+                    expected_position,
+                ) and self._merge_metadata(work, work_fields):
+                    if self._series_identity(work)[1] is None:
+                        work["series"] = donor["series"]
+                    row.update(work)
+                    _log(
+                        log,
+                        "info",
+                        "Metadata Engine corroborated catalog series using Goodreads: %s",
+                        work["title"],
+                    )
 
     def _goodreads_work_fallback(self, title, authors, abort, timeout):
         """Recover work metadata from Goodreads when no catalog finds a match."""
@@ -2570,7 +2653,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.49",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.50",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
