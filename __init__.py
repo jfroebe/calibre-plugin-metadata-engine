@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 51)
+    version = (1, 1, 52)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -64,6 +64,7 @@ class MetadataEngineSource(Source):
             "identifier:oclc",
             "identifier:dewey",
             "identifier:openlibrary",
+            "identifier:metadata_engine_media",
         ]
     )
     has_html_comments = True
@@ -1401,8 +1402,9 @@ class MetadataEngineSource(Source):
         timeout=30,
         get_best_cover=False,
     ):
-        """Prefer the largest decodable cover among verified editions."""
+        """Prefer the requested format and cover shape before image size."""
         identifiers = identifiers or {}
+        audiobook = self._audiobook_cover_lookup(identifiers)
         candidates = self._kindle_cover_candidates(identifiers)
         google_id = self._identifier(
             identifiers, "metadata_engine_google_books", "google"
@@ -1412,6 +1414,7 @@ class MetadataEngineSource(Source):
                 {
                     "source": "google_books",
                     "source_id": google_id,
+                    "metadata_type": "books",
                     "native_google_cover": True,
                     "cover_url": (
                         f"https://books.google.com/books?id={google_id}"
@@ -1554,6 +1557,16 @@ class MetadataEngineSource(Source):
                 )
             )
 
+            audiobook = self._audiobook_cover_lookup(
+                identifiers,
+                (
+                    row
+                    for row in rows
+                    if self._cover_identifier_score(row, identifiers) > 1
+                    and self._identity_consistent(target, row)
+                ),
+            )
+            wanted_media = "audiobook" if audiobook else "book"
             eligible = []
             missing_cover = rejected_identity = 0
             for row in rows:
@@ -1563,6 +1576,7 @@ class MetadataEngineSource(Source):
                 score = self._cover_identifier_score(row, identifiers)
                 if (
                     not score
+                    or self._cover_media(row) not in ("", wanted_media)
                     or not self._identity_consistent(target, row)
                     or not (
                         score > 1
@@ -1600,7 +1614,7 @@ class MetadataEngineSource(Source):
                             dict(item, isbn=row["isbn"])
                             for item in self._kindle_cover_candidates(row)
                         )
-            if "itunes" in provider_ids and not abort.is_set():
+            if not audiobook and "itunes" in provider_ids and not abort.is_set():
                 try:
                     candidates.extend(
                         self._apple_cover_candidates(target, min(timeout, 4))
@@ -1631,6 +1645,8 @@ class MetadataEngineSource(Source):
                 return None
             if len(requests) >= 12:
                 break
+            if self._cover_media(row) not in ("", "audiobook" if audiobook else "book"):
+                continue
             url = self._text(row.get("cover_url"))
             if not url:
                 continue
@@ -1683,10 +1699,13 @@ class MetadataEngineSource(Source):
                         image.height(),
                         score,
                     )
-                    pixels = image.width() * image.height()
-                    if best is None or pixels > best[1]:
-                        best = (score, pixels, row, candidate_url, data)
-                    if row.get("native_google_cover"):
+                    shape = self._cover_aspect_rank(
+                        image.width(), image.height(), audiobook
+                    )
+                    rank = (shape, score > 1, image.width() * image.height(), score)
+                    if best is None or rank > best[0]:
+                        best = (rank, row, candidate_url, data)
+                    if row.get("native_google_cover") and shape == 2:
                         break
                 except Exception as exc:
                     _log(
@@ -1705,15 +1724,18 @@ class MetadataEngineSource(Source):
                 covers = [item for item in executor.map(download, requests) if item]
 
         if covers:
-            covers.sort(key=lambda item: (item[0] > 1, item[1], item[0]), reverse=True)
-            for score, pixels, row, url, data in covers:
+            covers.sort(key=lambda item: item[0], reverse=True)
+            winner = covers[0]
+            for rank, row, url, data in covers:
                 if abort.is_set():
                     return None
+                # Calibre can sort a multi-cover response by pixel area.
+                if rank[0] != winner[0][0]:
+                    break
                 result_queue.put((self, data))
                 if get_best_cover:
                     break
-            winner = covers[0]
-            self._remember_cover(dict(winner[2], cover_url=winner[3]))
+            self._remember_cover(dict(winner[1], cover_url=winner[2]))
             return None
 
         if candidates:
@@ -1726,6 +1748,56 @@ class MetadataEngineSource(Source):
         else:
             _log(log, "error", "Metadata Engine returned no cover candidates")
         return None
+
+    @staticmethod
+    def _cover_aspect_rank(width, height, audiobook):
+        """Rank decoded shapes for the requested kind of publication."""
+        if audiobook:
+            return 2 if width == height else int(width > height)
+        return 2 if height > width else 0
+
+    @classmethod
+    def _cover_media(cls, row):
+        """Recognize explicit publication formats without guessing from artwork."""
+        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+        physical = str(
+            extra.get("physical_format") or extra.get("format") or ""
+        ).casefold()
+        if "audio" in physical or row.get("source") in {"audible", "audnexus"}:
+            return "audiobook"
+        if any(
+            word in physical
+            for word in (
+                "kindle",
+                "ebook",
+                "e-book",
+                "paperback",
+                "hardcover",
+                "hardback",
+            )
+        ):
+            return "book"
+        kind = str(row.get("metadata_type") or "").strip().casefold()
+        if kind in {"audiobook", "audiobooks"}:
+            return "audiobook"
+        return "book" if kind and cls._book_media(row) else ""
+
+    @classmethod
+    def _audiobook_cover_lookup(cls, identifiers, verified_rows=()):
+        """Use saved media or an unambiguous exact-edition format match."""
+        media = cls._identifier(identifiers, "metadata_engine_media")
+        if media in {"book", "audiobook"}:
+            return media == "audiobook"
+        if cls._identifier(
+            identifiers,
+            "audible",
+            "audnexus",
+            "metadata_engine_audible",
+            "metadata_engine_audnexus",
+        ):
+            return True
+        known = {cls._cover_media(row) for row in verified_rows}
+        return "audiobook" in known and "book" not in known
 
     def _apple_cover_candidates(self, target, timeout):
         """Find Apple Books artwork for the exact ISBN before ranking covers."""
@@ -1793,7 +1865,16 @@ class MetadataEngineSource(Source):
         amazon_ids = {
             str(value).strip().upper()
             for key, value in identifiers.items()
-            if str(key).lower().startswith("amazon")
+            if (
+                str(key).lower().startswith("amazon")
+                or str(key).lower()
+                in {
+                    "audible",
+                    "audnexus",
+                    "metadata_engine_audible",
+                    "metadata_engine_audnexus",
+                }
+            )
             and re.fullmatch(r"B[A-Z0-9]{9}", str(value).strip(), re.IGNORECASE)
         }
         return next(iter(amazon_ids)) if len(amazon_ids) == 1 else ""
@@ -1990,6 +2071,12 @@ class MetadataEngineSource(Source):
             params["author"] = ", ".join(authors)
         isbn = self._identifier(identifiers, "isbn", "isbn13", "isbn10")
         asin = self._identifier(identifiers, "asin")
+        if (
+            not asin
+            and provider_id in {"audible", "audnexus"}
+            and self._audiobook_cover_lookup(identifiers)
+        ):
+            asin = self._cover_asin(identifiers)
         language = self._identifier(identifiers, "language", "lang")
         if isbn:
             params["isbn"] = isbn
@@ -2496,6 +2583,8 @@ class MetadataEngineSource(Source):
             mi.set_identifier("isbn", self._text(row["isbn"]))
         if row.get("asin"):
             mi.set_identifier("asin", self._text(row["asin"]))
+        if self._cover_media(row) == "audiobook":
+            mi.set_identifier("metadata_engine_media", "audiobook")
 
         extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
         for scheme, keys in (
@@ -2694,7 +2783,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.51",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.52",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

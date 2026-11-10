@@ -2832,6 +2832,57 @@ class InstalledPluginTests(unittest.TestCase):
             ],
         )
 
+    def test_cover_shapes_survive_the_calibre_identify_and_cover_handoff(self):
+        """Offer only the preferred available aspect to Calibre's area sorter."""
+        from calibre.ebooks.metadata.sources.covers import Worker
+        from calibre.ebooks.metadata.sources.identify import merge_identify_results
+        from calibre.utils.logging import ThreadSafeLog
+
+        self.plugin.prefs["plugin_ids"] = "cover-shapes"
+        for title, expected in (
+            ("Book Shapes", (250, 400)),
+            ("Comic Shapes", (250, 400)),
+            ("Audio Shapes", (200, 200)),
+            ("Audio Fallback", (1200, 800)),
+        ):
+            with self.subTest(title=title):
+                self.plugin._cover_urls.clear()
+                identifiers = {"isbn": "9780547928227"}
+                (book,) = self.identify(
+                    title=title, authors=["A Writer"], identifiers=identifiers
+                )
+                book.identify_plugin = self.plugin
+                book.relevance_in_source = 0
+                (merged,) = merge_identify_results(
+                    {self.plugin: [book]}, ThreadSafeLog()
+                )
+                saved = merged.get_identifiers()
+                self.assertEqual(
+                    saved.get("metadata_engine_media"),
+                    "audiobook" if title.startswith("Audio") else None,
+                )
+                for cover_ids in (saved, identifiers):
+                    queue = Queue()
+                    worker = Worker(
+                        self.plugin,
+                        Event(),
+                        merged.title,
+                        merged.authors,
+                        cover_ids,
+                        5,
+                        queue,
+                    )
+                    worker.start()
+                    worker.join(10)
+                    self.assertFalse(worker.is_alive())
+                    self.assertEqual(
+                        {
+                            struct.unpack("!II", data[16:24])
+                            for _, data in list(queue.queue)
+                        },
+                        {expected},
+                    )
+
     def test_direct_kindle_cover_beats_smaller_isbn_cover(self):
         """Pick the larger verified Kindle cover even when an ISBN is present."""
         asin = "B07GBH1YNV"

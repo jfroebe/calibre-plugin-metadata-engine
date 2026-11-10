@@ -62,9 +62,14 @@ def install_cover_references():
     return sources
 
 
-def pixels(size):
-    """Measure the area of a decoded cover."""
-    return size[0] * size[1]
+def cover_quality(size, audiobook):
+    """Compare aspect first, then decoded pixel area within the same aspect."""
+    width, height = size
+    if audiobook:
+        shape = 2 if width == height else int(width > height)
+    else:
+        shape = 2 if height > width else 0
+    return shape, width * height
 
 
 def check_cover_quality(engine, sources, book, case, stalled_sources):
@@ -73,6 +78,11 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
     book.relevance_in_source = 0
     (merged,) = merge_identify_results({engine: [book]}, ThreadSafeLog())
     identifiers = merged.get_identifiers()
+    audiobook = identifiers.get("metadata_engine_media") == "audiobook"
+
+    def quality(size):
+        return cover_quality(size, audiobook)
+
     expected_asin = case.get("identifiers", {}).get("mobi-asin")
     if expected_asin and engine._cover_asin(identifiers) != expected_asin:
         raise AssertionError(
@@ -130,7 +140,7 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
                 if "Traceback" in worker.buf.getvalue()
                 else "no_cover"
             ),
-            "size": max(sizes, key=pixels, default=None),
+            "size": max(sizes, key=quality, default=None),
             "seconds": worker.time_spent,
         }
 
@@ -167,10 +177,12 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
             failures.append(f"Known {name} reference unavailable: {merged.title}")
     for name in sorted(catalog_names):
         reference = report[name].get("size")
-        if reference and (actual is None or pixels(actual) < pixels(reference)):
+        if reference and (actual is None or quality(actual) < quality(reference)):
             failures.append(
-                f"{merged.title}: Metadata Engine {actual} is smaller than {name} {reference}"
+                f"{merged.title}: Metadata Engine {actual} ranks below {name} {reference}"
             )
+    if case.get("portrait_cover") and (actual is None or actual[0] >= actual[1]):
+        failures.append(f"{merged.title}: expected a portrait cover, received {actual}")
     return failures
 
 
@@ -266,6 +278,7 @@ def main():
             "expected_subjects": {"anthologies", "erotic romance"},
             "required_subjects": {"anthologies", "erotic romance"},
             "topic": "spice box",
+            "portrait_cover": True,
             "timeout": 30,
         },
         {

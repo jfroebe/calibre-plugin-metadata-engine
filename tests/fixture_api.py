@@ -66,6 +66,14 @@ def serve():
                 payload, content_type = png(), "image/png"
             elif path.path == "/full.png":
                 payload, content_type = png(600, 900), "image/png"
+            elif path.path.startswith("/shapes/"):
+                dimensions = {
+                    "/shapes/portrait.png": (250, 400),
+                    "/shapes/square.png": (200, 200),
+                    "/shapes/landscape.png": (1200, 800),
+                    "/shapes/large-portrait.png": (1400, 1800),
+                }
+                payload, content_type = png(*dimensions[path.path]), "image/png"
             elif path.path == "/cached.png":
                 payload, content_type = png(), "image/png"
             elif path.path == "/thumbnail.png":
@@ -84,6 +92,31 @@ def serve():
                 }
             elif path.path == "/plugins/google_books/search":
                 payload = {"results": []}
+            elif path.path == "/plugins/cover-shapes/search":
+                title = query["query"][0]
+                media = {
+                    "Book Shapes": "books",
+                    "Comic Shapes": "comics",
+                    "Audio Shapes": "audiobooks",
+                    "Audio Fallback": "audiobooks",
+                }[title]
+                shapes = ["landscape", "portrait", "square"]
+                if media == "audiobooks":
+                    shapes[1] = "large-portrait"
+                if title == "Audio Fallback":
+                    shapes.remove("square")
+                payload = {
+                    "results": [
+                        {
+                            "title": title,
+                            "authors": ["A Writer"],
+                            "isbn": "9780547928227",
+                            "metadata_type": media,
+                            "cover_url": self.server.base_url + f"/shapes/{shape}.png",
+                        }
+                        for shape in shapes
+                    ]
+                }
             elif path.path == "/plugins/specter/search":
                 payload = {"results": []}
                 if query.get("asin") == ["B08CK7H7P2"]:
