@@ -124,6 +124,12 @@ The plugin currently uses metadata-engine 2.6.x routes:
 
 It discovers enabled metadata-engine providers, queries them, deduplicates candidates, maps results to Calibre metadata, and downloads covers from returned `cover_url` values.
 
+Cover downloads prefer portrait artwork for books and comics. Audiobooks
+prefer square artwork, then landscape. Among covers of the preferred shape,
+the plugin uses edition evidence and resolution to rank the results. If your
+audiobook has no recognized format or audio identifier, you can set
+`metadata_engine_media:audiobook` in Calibre's identifiers field.
+
 ## Development
 
 The plugin source is `__init__.py` and `config.py` at the repository root.
