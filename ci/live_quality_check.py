@@ -237,6 +237,38 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Spice Box; Sixteen Steamy Stories",
+            "authors": [
+                "Raine Miller",
+                "Cathryn Fox",
+                "Gabrielle Bisset",
+                "Erika Wilde",
+                "Nina Lane",
+                "A.C. James",
+                "Kathy Kulig",
+                "Stephanie Julian",
+                "Geri Foster",
+                "Jan Springer",
+                "Riley J. Ford",
+                "Christina Thacher",
+                "Lisa Alder",
+                "Sarah Makela",
+                "Travis Luedke",
+                "Maureen O. Betita",
+            ],
+            "additional_authors": ["K.M. Scott"],
+            "identifiers": {"mobi-asin": "B00J3CEULQ"},
+            "canonical_isbn": "9781311437068",
+            "expected_goodreads": "22027809",
+            "expected_title": "Spice Box: Sixteen Steamy Stories",
+            "no_series": True,
+            "minimum_description": 300,
+            "expected_subjects": {"anthologies", "erotic romance"},
+            "required_subjects": {"anthologies", "erotic romance"},
+            "topic": "spice box",
+            "timeout": 30,
+        },
+        {
             "title": "Moon Deeds",
             "authors": ["Palmer Pickering"],
             "identifiers": {"mobi-asin": "B07S9PDKTW"},
@@ -470,6 +502,10 @@ def main():
                 raise AssertionError("Missing actual warning labels")
         if case.get("series") and (book.series, book.series_index) != case["series"]:
             raise AssertionError((book.series, book.series_index))
+        if case.get("no_series") and book.series:
+            raise AssertionError(
+                f"Included story's series assigned to {book.title}: {book.series}"
+            )
         if any(
             tag.casefold() in {"archive.org", "inlibrary", "printdisabled", "work"}
             for tag in book.tags

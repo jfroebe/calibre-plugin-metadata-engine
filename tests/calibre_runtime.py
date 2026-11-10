@@ -476,6 +476,91 @@ class InstalledPluginTests(unittest.TestCase):
                     self.assertFalse(result.series)
                     self.assertFalse(result.tags)
 
+    def test_goodreads_fallback_verifies_anthology_asin_and_credits(self):
+        """Recover a verified box set with alternate credits and an included series."""
+        title = "Spice Box: Sixteen Steamy Stories"
+        authors = [
+            "Raine Miller",
+            "Cathryn Fox",
+            "Gabrielle Bisset",
+            "Erika Wilde",
+            "Nina Lane",
+        ]
+        asin, isbn = "B00J3CEULQ", "9781311437068"
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for identifier, credits in (
+            (
+                asin,
+                [
+                    "Raine Miller",
+                    "Cathryn Fox",
+                    "K.M. Scott",
+                    "Erika Wilde",
+                    "Nina Lane",
+                ],
+            ),
+            ("B000000001", authors),
+            (asin, ["Raine Miller", "Other Writer"]),
+        ):
+            with self.subTest(asin=identifier, authors=credits):
+                edges = [
+                    {"role": "Author", "node": {"__ref": f"Author:{index}"}}
+                    for index in range(len(credits))
+                ]
+                state = {
+                    "Book:1": {
+                        "__typename": "Book",
+                        "legacyId": 22027809,
+                        "title": title,
+                        "primaryContributorEdge": edges[0],
+                        "secondaryContributorEdges": edges[1:],
+                        "details": {"asin": identifier, "isbn13": isbn},
+                        "description": "A collection of sixteen stories.",
+                        "bookGenres": [{"genre": {"name": "Anthologies"}}],
+                        "bookSeries": [
+                            {
+                                "series": {"__ref": "Series:1"},
+                                "userPosition": "1 included",
+                            }
+                        ],
+                    },
+                    "Series:1": {"title": "Spiral of Bliss"},
+                    **{
+                        f"Author:{index}": {"name": name}
+                        for index, name in enumerate(credits)
+                    },
+                }
+                data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                with (
+                    patch.object(self.plugin, "_search", return_value=[]),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            b"<span book_id='22027809'></span>",
+                            f'<script id="__NEXT_DATA__">{data}</script>'.encode(),
+                        ],
+                    ) as fetch,
+                ):
+                    results = self.identify(
+                        title=title.replace(":", ";"),
+                        authors=authors,
+                        identifiers={"mobi-asin": asin},
+                    )
+                self.assertEqual(fetch.call_count, 2)
+                query = parse_qs(urlsplit(fetch.call_args_list[0].args[0]).query)
+                self.assertEqual(query["q"], [f"{title} Raine Miller"])
+                if "K.M. Scott" not in credits:
+                    self.assertFalse(results)
+                    continue
+                (result,) = results
+                self.assertEqual(result.title, title)
+                self.assertEqual(result.authors, [*authors, "K. M. Scott"])
+                self.assertEqual(result.get_identifiers()["asin"], asin)
+                self.assertEqual(result.get_identifiers()["isbn"], isbn)
+                self.assertEqual(result.tags, ["Anthologies"])
+                self.assertFalse(result.series)
+
     def test_goodreads_title_fallback_recovers_work_without_assigning_edition(self):
         """Match a year-decorated title and coauthors without assigning edition data."""
         title = "Every Layout Relearn CSS layout, by example (2019)"

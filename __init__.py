@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 50)
+    version = (1, 1, 51)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -381,9 +381,16 @@ class MetadataEngineSource(Source):
                     f"Metadata Engine rejected {rejected} conflicting title/author results",
                 )
             rows = compatible
-            if not rows and not identifiers and "goodreads" in provider_ids:
+            asin = self._cover_asin(identifiers)
+            if (
+                not rows
+                and "goodreads" in provider_ids
+                and (not identifiers or re.fullmatch(r"B[A-Z0-9]{9}", asin))
+            ):
                 try:
-                    rows = self._goodreads_work_fallback(title, authors, abort, timeout)
+                    rows = self._goodreads_work_fallback(
+                        title, authors, abort, timeout, identifiers
+                    )
                 except (OSError, RuntimeError, ValueError) as exc:
                     _log(
                         log,
@@ -1098,17 +1105,20 @@ class MetadataEngineSource(Source):
                         work["title"],
                     )
 
-    def _goodreads_work_fallback(self, title, authors, abort, timeout):
-        """Recover work metadata from Goodreads when no catalog finds a match."""
+    def _goodreads_work_fallback(
+        self, title, authors, abort, timeout, identifiers=None
+    ):
+        """Recover work metadata or a verified Kindle edition from Goodreads."""
         authors = self._list(authors)
         if not title or not authors or abort.is_set():
             return []
 
         def title_key(value):
             normalized, _, _ = self._work_title(value)
-            return " ".join(re.sub(r"[:,]", " ", normalized).split())
+            return " ".join(re.sub(r"[:,;]", " ", normalized).split())
 
         query = re.sub(r"\s+\((?:18|19|20)\d{2}\)$", "", self._search_title(title))
+        query = re.sub(r"\s*;\s*", ": ", query)
         if not query:
             return []
         deadline = time.monotonic() + min(timeout, 8)
@@ -1129,6 +1139,11 @@ class MetadataEngineSource(Source):
             target = {"title": row["title"], "authors": authors}
             if series:
                 target["series"] = [{"name": series, "position": position}]
+            if identifiers:
+                verified = self._verify_goodreads_edition(row, target, identifiers)
+                if verified:
+                    return [verified]
+                continue
             if self._identity_consistent(target, row):
                 # A title-only lookup establishes the work but cannot verify an
                 # edition's identifiers, cover, or publication details.
@@ -1148,6 +1163,30 @@ class MetadataEngineSource(Source):
                     }
                 ]
         return []
+
+    def _verify_goodreads_edition(self, row, target, identifiers):
+        """Require the Kindle ASIN and corroborate alternate anthology credits."""
+        if row.get("asin") != self._cover_asin(identifiers):
+            return None
+        if not self._identity_consistent(target, row) and not (
+            self._anthology_contributors_match(target["authors"], row["authors"])
+            and self._identity_consistent(dict(target, authors=[]), row)
+        ):
+            return None
+        credits = {}
+        for name in [*target["authors"], *row["authors"]]:
+            # Avoid duplicate credits when a catalog adds accents to a name.
+            folded = unicodedata.normalize("NFKD", name)
+            key = self._author_words(
+                "".join(c for c in folded if not unicodedata.combining(c))
+            )
+            credits.setdefault(key, name)
+        verified = dict(row, authors=list(credits.values()))
+        if self._matches_requested(
+            verified, target["title"], target["authors"], identifiers
+        ):
+            return verified
+        return None
 
     def _goodreads_book(self, goodreads_id, timeout):
         """Read work and edition fields from the requested Goodreads book page."""
@@ -1208,11 +1247,13 @@ class MetadataEngineSource(Source):
             series = []
             for entry in book.get("bookSeries") or []:
                 if isinstance(entry, dict):
+                    position = entry.get("userPosition")
+                    # An included story's series does not belong to the box set.
+                    if re.search(r"\bincluded\b", str(position), re.IGNORECASE):
+                        continue
                     name = self._text(linked(entry.get("series")).get("title"))
                     if name:
-                        series.append(
-                            {"name": name, "position": entry.get("userPosition")}
-                        )
+                        series.append({"name": name, "position": position})
             return {
                 "source": "goodreads",
                 "source_id": goodreads_id,
@@ -2653,7 +2694,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.50",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.51",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -3460,20 +3501,27 @@ class MetadataEngineSource(Source):
             )
         ):
             return
-        left = {cls._author_words(name) for name in cls._list(winner.get("authors"))}
-        right = {cls._author_words(name) for name in cls._list(donor.get("authors"))}
+        if not cls._anthology_contributors_match(
+            winner.get("authors"), donor.get("authors")
+        ):
+            return
+        for field in ("genres", "tags"):
+            values = cls._list(winner.get(field)) + cls._list(donor.get(field))
+            if values:
+                winner[field] = list(dict.fromkeys(values))
+
+    @classmethod
+    def _anthology_contributors_match(cls, first, second):
+        """Require most contributor names to agree across both catalog lists."""
+        left = {cls._author_words(name) for name in cls._list(first)}
+        right = {cls._author_words(name) for name in cls._list(second)}
         # Count overlap in both directions so an abbreviated name cannot
         # stand in for several different contributors.
         shared = min(
             sum(any(cls._author_words_match(a, b) for b in other) for a in names)
             for names, other in ((left, right), (right, left))
         )
-        if shared < 3 or shared * 5 < 4 * max(len(left), len(right)):
-            return
-        for field in ("genres", "tags"):
-            values = cls._list(winner.get(field)) + cls._list(donor.get(field))
-            if values:
-                winner[field] = list(dict.fromkeys(values))
+        return shared >= 3 and shared * 5 >= 4 * max(len(left), len(right))
 
     @classmethod
     def _dedupe(cls, rows):

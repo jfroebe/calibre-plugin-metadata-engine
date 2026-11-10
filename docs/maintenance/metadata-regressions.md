@@ -76,6 +76,10 @@ title or subtitle. Require independent series and volume corroboration before
 cleaning the title or taking genre tags. Keep the Kindle edition identifiers
 when the confirming record describes a paperback.
 
+`Spice Box` covers a missing anthology with a semicolon before the subtitle
+and alternate contributor credits. Require the exact Kindle ASIN and strong
+author overlap for recovery. An included story's series must stay off the box set.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.
