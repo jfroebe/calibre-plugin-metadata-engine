@@ -237,6 +237,19 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Moon Deeds",
+            "authors": ["Palmer Pickering"],
+            "identifiers": {"mobi-asin": "B07S9PDKTW"},
+            "canonical_isbn": "9781732568822",
+            "expected_title": "Moon Deeds",
+            "series": ("Star Children Saga", 1.0),
+            "minimum_description": 300,
+            "expected_subjects": {"fantasy", "science fiction", "space opera"},
+            "required_subjects": {"fantasy", "science fiction", "space opera"},
+            "topic": "cassidy and torr",
+            "timeout": 30,
+        },
+        {
             "title": "Every Layout Relearn CSS layout, by example (2019)",
             "authors": ["Heydon Pickering"],
             "expected_authors": ["Heydon Pickering", "Andy Bell"],
@@ -439,6 +452,10 @@ def main():
         subjects = {tag.casefold() for tag in book.tags}
         if not case["expected_subjects"].intersection(subjects):
             raise AssertionError("No relevant subjects for " + case["title"])
+        if case.get("required_subjects", set()) - subjects:
+            raise AssertionError(
+                f"Missing required subjects for {book.title}: {book.tags}"
+            )
         if case.get("exact_tags") and book.tags != case["exact_tags"]:
             raise AssertionError(book.tags)
         if case.get("paragraphs") and description.count("<p>") != case["paragraphs"]:

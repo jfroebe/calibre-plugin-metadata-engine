@@ -71,6 +71,11 @@ separator, a trailing year and one of two authors. Verify the canonical
 title, both authors, the synopsis and relevant tags. An identifier-free
 fallback must avoid assigning another edition's cover or publication data.
 
+`Moon Deeds` exercises a series and spelled-out volume embedded in the catalog
+title or subtitle. Require independent series and volume corroboration before
+cleaning the title or taking genre tags. Keep the Kindle edition identifiers
+when the confirming record describes a paperback.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.

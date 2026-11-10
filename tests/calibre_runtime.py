@@ -393,6 +393,89 @@ class InstalledPluginTests(unittest.TestCase):
         initial = calls.call_args_list[:2]
         self.assertEqual({call.args[1] for call in initial}, {"Sugar And Spice"})
 
+    def test_catalog_series_suffix_needs_corroboration_before_enrichment(self):
+        """Use a verified series and genres without borrowing the paperback edition."""
+        title, author, series = "Moon Deeds", "Palmer Pickering", "Star Children Saga"
+        asin, isbn = "B07S9PDKTW", "9781732568822"
+        synopsis = "Twins Cassidy and Torr search the galaxy for the Star Children."
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for joined, donor_series, donor_position in (
+            (False, series, 1),
+            (True, series, 1),
+            (False, series, 2),
+            (False, "Other Saga", 1),
+        ):
+            with self.subTest(
+                joined=joined, series=donor_series, position=donor_position
+            ):
+                suffix = f"{series} : One"
+                candidate = {
+                    "source": "google_books",
+                    "source_id": "bW4GyAEACAAJ",
+                    "title": f"{title}: {suffix}" if joined else title,
+                    "subtitle": None if joined else suffix,
+                    "authors": [author],
+                    "isbn": isbn,
+                    "description": synopsis,
+                }
+                state = {
+                    "Book:1": {
+                        "__typename": "Book",
+                        "legacyId": 44323726,
+                        "title": title,
+                        "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                        "bookGenres": [{"genre": {"name": "Space Opera"}}],
+                        "bookSeries": [
+                            {
+                                "series": {"__ref": "Series:1"},
+                                "userPosition": str(donor_position),
+                            }
+                        ],
+                        "details": {"isbn13": "9781732568808", "asin": "1732568804"},
+                        "imageUrl": "https://example.test/paperback.jpg",
+                    },
+                    "Author:1": {"name": author},
+                    "Series:1": {"title": donor_series},
+                }
+                payload = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+
+                def search(provider, query, *args, **kwargs):
+                    return (
+                        [deepcopy(candidate)]
+                        if provider == "google_books" and query == title
+                        else []
+                    )
+
+                with (
+                    patch.object(self.plugin, "_search", side_effect=search),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            b"<span book_id='44323726'></span>",
+                            f'<script id="__NEXT_DATA__">{payload}</script>'.encode(),
+                        ],
+                    ) as fetch,
+                ):
+                    (result,) = self.identify(
+                        title=title, authors=[author], identifiers={"mobi-asin": asin}
+                    )
+                self.assertEqual(fetch.call_count, 2)
+                self.assertEqual(result.get_identifiers()["isbn"], isbn)
+                self.assertEqual(result.get_identifiers()["asin"], asin)
+                self.assertEqual(result.comments, synopsis)
+                self.assertIsNone(self.plugin._cached_cover(result.get_identifiers()))
+                if (donor_series, donor_position) == (series, 1):
+                    self.assertEqual(result.title, title)
+                    self.assertEqual(
+                        (result.series, result.series_index), (series, 1.0)
+                    )
+                    self.assertEqual(result.tags, ["Space Opera"])
+                else:
+                    self.assertIn(series, result.title)
+                    self.assertFalse(result.series)
+                    self.assertFalse(result.tags)
+
     def test_goodreads_title_fallback_recovers_work_without_assigning_edition(self):
         """Match a year-decorated title and coauthors without assigning edition data."""
         title = "Every Layout Relearn CSS layout, by example (2019)"
