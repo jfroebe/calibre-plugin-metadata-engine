@@ -555,7 +555,7 @@ class InstalledPluginTests(unittest.TestCase):
                     continue
                 (result,) = results
                 self.assertEqual(result.title, title)
-                self.assertEqual(result.authors, [*authors, "K.M. Scott"])
+                self.assertEqual(result.authors, [*authors, "K. M. Scott"])
                 self.assertEqual(result.get_identifiers()["asin"], asin)
                 self.assertEqual(result.get_identifiers()["isbn"], isbn)
                 self.assertEqual(result.tags, ["Anthologies"])
