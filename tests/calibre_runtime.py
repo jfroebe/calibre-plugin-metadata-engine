@@ -1938,8 +1938,10 @@ class InstalledPluginTests(unittest.TestCase):
         title = "Pumpkin Spice & Poltergeist: A cozy sapphic paranormal rom-com"
         authors = ["Ali K. Mulford", "K. Elle Morrison"]
         isbn, asin = "9781923184145", "B0D6R3GNS8"
+        base, subtitle = title.split(": ", 1)
         edition = dict(
-            title=title,
+            title=base,
+            subtitle=subtitle,
             authors=authors,
             isbn=isbn,
             asin=asin,

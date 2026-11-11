@@ -426,8 +426,12 @@ class MetadataEngineSource(Source):
                     if not series or position is None:
                         continue
                     for donor in rows:
-                        if donor not in exact and self._work_description_matches(
-                            winner, donor
+                        if donor not in exact and (
+                            self._work_description_matches(winner, donor)
+                            or (
+                                self._work_description_matches(requested, winner)
+                                and self._work_description_matches(requested, donor)
+                            )
                         ):
                             for field in ("genres", "tags"):
                                 values = self._list(winner.get(field)) + self._list(
