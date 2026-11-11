@@ -46,6 +46,19 @@ A referral to an author's website is not a warning list. Do not invent warning
 labels or derive them from genre. Retry missing warning details independently
 of missing tags; use enabled providers and bounded retries.
 
+Treat broad subjects such as Fiction and Nonfiction as incomplete when a
+verified source supplies a more specific genre. Test empty, generic-only, and
+already specific subjects separately. Require the expected genre after Calibre's
+identify merger and check that an edition with a conflicting identifier cannot
+supply it.
+
+For descriptions, verify the displayed layout as well as the text. Exercise
+plain text, encoded quotes, inline HTML, and already separated blocks. Render
+the installed plugin's output with Calibre's comments converter and Qt, then
+check blank lines around each attributed review and preservation of ordinary
+dialogue. Keep these deterministic tests mandatory when the live source omits
+editorial reviews.
+
 Keep the reported live lookups in `ci/live_quality_check.py`. Require relevant
 subjects, actual warning labels, and no duplicate same-ISBN results. Fixture
 success and packaging success alone cannot establish live metadata quality.
