@@ -476,6 +476,74 @@ class InstalledPluginTests(unittest.TestCase):
                     self.assertFalse(result.series)
                     self.assertFalse(result.tags)
 
+    def test_authorless_homonym_does_not_block_verified_kindle_fallback(self):
+        """Recover the requested Kindle edition or reject the unverified homonym."""
+        title = "The Devil's Apprentice"
+        author = "Patrick Stewart"
+        asin = "B081S9TTSF"
+        goodreads_id = "48908672"
+        synopsis = "Alex sees angels and demons walking around the streets of London."
+        self.plugin.prefs["plugin_ids"] = "open_library,goodreads"
+        homonym = {
+            "source": "open_library",
+            "source_id": "OL46163002W",
+            "title": title,
+            "authors": [],
+            "isbn": "9788763861595",
+            "published_year": 2018,
+        }
+
+        def search(provider, *args, **kwargs):
+            return [deepcopy(homonym)] if provider == "open_library" else []
+
+        for credit, edition_asin in (
+            ("Patrick  Stewart", asin),
+            ("Kenneth Bøgh Andersen", asin),
+            ("Patrick  Stewart", "B000000001"),
+        ):
+            with self.subTest(credit=credit, asin=edition_asin):
+                state = {
+                    "Book:1": {
+                        "__typename": "Book",
+                        "legacyId": int(goodreads_id),
+                        "titleComplete": title,
+                        "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                        "details": {"asin": edition_asin},
+                        "description": synopsis,
+                        "bookGenres": [{"genre": {"name": "Urban Fantasy"}}],
+                    },
+                    "Author:1": {"name": credit},
+                }
+                payload = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                suggestions = json.dumps([{"bookId": goodreads_id}]).encode()
+                with (
+                    patch.object(self.plugin, "_search", side_effect=search),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            suggestions,
+                            f'<script id="__NEXT_DATA__">{payload}</script>'.encode(),
+                        ],
+                    ) as fetch,
+                ):
+                    results = self.identify(
+                        title=title, authors=[author], identifiers={"mobi-asin": asin}
+                    )
+                self.assertEqual(fetch.call_count, 2)
+                if credit != "Patrick  Stewart" or edition_asin != asin:
+                    self.assertFalse(results)
+                    continue
+                (result,) = results
+                self.assertEqual(result.title, title)
+                self.assertEqual(result.authors, [author])
+                self.assertEqual(result.comments, synopsis)
+                self.assertEqual(result.tags, ["Urban Fantasy"])
+                ids = result.get_identifiers()
+                self.assertEqual(ids.get("asin"), asin)
+                self.assertEqual(ids.get("goodreads"), goodreads_id)
+                self.assertFalse(ids.keys() & {"isbn", "openlibrary"})
+
     def test_goodreads_fallback_verifies_anthology_asin_and_credits(self):
         """Recover a verified box set with alternate credits and an included series."""
         title = "Spice Box: Sixteen Steamy Stories"

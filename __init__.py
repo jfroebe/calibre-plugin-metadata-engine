@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 53)
+    version = (1, 1, 54)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -377,8 +377,17 @@ class MetadataEngineSource(Source):
                 "authors": authors,
                 "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
             }
+            # A shared title alone cannot verify an authorless candidate.
+            # Keep rows corroborated above or tied to a requested identifier.
             compatible = [
-                row for row in rows if self._identity_consistent(requested, row)
+                row
+                for row in rows
+                if self._identity_consistent(requested, row)
+                and (
+                    not authors
+                    or self._list(row.get("authors"))
+                    or self._matches_requested(row, title, authors, identifiers)
+                )
             ]
             rejected = len(rows) - len(compatible)
             if rejected:
@@ -1160,12 +1169,22 @@ class MetadataEngineSource(Source):
         if not query:
             return []
         deadline = time.monotonic() + min(timeout, 8)
-        params = urlencode({"q": f"{query} {authors[0]}"})
-        html = self._http_bytes(
+        params = urlencode({"q": f"{query} {authors[0]}", "format": "json"})
+        suggestions = self._http_bytes(
             f"https://www.goodreads.com/book/auto_complete?{params}",
             min(timeout, 4),
         ).decode("utf-8", "replace")
-        ids = dict.fromkeys(re.findall(r'\bbook_id=["\'](\d{1,16})["\']', html))
+        if suggestions.lstrip().startswith("["):
+            ids = dict.fromkeys(
+                value
+                for item in json.loads(suggestions)
+                if isinstance(item, dict)
+                and re.fullmatch(r"\d{1,16}", value := str(item.get("bookId", "")))
+            )
+        else:
+            ids = dict.fromkeys(
+                re.findall(r'\bbook_id=["\'](\d{1,16})["\']', suggestions)
+            )
         series, position = self._series_identity({"title": title})
         for goodreads_id in list(ids)[:3]:
             remaining = deadline - time.monotonic()
@@ -2821,7 +2840,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.53",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.54",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
