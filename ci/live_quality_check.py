@@ -249,6 +249,20 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "The Devil's Apprentice",
+            "authors": ["Patrick Stewart"],
+            "identifiers": {"mobi-asin": "B081S9TTSF"},
+            "expected_goodreads": "48908672",
+            "expected_title": "The Devil's Apprentice",
+            "rejected_isbn": "9788763861595",
+            "one_result": True,
+            "expected_subjects": {"fantasy", "urban fantasy"},
+            "required_subjects": {"fantasy", "urban fantasy"},
+            "minimum_description": 400,
+            "topic": "london",
+            "timeout": 30,
+        },
+        {
             "title": "Pumpkin Spice & Poltergeist: A cozy sapphic paranormal rom-com (Maple Hollow Book 1)",
             "authors": ["Ali K. Mulford", "K. Elle Morrison"],
             "isbn": "9781923184145",
@@ -489,6 +503,9 @@ def main():
         goodreads = case.get("expected_goodreads")
         if goodreads and book.get_identifiers().get("goodreads") != goodreads:
             raise AssertionError(f"Wrong Goodreads edition for {book.title}")
+        rejected_isbn = case.get("rejected_isbn")
+        if rejected_isbn and book.get_identifiers().get("isbn") == rejected_isbn:
+            raise AssertionError(f"Unverified homonym ISBN for {book.title}")
         if case.get("cover_only"):
             cover_failures.extend(
                 check_cover_quality(plugin, cover_sources, book, case, stalled_sources)
