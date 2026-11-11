@@ -249,6 +249,18 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Blood Night: A Brutal 1980s Small-Town Slasher Horror",
+            "authors": ["Jonathan Daniel"],
+            "identifiers": {"mobi-asin": "B0DJK7WQGQ"},
+            "canonical_isbn": "9798991048200",
+            "expected_subjects": {"horror"},
+            "required_subjects": {"horror"},
+            "merge_identify": True,
+            "minimum_description": 400,
+            "topic": "elden mills",
+            "timeout": 30,
+        },
+        {
             "title": "Supers",
             "authors": ["Patrick Stewart"],
             "identifiers": {"mobi-asin": "B088T3V8TJ"},
