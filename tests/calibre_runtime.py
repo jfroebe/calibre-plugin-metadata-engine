@@ -1705,8 +1705,8 @@ class InstalledPluginTests(unittest.TestCase):
                     row.identify_plugin = self.plugin
                     row.relevance_in_source = rank
                 (result,) = merge_identify_results({self.plugin: rows}, ThreadSafeLog())
-                self.assertEqual(fetch.call_count, requests)
                 self.assertEqual(set(result.tags), set(expected_tags))
+                self.assertEqual(fetch.call_count, requests)
                 self.assertEqual(result.get_identifiers()["asin"], asin)
                 self.assertEqual(result.get_identifiers()["isbn"], "9798991048200")
                 self.assertEqual(
@@ -1757,7 +1757,12 @@ class InstalledPluginTests(unittest.TestCase):
             dialogue,
         )
         blocks = "<p>Plot ends.</p><blockquote>“A chilling story.” — Reviewer</blockquote><p>More plot.</p>"
-        self.assertEqual(self.plugin._format_review_quotes(blocks), blocks)
+        self.assertEqual(
+            self.plugin._to_metadata(
+                {"title": "Example", "description": blocks}, 0
+            ).comments,
+            blocks,
+        )
 
     def test_description_lists_render_as_native_calibre_html(self):
         """Preserve numbering, paragraph boundaries, and literal punctuation."""
