@@ -769,6 +769,74 @@ class InstalledPluginTests(unittest.TestCase):
                 self.assertEqual(result.tags, ["Anthologies"])
                 self.assertFalse(result.series)
 
+    def test_goodreads_retired_edition_label_preserves_original_work_identity(self):
+        """Recover the retired work without treating a rewrite as the same title."""
+        title, author = "Bedded by the Headmaster", "Darcy Fayton"
+        series = "Susie & Arken's Duet"
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for catalog_title, catalog_author, matches in (
+            (f"OLD RETIRED EDITION - {title} ({series}, #1)", author, True),
+            (
+                f"Retired edition — Not the 2027 Rewrite — {title} ({series}, #1)",
+                author,
+                True,
+            ),
+            (f"Old Retired Edition: {title} ({series}, #1)", "Other Author", False),
+            ("Bedded by the Vampire Headmaster", author, False),
+            ("OLD RETIRED EDITION - Shared by the Headmaster", author, False),
+        ):
+            with self.subTest(title=catalog_title, author=catalog_author):
+                state = {
+                    "Book:1": {
+                        "__typename": "Book",
+                        "legacyId": 217994670,
+                        "titleComplete": catalog_title,
+                        "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                        "details": {
+                            "asin": "B0DHQPGWD7",
+                            "publisher": "Independently Published",
+                        },
+                        "description": "Susie meets Arken at Volmasque Academy.",
+                        "bookGenres": [{"genre": {"name": "Paranormal Romance"}}],
+                        "bookSeries": [
+                            {
+                                "series": {"__ref": "Series:1"},
+                                "userPosition": "1",
+                            }
+                        ],
+                    },
+                    "Author:1": {"name": catalog_author},
+                    "Series:1": {"title": series},
+                }
+                data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                with (
+                    patch.object(self.plugin, "_search", return_value=[]),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            b'[{"bookId": "217994670"}]',
+                            f'<script id="__NEXT_DATA__">{data}</script>'.encode(),
+                        ],
+                    ),
+                ):
+                    results = self.identify(
+                        title=title, authors=[author], identifiers={}
+                    )
+                if not matches:
+                    self.assertFalse(results)
+                    continue
+                self.assertEqual(len(results), 1)
+                (result,) = results
+                self.assertEqual(result.title, title)
+                self.assertEqual(result.authors, [author])
+                self.assertEqual((result.series, result.series_index), (series, 1.0))
+                self.assertEqual(result.get_identifiers()["goodreads"], "217994670")
+                self.assertFalse(result.get_identifiers().keys() & {"asin", "isbn"})
+                self.assertFalse(result.publisher)
+                self.assertEqual(result.tags, ["Paranormal Romance"])
+                self.assertIn("Volmasque Academy", result.comments)
+
     def test_goodreads_title_fallback_recovers_work_without_assigning_edition(self):
         """Match a year-decorated title and coauthors without assigning edition data."""
         title = "Every Layout Relearn CSS layout, by example (2019)"

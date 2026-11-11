@@ -271,6 +271,20 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Bedded by the Headmaster",
+            "authors": ["Darcy Fayton"],
+            "expected_goodreads": "217994670",
+            "expected_title": "Bedded by the Headmaster",
+            "one_result": True,
+            "metadata_only": True,
+            "series": ("Susie & Arken's Duet", 1.0),
+            "expected_subjects": {"paranormal romance", "fantasy", "vampires"},
+            "required_subjects": {"paranormal romance", "vampires"},
+            "minimum_description": 400,
+            "topic": "volmasque academy",
+            "timeout": 30,
+        },
+        {
             "title": "Branding Belle: A Reverse Harem Contemporary Standalone",
             "authors": ["Crystal North", "Kira Roman"],
             "identifiers": {"mobi-asin": "B096HHSWWR"},

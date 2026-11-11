@@ -99,6 +99,11 @@ exact ASIN discovery and a catalog record with the bare title. Require both
 authors, the synopsis and specific genre tags in Calibre. Reject a different
 ASIN, conflicting contributor, different base title, or conflicting subtitle.
 
+Keep an identifier-free lookup for the original Bedded by the Headmaster.
+Exercise a catalog status prefix on the title, and verify that the original
+work still resolves with its series and genres. Reject a different author,
+sequel, or rewrite. Keep edition-specific identifiers out of a work-only result.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.

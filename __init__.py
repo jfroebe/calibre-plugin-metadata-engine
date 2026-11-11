@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 57)
+    version = (1, 1, 58)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1467,11 +1467,22 @@ class MetadataEngineSource(Source):
                     name = self._text(linked(entry.get("series")).get("title"))
                     if name:
                         series.append({"name": name, "position": position})
+            # Goodreads sometimes prepends a catalog status to the old
+            # edition's title. Keep the actual title and series for matching.
+            title = re.sub(
+                r"^(?:old\s+)?retired\s+edition\s*[-–—:]\s*"
+                r"(?:not\s+the\s+\d{4}\s+rewrite\s*[-–—:]\s*)?",
+                "",
+                unescape(title),
+                flags=re.IGNORECASE,
+            )
+            if not title:
+                return None
             work = linked(book.get("work"))
             return {
                 "source": "goodreads",
                 "source_id": goodreads_id,
-                "title": unescape(title),
+                "title": title,
                 "authors": authors,
                 "asin": self._text(details.get("asin")),
                 "isbn": self._canonical_isbn(
@@ -3054,7 +3065,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.57",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.58",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
