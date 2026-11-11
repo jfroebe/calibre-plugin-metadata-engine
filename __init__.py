@@ -506,10 +506,15 @@ class MetadataEngineSource(Source):
             for relevance, row in enumerate(rows[:maximum]):
                 if abort.is_set():
                     return None
+                matches_request = self._matches_requested(
+                    row, title, authors, identifiers
+                )
+                if matches_request and self._work_description_matches(requested, row):
+                    row = self._with_catalog_subtitle_genre(row)
                 mi = self._to_metadata(self._with_edition_correction(row), relevance)
                 if mi is not None:
                     mi.authors = self._description_authors(mi.comments, mi.authors)
-                    if self._matches_requested(row, title, authors, identifiers):
+                    if matches_request:
                         # Calibre passes the result's identifiers to its cover
                         # workers. Catalog records may omit the saved Kindle ID.
                         if not row.get("asin") and re.fullmatch(
@@ -537,6 +542,18 @@ class MetadataEngineSource(Source):
         except Exception as exc:
             _log(log, "exception", "Metadata Engine identify failed")
             return "Metadata Engine identify failed: %s" % exc
+
+    @classmethod
+    def _with_catalog_subtitle_genre(cls, row):
+        """Use explicit genre wording in the matched catalog's fiction subtitle."""
+        genres = cls._list(row.get("genres"))
+        subjects = {tag.casefold() for tag in genres + cls._list(row.get("tags"))}
+        if "fiction" not in subjects or "horror" in subjects:
+            return row
+        subtitle = cls._text(row.get("subtitle")) or row["title"].partition(":")[2]
+        if re.search(r"\bslasher\s+horror\s*[.!]?\s*$", subtitle, re.IGNORECASE):
+            return dict(row, genres=[*genres, "Horror"])
+        return row
 
     def _recover_book_subjects(self, log, row, isbn, timeout):
         """Fill empty tags from a verified edition without replacing other fields."""
