@@ -1672,11 +1672,14 @@ class InstalledPluginTests(unittest.TestCase):
             (["Fiction", "Horror"], asin, ["Fiction", "Horror"], 0),
         ):
             with self.subTest(tags=source_tags, catalog_asin=catalog_asin):
+                # The conflicting ASIN case has no independent genre in the subtitle.
+                lookup_title = title if catalog_asin == asin else "Blood Night: A Novel"
                 state["Book:1"]["details"]["asin"] = catalog_asin
+                state["Book:1"]["titleComplete"] = lookup_title
                 data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
                 candidate = {
                     "source": "google_books",
-                    "title": title,
+                    "title": lookup_title,
                     "authors": [author],
                     "asin": asin,
                     "isbn": "9798991048200",
@@ -1699,7 +1702,9 @@ class InstalledPluginTests(unittest.TestCase):
                     ) as fetch,
                 ):
                     rows = self.identify(
-                        title=title, authors=[author], identifiers={"mobi-asin": asin}
+                        title=lookup_title,
+                        authors=[author],
+                        identifiers={"mobi-asin": asin},
                     )
                 for rank, row in enumerate(rows):
                     row.identify_plugin = self.plugin
@@ -1715,6 +1720,39 @@ class InstalledPluginTests(unittest.TestCase):
                     f"<br /><br />{second_quote} - Second Reviewer"
                     "<br /><br />More about the book.</p>",
                 )
+
+    def test_verified_fiction_subtitle_supplies_genre_during_provider_outage(self):
+        """Use the catalog subtitle when the genre provider cannot answer."""
+        title = "Blood Night: A Brutal 1980s Small-Town Slasher Horror"
+        author, asin = "Jonathan Daniel", "B0DJK7WQGQ"
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for subjects, expected in (
+            (["Fiction"], {"Fiction", "Horror"}),
+            (["Nonfiction"], {"Nonfiction"}),
+        ):
+            with self.subTest(subjects=subjects):
+                candidate = {
+                    "source": "google_books",
+                    "title": "Blood Night",
+                    "subtitle": title.partition(": ")[2],
+                    "authors": [author],
+                    "asin": asin,
+                    "genres": subjects,
+                    "description": "A quiet town faces a masked killer.",
+                }
+
+                def search(provider, *args, **kwargs):
+                    return [deepcopy(candidate)] if provider == "google_books" else []
+
+                with (
+                    patch.object(self.plugin, "_search", side_effect=search),
+                    patch.object(self.plugin, "_http_bytes", side_effect=TimeoutError),
+                ):
+                    (result,) = self.identify(
+                        title=title, authors=[author], identifiers={"mobi-asin": asin}
+                    )
+                self.assertEqual(set(result.tags), expected)
+                self.assertEqual(result.get_identifiers()["asin"], asin)
 
     def test_review_layout_survives_calibre_comment_rendering(self):
         """Check rendered spacing for plain, encoded, and existing HTML reviews."""
