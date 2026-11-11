@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 54)
+    version = (1, 1, 55)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -472,6 +472,24 @@ class MetadataEngineSource(Source):
                 self._recover_book_subjects(log, rows[0], isbn, timeout)
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
             requested_asin = self._cover_asin(identifiers)
+            if (
+                rows
+                and "goodreads" in provider_ids
+                and re.fullmatch(r"B[A-Z0-9]{9}", requested_asin)
+                and not abort.is_set()
+            ):
+                candidate = next(
+                    (
+                        row
+                        for row in rows[:maximum]
+                        if self._matches_requested(row, title, authors, identifiers)
+                    ),
+                    None,
+                )
+                if candidate is not None and not self._to_metadata(candidate, 0).tags:
+                    self._recover_goodreads_subjects(
+                        log, candidate, requested_asin, abort, timeout
+                    )
 
             for relevance, row in enumerate(rows[:maximum]):
                 if abort.is_set():
@@ -1068,6 +1086,80 @@ class MetadataEngineSource(Source):
                     )
         return rows
 
+    def _recover_goodreads_subjects(self, log, row, asin, abort, timeout):
+        """Recover subjects from the verified Kindle edition or its work shelves."""
+        extra = row.get("extra")
+        extra = extra if isinstance(extra, dict) else {}
+        goodreads_id = self._text(extra.get("goodreads_id"))
+        if not goodreads_id and row.get("source") == "goodreads":
+            goodreads_id = self._text(row.get("source_id"))
+        if not re.fullmatch(r"[0-9]{1,16}", goodreads_id or ""):
+            return
+        deadline = time.monotonic() + min(timeout, 8)
+        try:
+            edition = row
+            if not extra.get("goodreads_work_id") or self._cover_asin(row) != asin:
+                edition = self._goodreads_kindle_edition(
+                    goodreads_id, asin, min(timeout, 4)
+                )
+                if (
+                    not edition
+                    or not self._work_description_matches(row, edition)
+                    or not self._compatible_identifiers(row, edition)
+                ):
+                    return
+            genres = self._list(edition.get("genres"))
+            work_id = self._text((edition.get("extra") or {}).get("goodreads_work_id"))
+            remaining = deadline - time.monotonic()
+            if (
+                not genres
+                and re.fullmatch(r"[0-9]{1,16}", work_id or "")
+                and remaining > 0
+                and not abort.is_set()
+            ):
+                genres = self._goodreads_shelf_genres(work_id, min(remaining, 4))
+            if genres:
+                row["genres"] = genres
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log(
+                log, "info", "Metadata Engine Goodreads subject lookup failed: %s", exc
+            )
+
+    def _goodreads_shelf_genres(self, work_id, timeout):
+        """Accept established genres from shelf rows and ignore personal labels."""
+        names = {
+            "biography": "Biography",
+            "cozy-mystery": "Cozy Mystery",
+            "crime": "Crime",
+            "dystopia": "Dystopia",
+            "fantasy": "Fantasy",
+            "historical-fiction": "Historical Fiction",
+            "historical-romance": "Historical Romance",
+            "horror": "Horror",
+            "memoir": "Memoir",
+            "mystery": "Mystery",
+            "paranormal": "Paranormal",
+            "paranormal-romance": "Paranormal Romance",
+            "romance": "Romance",
+            "science-fiction": "Science Fiction",
+            "space-opera": "Space Opera",
+            "superheroes": "Superheroes",
+            "superheros": "Superheroes",
+            "thriller": "Thriller",
+            "urban-fantasy": "Urban Fantasy",
+            "western": "Western",
+        }
+        html = self._http_bytes(
+            f"https://www.goodreads.com/work/shelves/{work_id}", timeout
+        ).decode("utf-8", "replace")
+        shelves = re.findall(
+            r"""<div\b[^>]*\bclass=["']shelfStat["'][^>]*>\s*<div\b[^>]*>\s*
+                <a\b[^>]*\bhref=["']/genres/([a-z0-9-]+)["']""",
+            html,
+            re.VERBOSE | re.IGNORECASE,
+        )
+        return list(dict.fromkeys(names[key] for key in shelves if key in names))
+
     def _goodreads_kindle_edition(self, goodreads_id, asin, timeout):
         """Read the Goodreads edition page only when its book ID and ASIN agree."""
         row = self._goodreads_book(goodreads_id, timeout)
@@ -1311,6 +1403,7 @@ class MetadataEngineSource(Source):
                     name = self._text(linked(entry.get("series")).get("title"))
                     if name:
                         series.append({"name": name, "position": position})
+            work = linked(book.get("work"))
             return {
                 "source": "goodreads",
                 "source_id": goodreads_id,
@@ -1325,7 +1418,11 @@ class MetadataEngineSource(Source):
                 "series": series,
                 "publisher": self._text(details.get("publisher")),
                 "cover_url": self._text(book.get("imageUrl")),
-                "extra": {"goodreads_id": goodreads_id, "goodreads_url": url},
+                "extra": {
+                    "goodreads_id": goodreads_id,
+                    "goodreads_url": url,
+                    "goodreads_work_id": self._text(work.get("legacyId")),
+                },
             }
         return None
 
@@ -2840,7 +2937,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.54",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.55",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
