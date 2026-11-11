@@ -619,6 +619,71 @@ class InstalledPluginTests(unittest.TestCase):
                 self.assertEqual(result.pubdate.year, 2020)
                 self.assertEqual(result.get_identifiers()["asin"], asin)
 
+    def test_goodreads_kindle_search_recovers_title_without_marketing_subtitle(self):
+        """Retry an empty decorated-title search and verify the complete identity."""
+        title = "Branding Belle: A Reverse Harem Contemporary Standalone"
+        authors = ["Crystal North", "Kira Roman"]
+        asin = "B096HHSWWR"
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for catalog_title, catalog_asin, coauthor, matches in (
+            ("Branding Belle", asin, authors[1], True),
+            ("Branding Belle", "B000000001", authors[1], False),
+            ("Branding Belle", asin, "Another Writer", False),
+            ("Branding Belle: A Different Subtitle", asin, authors[1], False),
+            ("Branding Bella", asin, authors[1], False),
+        ):
+            with self.subTest(
+                title=catalog_title, asin=catalog_asin, coauthor=coauthor
+            ):
+                state = {
+                    "Book:1": {
+                        "__typename": "Book",
+                        "legacyId": 58325014,
+                        "titleComplete": catalog_title,
+                        "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                        "secondaryContributorEdges": [
+                            {"role": "Author", "node": {"__ref": "Author:2"}}
+                        ],
+                        "details": {"asin": catalog_asin},
+                        "description": "Belle travels to Miami for her dream tattoo.",
+                        "bookGenres": [{"genre": {"name": "Contemporary Romance"}}],
+                    },
+                    "Author:1": {"name": authors[0]},
+                    "Author:2": {"name": coauthor},
+                }
+                data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                with (
+                    patch.object(self.plugin, "_search", return_value=[]),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            b"[]",
+                            b'[{"bookId": "58325014", "title": "Branding Belle"}]',
+                            f'<script id="__NEXT_DATA__">{data}</script>'.encode(),
+                        ],
+                    ) as fetch,
+                ):
+                    results = self.identify(
+                        title=title, authors=authors, identifiers={"mobi-asin": asin}
+                    )
+                if matches:
+                    self.assertEqual(len(results), 1)
+                    (result,) = results
+                    self.assertEqual(result.title, "Branding Belle")
+                    self.assertEqual(result.authors, authors)
+                    self.assertEqual(result.get_identifiers()["asin"], asin)
+                    self.assertEqual(result.get_identifiers()["goodreads"], "58325014")
+                    self.assertEqual(result.tags, ["Contemporary Romance"])
+                    self.assertIn("dream tattoo", result.comments)
+                else:
+                    self.assertFalse(results)
+                self.assertEqual(fetch.call_count, 3)
+                self.assertEqual(
+                    parse_qs(urlsplit(fetch.call_args_list[1].args[0]).query)["q"],
+                    [asin],
+                )
+
     def test_goodreads_fallback_verifies_anthology_asin_and_credits(self):
         """Recover a verified box set with alternate credits and an included series."""
         title = "Spice Box: Sixteen Steamy Stories"
