@@ -334,6 +334,12 @@ class MetadataEngineSource(Source):
                 identifiers,
                 timeout,
             )
+            series, position = self._series_identity({"title": title})
+            if series and position is not None:
+                series_target = {"series": [{"name": series, "index": position}]}
+                rows = [
+                    row for row in rows if self._identity_consistent(series_target, row)
+                ]
             rows = self._recover_descriptions(
                 log,
                 abort,
@@ -414,6 +420,11 @@ class MetadataEngineSource(Source):
             ]
             if exact:
                 for winner in exact:
+                    # Require numbered series evidence before borrowing subjects
+                    # across explicitly different ISBNs.
+                    series, position = self._series_identity(winner)
+                    if not series or position is None:
+                        continue
                     for donor in rows:
                         if donor not in exact and self._work_description_matches(
                             winner, donor
