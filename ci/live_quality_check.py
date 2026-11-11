@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from hashlib import sha256
+from html import unescape
 from pathlib import Path
 from queue import Queue
 from tempfile import TemporaryDirectory
@@ -70,6 +72,26 @@ def cover_quality(size, audiobook):
     else:
         shape = 2 if height > width else 0
     return shape, width * height
+
+
+def check_review_blocks(description, credits):
+    """Require returned endorsements to occupy standalone comment blocks."""
+    blocks = re.split(
+        r"(?:<br\s*/?>\s*){2,}|</(?:p|blockquote|div)>|\n\s*\n",
+        description,
+        flags=re.IGNORECASE,
+    )
+    text_blocks = [unescape(re.sub(r"<[^<>]+>", "", block)).strip() for block in blocks]
+    for credit in credits:
+        # Providers may publish a synopsis without promotional reviews.
+        if credit not in unescape(description):
+            continue
+        matches = [block for block in text_blocks if credit in block]
+        if len(matches) != 1 or not re.fullmatch(
+            r'["“][^"“”]+["”]\s*[-–—]\s*' + re.escape(credit) + r'[^"“”]*',
+            matches[0],
+        ):
+            raise AssertionError(f"Review for {credit} is not a standalone block")
 
 
 def check_cover_quality(engine, sources, book, case, stalled_sources):
@@ -248,6 +270,19 @@ def main():
 
     plugin._recover_supplements = inspect_supplements
     cases = [
+        {
+            "title": "Blood Night: A Brutal 1980s Small-Town Slasher Horror",
+            "authors": ["Jonathan Daniel"],
+            "identifiers": {"mobi-asin": "B0DJK7WQGQ"},
+            "canonical_isbn": "9798991048200",
+            "expected_subjects": {"horror"},
+            "required_subjects": {"horror"},
+            "review_credits": ("Felix Blackwell", "HorrorNews"),
+            "merge_identify": True,
+            "minimum_description": 400,
+            "topic": "elden mills",
+            "timeout": 30,
+        },
         {
             "title": "Supers",
             "authors": ["Patrick Stewart"],
@@ -550,13 +585,17 @@ def main():
             raise AssertionError("Missing final subject tags")
         subjects = {tag.casefold() for tag in book.tags}
         if not case["expected_subjects"].intersection(subjects):
-            raise AssertionError("No relevant subjects for " + case["title"])
+            raise AssertionError(
+                f"No relevant subjects for {case['title']}: {book.tags}"
+            )
         if case.get("required_subjects", set()) - subjects:
             raise AssertionError(
                 f"Missing required subjects for {book.title}: {book.tags}"
             )
         if case.get("exact_tags") and book.tags != case["exact_tags"]:
             raise AssertionError(book.tags)
+        if case.get("review_credits"):
+            check_review_blocks(description, case["review_credits"])
         if case.get("paragraphs") and description.count("<p>") != case["paragraphs"]:
             raise AssertionError("Missing synopsis paragraphs for " + case["title"])
         if case.get("warnings"):

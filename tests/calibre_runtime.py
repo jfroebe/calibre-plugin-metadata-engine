@@ -1639,6 +1639,169 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("asin", goodreads)
         self.assertEqual(amazon["asin"], ["B075JB53VN"])
 
+    def test_generic_fiction_recovers_horror_and_separates_endorsements(self):
+        """Keep the selected edition and render attributed reviews as separate lines."""
+        title = "Blood Night: A Brutal 1980s Small-Town Slasher Horror"
+        author, asin = "Jonathan Daniel", "B0DJK7WQGQ"
+        first_quote = '"The tension builds steadily."'
+        second_quote = '"A chilling story."'
+        synopsis = "Will anyone survive?"
+        html = (
+            f"<p>{synopsis}{first_quote}- First Reviewer"
+            f"{second_quote} - Second Reviewer<br />More about the book.</p>"
+        )
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        state = {
+            "Book:1": {
+                "__typename": "Book",
+                "legacyId": 220148316,
+                "titleComplete": title,
+                "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                "details": {"asin": asin},
+                "bookGenres": [{"genre": {"name": "Horror"}}],
+                "description": "This catalog synopsis must stay with its source.",
+            },
+            "Author:1": {"name": author},
+        }
+        from calibre.ebooks.metadata.sources.identify import merge_identify_results
+        from calibre.utils.logging import ThreadSafeLog
+
+        for source_tags, catalog_asin, expected_tags, requests in (
+            (["Fiction"], asin, ["Fiction", "Horror"], 2),
+            (["Fiction"], "B000000001", ["Fiction"], 2),
+            (["Fiction", "Horror"], asin, ["Fiction", "Horror"], 0),
+        ):
+            with self.subTest(tags=source_tags, catalog_asin=catalog_asin):
+                # The conflicting ASIN case has no independent genre in the subtitle.
+                lookup_title = title if catalog_asin == asin else "Blood Night: A Novel"
+                state["Book:1"]["details"]["asin"] = catalog_asin
+                state["Book:1"]["titleComplete"] = lookup_title
+                data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                candidate = {
+                    "source": "google_books",
+                    "title": lookup_title,
+                    "authors": [author],
+                    "asin": asin,
+                    "isbn": "9798991048200",
+                    "genres": source_tags,
+                    "description": html,
+                }
+
+                def search(provider, *args, **kwargs):
+                    return [deepcopy(candidate)] if provider == "google_books" else []
+
+                with (
+                    patch.object(self.plugin, "_search", side_effect=search),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            b'[{"bookId": "220148316"}]',
+                            f'<script id="__NEXT_DATA__">{data}</script>'.encode(),
+                        ],
+                    ) as fetch,
+                ):
+                    rows = self.identify(
+                        title=lookup_title,
+                        authors=[author],
+                        identifiers={"mobi-asin": asin},
+                    )
+                for rank, row in enumerate(rows):
+                    row.identify_plugin = self.plugin
+                    row.relevance_in_source = rank
+                (result,) = merge_identify_results({self.plugin: rows}, ThreadSafeLog())
+                self.assertEqual(set(result.tags), set(expected_tags))
+                self.assertEqual(fetch.call_count, requests)
+                self.assertEqual(result.get_identifiers()["asin"], asin)
+                self.assertEqual(result.get_identifiers()["isbn"], "9798991048200")
+                self.assertEqual(
+                    result.comments,
+                    f"<p>{synopsis}<br /><br />{first_quote} - First Reviewer"
+                    f"<br /><br />{second_quote} - Second Reviewer"
+                    "<br /><br />More about the book.</p>",
+                )
+
+    def test_verified_fiction_subtitle_supplies_genre_during_provider_outage(self):
+        """Use the catalog subtitle when the genre provider cannot answer."""
+        title = "Blood Night: A Brutal 1980s Small-Town Slasher Horror"
+        author, asin = "Jonathan Daniel", "B0DJK7WQGQ"
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for subjects, expected in (
+            (["Fiction"], {"Fiction", "Horror"}),
+            (["Nonfiction"], {"Nonfiction"}),
+        ):
+            with self.subTest(subjects=subjects):
+                candidate = {
+                    "source": "google_books",
+                    "title": "Blood Night",
+                    "subtitle": title.partition(": ")[2],
+                    "authors": [author],
+                    "asin": asin,
+                    "genres": subjects,
+                    "description": "A quiet town faces a masked killer.",
+                }
+
+                def search(provider, *args, **kwargs):
+                    return [deepcopy(candidate)] if provider == "google_books" else []
+
+                with (
+                    patch.object(self.plugin, "_search", side_effect=search),
+                    patch.object(self.plugin, "_http_bytes", side_effect=TimeoutError),
+                ):
+                    (result,) = self.identify(
+                        title=title, authors=[author], identifiers={"mobi-asin": asin}
+                    )
+                self.assertEqual(set(result.tags), expected)
+                self.assertEqual(result.get_identifiers()["asin"], asin)
+
+    def test_review_layout_survives_calibre_comment_rendering(self):
+        """Check rendered spacing for plain, encoded, and existing HTML reviews."""
+        from calibre.library.comments import comments_to_html
+        from qt.core import QTextDocument
+
+        cases = (
+            (
+                'Plot ends. "A chilling story"- Reviewer\nMore plot.',
+                '"A chilling story" - Reviewer',
+            ),
+            (
+                "Plot ends. &quot;A chilling story&quot;- Reviewer\nMore plot.",
+                '"A chilling story" - Reviewer',
+            ),
+            (
+                "<p>Plot ends.<br>“A chilling story.” — Reviewer<br>More plot.</p>",
+                "“A chilling story.” — Reviewer",
+            ),
+            (
+                "<p>Plot ends.<br/><br/>“A chilling story.” — Reviewer<br/><br/>More plot.</p>",
+                "“A chilling story.” — Reviewer",
+            ),
+        )
+        for description, review in cases:
+            with self.subTest(description=description):
+                row = {"title": "Example", "description": description}
+                document = QTextDocument()
+                document.setHtml(
+                    comments_to_html(self.plugin._to_metadata(row, 0).comments)
+                )
+                self.assertEqual(
+                    document.toPlainText(), f"Plot ends.\n\n{review}\n\nMore plot."
+                )
+        dialogue = "<p>“Don’t go,” she whispered, then left.</p>"
+        self.assertEqual(
+            self.plugin._to_metadata(
+                {"title": "Example", "description": dialogue}, 0
+            ).comments,
+            dialogue,
+        )
+        blocks = "<p>Plot ends.</p><blockquote>“A chilling story.” — Reviewer</blockquote><p>More plot.</p>"
+        self.assertEqual(
+            self.plugin._to_metadata(
+                {"title": "Example", "description": blocks}, 0
+            ).comments,
+            blocks,
+        )
+
     def test_description_lists_render_as_native_calibre_html(self):
         """Preserve numbering, paragraph boundaries, and literal punctuation."""
         from calibre.library.comments import comments_to_html
