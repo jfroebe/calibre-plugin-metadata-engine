@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 56)
+    version = (1, 1, 57)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1308,30 +1308,31 @@ class MetadataEngineSource(Source):
         query = re.sub(r"\s*;\s*", ": ", query)
         if not query:
             return []
-        deadline = time.monotonic() + min(timeout, 8)
-        params = urlencode({"q": f"{query} {authors[0]}", "format": "json"})
-        suggestions = self._http_bytes(
-            f"https://www.goodreads.com/book/auto_complete?{params}",
-            min(timeout, 4),
-        ).decode("utf-8", "replace")
-        if suggestions.lstrip().startswith("["):
-            ids = dict.fromkeys(
-                value
-                for item in json.loads(suggestions)
-                if isinstance(item, dict)
-                and re.fullmatch(r"\d{1,16}", value := str(item.get("bookId", "")))
-            )
-        else:
-            ids = dict.fromkeys(
-                re.findall(r'\bbook_id=["\'](\d{1,16})["\']', suggestions)
-            )
+        started = time.monotonic()
+        deadline = started + min(timeout, 8)
+        asin = self._cover_asin(identifiers or {})
+        base, separator, _ = query.partition(": ")
+        decorated_kindle = bool(separator and re.fullmatch(r"B[A-Z0-9]{9}", asin))
+        ids = self._goodreads_suggestions(f"{query} {authors[0]}", min(timeout, 4))
+        remaining = deadline - time.monotonic()
+        if not ids and decorated_kindle and remaining > 0 and not abort.is_set():
+            # Marketing subtitles may be absent from the catalog's search index.
+            deadline = started + min(timeout, 12)
+            ids = self._goodreads_suggestions(asin, min(remaining, 4))
         series, position = self._series_identity({"title": title})
         for goodreads_id in list(ids)[:3]:
             remaining = deadline - time.monotonic()
             if remaining <= 0 or abort.is_set():
                 break
             row = self._goodreads_book(goodreads_id, min(remaining, 4))
-            if not row or title_key(query) != title_key(row["title"]):
+            if not row:
+                continue
+            catalog_title = title_key(row["title"])
+            if catalog_title != title_key(query) and not (
+                decorated_kindle
+                and row.get("asin") == asin
+                and catalog_title == title_key(base)
+            ):
                 continue
             target = {"title": row["title"], "authors": authors}
             if series:
@@ -1360,6 +1361,21 @@ class MetadataEngineSource(Source):
                     }
                 ]
         return []
+
+    def _goodreads_suggestions(self, query, timeout):
+        """Read unique Goodreads book IDs from autocomplete in catalog order."""
+        params = urlencode({"q": query, "format": "json"})
+        suggestions = self._http_bytes(
+            f"https://www.goodreads.com/book/auto_complete?{params}", timeout
+        ).decode("utf-8", "replace")
+        if suggestions.lstrip().startswith("["):
+            return dict.fromkeys(
+                value
+                for item in json.loads(suggestions)
+                if isinstance(item, dict)
+                and re.fullmatch(r"\d{1,16}", value := str(item.get("bookId", "")))
+            )
+        return dict.fromkeys(re.findall(r'\bbook_id=["\'](\d{1,16})["\']', suggestions))
 
     def _verify_goodreads_edition(self, row, target, identifiers):
         """Require the Kindle ASIN and corroborate alternate anthology credits."""
@@ -3038,7 +3054,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.56",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.57",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
