@@ -93,6 +93,12 @@ when the confirming record describes a paperback.
 and alternate contributor credits. Require the exact Kindle ASIN and strong
 author overlap for recovery. An included story's series must stay off the box set.
 
+Keep the original decorated Kindle query for `Branding Belle`. Exercise an
+empty autocomplete response for the full marketing title, followed by an
+exact ASIN discovery and a catalog record with the bare title. Require both
+authors, the synopsis and specific genre tags in Calibre. Reject a different
+ASIN, conflicting contributor, different base title, or conflicting subtitle.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.

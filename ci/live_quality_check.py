@@ -271,6 +271,20 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Branding Belle: A Reverse Harem Contemporary Standalone",
+            "authors": ["Crystal North", "Kira Roman"],
+            "identifiers": {"mobi-asin": "B096HHSWWR"},
+            "expected_goodreads": "58325014",
+            "expected_title": "Branding Belle",
+            "one_result": True,
+            "no_series": True,
+            "expected_subjects": {"romance", "contemporary romance"},
+            "required_subjects": {"contemporary romance"},
+            "minimum_description": 300,
+            "topic": "tattoo",
+            "timeout": 30,
+        },
+        {
             "title": "Blood Night: A Brutal 1980s Small-Town Slasher Horror",
             "authors": ["Jonathan Daniel"],
             "identifiers": {"mobi-asin": "B0DJK7WQGQ"},
