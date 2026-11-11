@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 55)
+    version = (1, 1, 56)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -488,7 +488,11 @@ class MetadataEngineSource(Source):
                     ),
                     None,
                 )
-                if candidate is not None and not self._to_metadata(candidate, 0).tags:
+                tags = self._to_metadata(candidate, 0).tags if candidate else []
+                if candidate is not None and all(
+                    tag.casefold() in {"fiction", "nonfiction", "non-fiction"}
+                    for tag in tags
+                ):
                     self._recover_goodreads_subjects(
                         log,
                         candidate,
@@ -496,6 +500,7 @@ class MetadataEngineSource(Source):
                         abort,
                         timeout,
                         goodreads_editions,
+                        discover=bool(tags),
                     )
 
             for relevance, row in enumerate(rows[:maximum]):
@@ -1097,7 +1102,7 @@ class MetadataEngineSource(Source):
         return rows
 
     def _recover_goodreads_subjects(
-        self, log, row, asin, abort, timeout, goodreads_editions
+        self, log, row, asin, abort, timeout, goodreads_editions, *, discover=False
     ):
         """Recover subjects from the verified Kindle edition or its work shelves."""
         extra = row.get("extra")
@@ -1105,24 +1110,33 @@ class MetadataEngineSource(Source):
         goodreads_id = self._text(extra.get("goodreads_id"))
         if not goodreads_id and row.get("source") == "goodreads":
             goodreads_id = self._text(row.get("source_id"))
-        if not re.fullmatch(r"[0-9]{1,16}", goodreads_id or ""):
-            return
         deadline = time.monotonic() + min(timeout, 8)
         try:
             edition = row
-            if not extra.get("goodreads_work_id") or self._cover_asin(row) != asin:
+            if not re.fullmatch(r"[0-9]{1,16}", goodreads_id or ""):
+                if not discover:
+                    return
+                editions = self._goodreads_work_fallback(
+                    self._search_title(row.get("title"), row.get("subtitle")),
+                    row.get("authors"),
+                    abort,
+                    timeout,
+                    {"asin": asin},
+                )
+                edition = next(iter(editions), None)
+            elif not extra.get("goodreads_work_id") or self._cover_asin(row) != asin:
                 if goodreads_id in goodreads_editions:
                     edition = goodreads_editions[goodreads_id]
                 else:
                     edition = self._goodreads_kindle_edition(
                         goodreads_id, asin, min(timeout, 4)
                     )
-                if (
-                    not edition
-                    or not self._work_description_matches(row, edition)
-                    or not self._compatible_identifiers(row, edition)
-                ):
-                    return
+            if (
+                not edition
+                or not self._work_description_matches(row, edition)
+                or not self._compatible_identifiers(row, edition)
+            ):
+                return
             genres = self._list(edition.get("genres"))
             work_id = self._text((edition.get("extra") or {}).get("goodreads_work_id"))
             remaining = deadline - time.monotonic()
@@ -1134,7 +1148,9 @@ class MetadataEngineSource(Source):
             ):
                 genres = self._goodreads_shelf_genres(work_id, min(remaining, 4))
             if genres:
-                row["genres"] = genres
+                row["genres"] = list(
+                    dict.fromkeys(self._list(row.get("genres")) + genres)
+                )
         except (OSError, RuntimeError, ValueError) as exc:
             _log(
                 log, "info", "Metadata Engine Goodreads subject lookup failed: %s", exc
@@ -2465,6 +2481,55 @@ class MetadataEngineSource(Source):
         return list(unique.values())
 
     @staticmethod
+    def _format_review_quotes(description):
+        """Set off attributed review blurbs without disturbing provider markup."""
+        has_html = re.search(r"</?[a-z][^<>]*>", description, re.IGNORECASE)
+        quote = re.compile(
+            r'(?P<quote>(?:["“]|&quot;|&ldquo;)'
+            r'(?:(?!["“”]|&quot;|&ldquo;|&rdquo;|<br\b).)+?'
+            r'(?:[.!?…])(?:["”]|&quot;|&rdquo;))'
+            r"[ \t]*(?P<dash>[-–—])[ \t]*"
+            r'(?P<credit>[A-Z](?:[^\r\n<"“”]|</?(?:i|em|b|strong)>)*?)'
+            r'(?=[ \t]*(?:["“]|&quot;|&ldquo;|<br\b|\r?\n|$))',
+        )
+        # Existing block boundaries already separate their contents. Only
+        # insert blank lines within the same paragraph or loose text block.
+        blocks = re.split(
+            r"(</?(?:p|div|li|blockquote|h[1-6]|ul|ol)\b[^<>]*>)",
+            description,
+            flags=re.IGNORECASE,
+        )
+        for index in range(0, len(blocks), 2):
+            block = blocks[index]
+            matches = list(quote.finditer(block))
+            if not matches:
+                if not has_html:
+                    blocks[index] = escape(block).replace("\n", "<br />")
+                continue
+            pieces = []
+            end = 0
+            for match in matches:
+                pieces.append(block[end : match.start()])
+                pieces.append(f"{match['quote']} {match['dash']} {match['credit']}")
+                end = match.end()
+            pieces.append(block[end:])
+            fragments = []
+            for piece in pieces:
+                piece = re.sub(
+                    r"^(?:\s|<br\s*/?>)+|(?:\s|<br\s*/?>)+$",
+                    "",
+                    piece,
+                    flags=re.IGNORECASE,
+                )
+                if piece:
+                    if not has_html:
+                        piece = escape(piece).replace("\n", "<br />")
+                    fragments.append(piece)
+            blocks[index] = "<br /><br />".join(fragments)
+        formatted = "".join(blocks)
+        return formatted if has_html or quote.search(description) else description
+
+    @staticmethod
     def _format_description(description):
         """Render clear plain-text lists without rewriting provider HTML or prose."""
         if re.search(r"</?[a-z][^<>]*>", description, re.IGNORECASE):
@@ -2677,7 +2742,9 @@ class MetadataEngineSource(Source):
                 description,
             ).strip()
             if self._usable_description(description):
-                mi.comments = self._format_description(description)
+                mi.comments = self._format_review_quotes(
+                    self._format_description(description)
+                )
         if row.get("language"):
             mi.languages = [self._text(row["language"])]
 
@@ -2952,7 +3019,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.55",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.56",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
