@@ -2483,15 +2483,20 @@ class MetadataEngineSource(Source):
     @staticmethod
     def _format_review_quotes(description):
         """Set off attributed review blurbs without disturbing provider markup."""
+        original = description
         has_html = re.search(r"</?[a-z][^<>]*>", description, re.IGNORECASE)
+        if not has_html:
+            description = unescape(description)
         quote = re.compile(
             r'(?P<quote>(?:["“]|&quot;|&ldquo;)'
             r'(?:(?!["“”]|&quot;|&ldquo;|&rdquo;|<br\b).)+?'
-            r'(?:[.!?…])(?:["”]|&quot;|&rdquo;))'
+            r'(?:["”]|&quot;|&rdquo;))'
             r"[ \t]*(?P<dash>[-–—])[ \t]*"
             r'(?P<credit>[A-Z](?:[^\r\n<"“”]|</?(?:i|em|b|strong)>)*?)'
             r'(?=[ \t]*(?:["“]|&quot;|&ldquo;|<br\b|\r?\n|$))',
         )
+        if not quote.search(description):
+            return original
         # Existing block boundaries already separate their contents. Only
         # insert blank lines within the same paragraph or loose text block.
         blocks = re.split(
@@ -2503,8 +2508,6 @@ class MetadataEngineSource(Source):
             block = blocks[index]
             matches = list(quote.finditer(block))
             if not matches:
-                if not has_html:
-                    blocks[index] = escape(block).replace("\n", "<br />")
                 continue
             pieces = []
             end = 0
@@ -2526,8 +2529,7 @@ class MetadataEngineSource(Source):
                         piece = escape(piece).replace("\n", "<br />")
                     fragments.append(piece)
             blocks[index] = "<br /><br />".join(fragments)
-        formatted = "".join(blocks)
-        return formatted if has_html or quote.search(description) else description
+        return "".join(blocks)
 
     @staticmethod
     def _format_description(description):
