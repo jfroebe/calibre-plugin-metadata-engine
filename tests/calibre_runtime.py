@@ -1639,6 +1639,77 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertNotIn("asin", goodreads)
         self.assertEqual(amazon["asin"], ["B075JB53VN"])
 
+    def test_generic_fiction_recovers_horror_and_separates_endorsements(self):
+        """Keep the selected edition and render attributed reviews as separate lines."""
+        title = "Blood Night: A Brutal 1980s Small-Town Slasher Horror"
+        author, asin = "Jonathan Daniel", "B0DJK7WQGQ"
+        first_quote = '"The tension builds steadily."'
+        second_quote = '"A chilling story."'
+        synopsis = "Will anyone survive?"
+        html = (
+            f"<p>{synopsis}{first_quote}- First Reviewer"
+            f"{second_quote} - Second Reviewer<br />More about the book.</p>"
+        )
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        state = {
+            "Book:1": {
+                "__typename": "Book",
+                "legacyId": 220148316,
+                "titleComplete": title,
+                "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                "details": {"asin": asin},
+                "bookGenres": [{"genre": {"name": "Horror"}}],
+                "description": "This catalog synopsis must stay with its source.",
+            },
+            "Author:1": {"name": author},
+        }
+        data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+        candidate = {
+            "source": "google_books",
+            "title": title,
+            "authors": [author],
+            "asin": asin,
+            "isbn": "9798991048200",
+            "genres": ["Fiction"],
+            "description": html,
+        }
+
+        def search(provider, *args, **kwargs):
+            return [deepcopy(candidate)] if provider == "google_books" else []
+
+        with (
+            patch.object(self.plugin, "_search", side_effect=search),
+            patch.object(
+                self.plugin,
+                "_http_bytes",
+                side_effect=[
+                    b'[{"bookId": "220148316"}]',
+                    f'<script id="__NEXT_DATA__">{data}</script>'.encode(),
+                ],
+            ) as fetch,
+        ):
+            (result,) = self.identify(
+                title=title, authors=[author], identifiers={"mobi-asin": asin}
+            )
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(result.tags, ["Fiction", "Horror"])
+        self.assertEqual(result.get_identifiers()["asin"], asin)
+        self.assertEqual(result.get_identifiers()["isbn"], "9798991048200")
+        self.assertEqual(
+            result.comments,
+            f"<p>{synopsis}<br /><br />{first_quote} - First Reviewer"
+            f"<br /><br />{second_quote} - Second Reviewer"
+            "<br /><br />More about the book.</p>",
+        )
+        plain = f"{synopsis}\n“The tension builds steadily.” — First Reviewer\nMore."
+        self.assertEqual(
+            self.plugin._format_review_quotes(plain),
+            f"{synopsis}<br /><br />“The tension builds steadily.” — First Reviewer"
+            "<br /><br />More.",
+        )
+        dialogue = "<p>“Don’t go,” she whispered, then left.</p>"
+        self.assertEqual(self.plugin._format_review_quotes(dialogue), dialogue)
+
     def test_description_lists_render_as_native_calibre_html(self):
         """Preserve numbering, paragraph boundaries, and literal punctuation."""
         from calibre.library.comments import comments_to_html
