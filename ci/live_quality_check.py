@@ -585,7 +585,9 @@ def main():
             raise AssertionError("Missing final subject tags")
         subjects = {tag.casefold() for tag in book.tags}
         if not case["expected_subjects"].intersection(subjects):
-            raise AssertionError("No relevant subjects for " + case["title"])
+            raise AssertionError(
+                f"No relevant subjects for {case['title']}: {book.tags}"
+            )
         if case.get("required_subjects", set()) - subjects:
             raise AssertionError(
                 f"Missing required subjects for {book.title}: {book.tags}"
