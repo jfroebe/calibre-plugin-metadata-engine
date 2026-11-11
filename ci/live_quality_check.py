@@ -249,6 +249,19 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Supers",
+            "authors": ["Patrick Stewart"],
+            "identifiers": {"mobi-asin": "B088T3V8TJ"},
+            "expected_goodreads": "53443828",
+            "expected_title": "Supers",
+            "merge_identify": True,
+            "expected_subjects": {"superheroes", "urban fantasy"},
+            "required_subjects": {"superheroes", "urban fantasy"},
+            "minimum_description": 400,
+            "topic": "meteorites",
+            "timeout": 30,
+        },
+        {
             "title": "The Devil's Apprentice",
             "authors": ["Patrick Stewart"],
             "identifiers": {"mobi-asin": "B081S9TTSF"},
@@ -453,9 +466,15 @@ def main():
             raise AssertionError(
                 f"Expected one edition for {case['title']}, got {queue.qsize()}"
             )
+        candidates = list(queue.queue)
+        if case.get("merge_identify"):
+            for rank, row in enumerate(candidates):
+                row.identify_plugin = plugin
+                row.relevance_in_source = rank
+            candidates = merge_identify_results({plugin: candidates}, ThreadSafeLog())
         matching = [
             row
-            for row in list(queue.queue)
+            for row in candidates
             if (
                 plugin._canonical_isbn(row.get_identifiers().get("isbn"))
                 == case["canonical_isbn"]

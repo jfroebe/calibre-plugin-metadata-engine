@@ -544,6 +544,81 @@ class InstalledPluginTests(unittest.TestCase):
                 self.assertEqual(ids.get("goodreads"), goodreads_id)
                 self.assertFalse(ids.keys() & {"isbn", "openlibrary"})
 
+    def test_genreless_kindle_match_recovers_verified_work_shelves(self):
+        """Return useful shelf genres only for the matching Kindle work."""
+        title, author, asin = "Supers", "Patrick Stewart", "B088T3V8TJ"
+        goodreads_id, work_id = "53443828", "83162363"
+        synopsis = "Lucas hunts the survivors who gained superpowers from meteorites."
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        shelves = b"""
+        <a href="/genres/fantasy">Browse fantasy</a>
+        <div class="shelfStat"><div><a href="/genres/to-read">to-read</a></div></div>
+        <div class="shelfStat"><div><a href="/genres/superheros">superheros</a></div></div>
+        <div class="shelfStat"><div><a href="/genres/superheroes">superheroes</a></div></div>
+        <div class="shelfStat"><div><a href="/genres/urban-fantasy">urban-fantasy</a></div></div>
+        <div class="shelfStat"><div><a href="/genres/audio-book">audio-book</a></div></div>
+        <div class="shelfStat"><div><a href="/genres/my-favorites">my-favorites</a></div></div>
+        """
+        for edition_asin, initial_tags in (
+            (asin, []),
+            ("B000000001", []),
+            (asin, ["Fantasy"]),
+        ):
+            with self.subTest(asin=edition_asin, initial_tags=initial_tags):
+                candidate = {
+                    "source": "goodreads",
+                    "source_id": goodreads_id,
+                    "title": title,
+                    "authors": [author],
+                    "asin": asin,
+                    "published_year": 2020,
+                    "description": synopsis,
+                    "genres": initial_tags,
+                }
+                state = {
+                    "Book:1": {
+                        "__typename": "Book",
+                        "legacyId": int(goodreads_id),
+                        "title": title,
+                        "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                        "details": {"asin": edition_asin},
+                        "work": {"__ref": "Work:1"},
+                    },
+                    "Author:1": {"name": author},
+                    "Work:1": {"legacyId": int(work_id)},
+                }
+                data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                with (
+                    patch.object(self.plugin, "_search", return_value=[candidate]),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            f'<script id="__NEXT_DATA__">{data}</script>'.encode(),
+                            shelves,
+                        ],
+                    ) as fetch,
+                ):
+                    (result,) = self.identify(
+                        title=title, authors=[author], identifiers={"mobi-asin": asin}
+                    )
+                if initial_tags:
+                    self.assertEqual(result.tags, ["Fantasy"])
+                    fetch.assert_not_called()
+                elif edition_asin != asin:
+                    self.assertFalse(result.tags)
+                    self.assertEqual(fetch.call_count, 1)
+                else:
+                    self.assertEqual(result.tags, ["Superheroes", "Urban Fantasy"])
+                    self.assertEqual(fetch.call_count, 2)
+                    self.assertTrue(
+                        fetch.call_args.args[0].endswith(f"/work/shelves/{work_id}")
+                    )
+                self.assertEqual(result.authors, [author])
+                self.assertEqual(result.comments, synopsis)
+                self.assertEqual(result.pubdate.year, 2020)
+                self.assertEqual(result.get_identifiers()["asin"], asin)
+
     def test_goodreads_fallback_verifies_anthology_asin_and_credits(self):
         """Recover a verified box set with alternate credits and an included series."""
         title = "Spice Box: Sixteen Steamy Stories"
