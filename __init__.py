@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 52)
+    version = (1, 1, 53)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -403,6 +403,28 @@ class MetadataEngineSource(Source):
             isbn = self._canonical_isbn(
                 self._identifier(identifiers, "isbn", "isbn13", "isbn10")
             )
+            exact = [
+                row
+                for row in rows
+                if (
+                    (isbn and isbn == self._canonical_isbn(row.get("isbn")))
+                    or (asin and asin == self._cover_asin(row))
+                )
+                and self._matches_requested(row, title, authors, identifiers)
+            ]
+            if exact:
+                for winner in exact:
+                    for donor in rows:
+                        if donor not in exact and self._work_description_matches(
+                            winner, donor
+                        ):
+                            for field in ("genres", "tags"):
+                                values = self._list(winner.get(field)) + self._list(
+                                    donor.get(field)
+                                )
+                                if values:
+                                    winner[field] = list(dict.fromkeys(values))
+                rows = exact
             target = requested
 
             def rank(row):
@@ -2653,9 +2675,10 @@ class MetadataEngineSource(Source):
 
         extras = []
         narrators = self._list(row.get("narrators"))
-        if narrators:
+        audiobook = self._cover_media(row) == "audiobook"
+        if audiobook and narrators:
             extras.append("Narrator(s): " + ", ".join(narrators))
-        if row.get("duration_seconds"):
+        if audiobook and row.get("duration_seconds"):
             try:
                 seconds = int(row["duration_seconds"])
                 hours, rem = divmod(seconds, 3600)
@@ -2783,7 +2806,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.52",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.53",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
