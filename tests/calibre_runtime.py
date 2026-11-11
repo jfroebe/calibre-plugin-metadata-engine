@@ -1663,52 +1663,101 @@ class InstalledPluginTests(unittest.TestCase):
             },
             "Author:1": {"name": author},
         }
-        data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
-        candidate = {
-            "source": "google_books",
-            "title": title,
-            "authors": [author],
-            "asin": asin,
-            "isbn": "9798991048200",
-            "genres": ["Fiction"],
-            "description": html,
-        }
+        from calibre.ebooks.metadata.sources.identify import merge_identify_results
+        from calibre.utils.logging import ThreadSafeLog
 
-        def search(provider, *args, **kwargs):
-            return [deepcopy(candidate)] if provider == "google_books" else []
-
-        with (
-            patch.object(self.plugin, "_search", side_effect=search),
-            patch.object(
-                self.plugin,
-                "_http_bytes",
-                side_effect=[
-                    b'[{"bookId": "220148316"}]',
-                    f'<script id="__NEXT_DATA__">{data}</script>'.encode(),
-                ],
-            ) as fetch,
+        for source_tags, catalog_asin, expected_tags, requests in (
+            (["Fiction"], asin, ["Fiction", "Horror"], 2),
+            (["Fiction"], "B000000001", ["Fiction"], 2),
+            (["Fiction", "Horror"], asin, ["Fiction", "Horror"], 0),
         ):
-            (result,) = self.identify(
-                title=title, authors=[author], identifiers={"mobi-asin": asin}
-            )
-        self.assertEqual(fetch.call_count, 2)
-        self.assertEqual(result.tags, ["Fiction", "Horror"])
-        self.assertEqual(result.get_identifiers()["asin"], asin)
-        self.assertEqual(result.get_identifiers()["isbn"], "9798991048200")
-        self.assertEqual(
-            result.comments,
-            f"<p>{synopsis}<br /><br />{first_quote} - First Reviewer"
-            f"<br /><br />{second_quote} - Second Reviewer"
-            "<br /><br />More about the book.</p>",
+            with self.subTest(tags=source_tags, catalog_asin=catalog_asin):
+                state["Book:1"]["details"]["asin"] = catalog_asin
+                data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                candidate = {
+                    "source": "google_books",
+                    "title": title,
+                    "authors": [author],
+                    "asin": asin,
+                    "isbn": "9798991048200",
+                    "genres": source_tags,
+                    "description": html,
+                }
+
+                def search(provider, *args, **kwargs):
+                    return [deepcopy(candidate)] if provider == "google_books" else []
+
+                with (
+                    patch.object(self.plugin, "_search", side_effect=search),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            b'[{"bookId": "220148316"}]',
+                            f'<script id="__NEXT_DATA__">{data}</script>'.encode(),
+                        ],
+                    ) as fetch,
+                ):
+                    rows = self.identify(
+                        title=title, authors=[author], identifiers={"mobi-asin": asin}
+                    )
+                for rank, row in enumerate(rows):
+                    row.identify_plugin = self.plugin
+                    row.relevance_in_source = rank
+                (result,) = merge_identify_results({self.plugin: rows}, ThreadSafeLog())
+                self.assertEqual(fetch.call_count, requests)
+                self.assertEqual(set(result.tags), set(expected_tags))
+                self.assertEqual(result.get_identifiers()["asin"], asin)
+                self.assertEqual(result.get_identifiers()["isbn"], "9798991048200")
+                self.assertEqual(
+                    result.comments,
+                    f"<p>{synopsis}<br /><br />{first_quote} - First Reviewer"
+                    f"<br /><br />{second_quote} - Second Reviewer"
+                    "<br /><br />More about the book.</p>",
+                )
+
+    def test_review_layout_survives_calibre_comment_rendering(self):
+        """Check rendered spacing for plain, encoded, and existing HTML reviews."""
+        from calibre.library.comments import comments_to_html
+        from qt.core import QTextDocument
+
+        cases = (
+            (
+                'Plot ends. "A chilling story"- Reviewer\nMore plot.',
+                '"A chilling story" - Reviewer',
+            ),
+            (
+                "Plot ends. &quot;A chilling story&quot;- Reviewer\nMore plot.",
+                '"A chilling story" - Reviewer',
+            ),
+            (
+                "<p>Plot ends.<br>“A chilling story.” — Reviewer<br>More plot.</p>",
+                "“A chilling story.” — Reviewer",
+            ),
+            (
+                "<p>Plot ends.<br/><br/>“A chilling story.” — Reviewer<br/><br/>More plot.</p>",
+                "“A chilling story.” — Reviewer",
+            ),
         )
-        plain = f"{synopsis}\n“The tension builds steadily.” — First Reviewer\nMore."
-        self.assertEqual(
-            self.plugin._format_review_quotes(plain),
-            f"{synopsis}<br /><br />“The tension builds steadily.” — First Reviewer"
-            "<br /><br />More.",
-        )
+        for description, review in cases:
+            with self.subTest(description=description):
+                row = {"title": "Example", "description": description}
+                document = QTextDocument()
+                document.setHtml(
+                    comments_to_html(self.plugin._to_metadata(row, 0).comments)
+                )
+                self.assertEqual(
+                    document.toPlainText(), f"Plot ends.\n\n{review}\n\nMore plot."
+                )
         dialogue = "<p>“Don’t go,” she whispered, then left.</p>"
-        self.assertEqual(self.plugin._format_review_quotes(dialogue), dialogue)
+        self.assertEqual(
+            self.plugin._to_metadata(
+                {"title": "Example", "description": dialogue}, 0
+            ).comments,
+            dialogue,
+        )
+        blocks = "<p>Plot ends.</p><blockquote>“A chilling story.” — Reviewer</blockquote><p>More plot.</p>"
+        self.assertEqual(self.plugin._format_review_quotes(blocks), blocks)
 
     def test_description_lists_render_as_native_calibre_html(self):
         """Preserve numbering, paragraph boundaries, and literal punctuation."""
