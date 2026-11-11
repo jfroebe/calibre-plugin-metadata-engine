@@ -323,6 +323,7 @@ class MetadataEngineSource(Source):
                             )
                             break
 
+            goodreads_editions = {}
             rows = self._expand_identifiers(
                 log,
                 abort,
@@ -333,6 +334,7 @@ class MetadataEngineSource(Source):
                 authors,
                 identifiers,
                 timeout,
+                goodreads_editions,
             )
             series, position = self._series_identity({"title": title})
             if series and position is not None:
@@ -488,7 +490,12 @@ class MetadataEngineSource(Source):
                 )
                 if candidate is not None and not self._to_metadata(candidate, 0).tags:
                     self._recover_goodreads_subjects(
-                        log, candidate, requested_asin, abort, timeout
+                        log,
+                        candidate,
+                        requested_asin,
+                        abort,
+                        timeout,
+                        goodreads_editions,
                     )
 
             for relevance, row in enumerate(rows[:maximum]):
@@ -840,6 +847,7 @@ class MetadataEngineSource(Source):
         authors,
         identifiers,
         timeout,
+        goodreads_editions=None,
     ):
         """Follow initial edition and catalog IDs once through compatible providers."""
         support = {
@@ -1006,6 +1014,8 @@ class MetadataEngineSource(Source):
                                     edition = self._goodreads_kindle_edition(
                                         value, asin, min(timeout, 8)
                                     )
+                                    if goodreads_editions is not None:
+                                        goodreads_editions[value] = edition
                                     if (
                                         edition
                                         and edition["description"]
@@ -1086,7 +1096,9 @@ class MetadataEngineSource(Source):
                     )
         return rows
 
-    def _recover_goodreads_subjects(self, log, row, asin, abort, timeout):
+    def _recover_goodreads_subjects(
+        self, log, row, asin, abort, timeout, goodreads_editions
+    ):
         """Recover subjects from the verified Kindle edition or its work shelves."""
         extra = row.get("extra")
         extra = extra if isinstance(extra, dict) else {}
@@ -1099,9 +1111,12 @@ class MetadataEngineSource(Source):
         try:
             edition = row
             if not extra.get("goodreads_work_id") or self._cover_asin(row) != asin:
-                edition = self._goodreads_kindle_edition(
-                    goodreads_id, asin, min(timeout, 4)
-                )
+                if goodreads_id in goodreads_editions:
+                    edition = goodreads_editions[goodreads_id]
+                else:
+                    edition = self._goodreads_kindle_edition(
+                        goodreads_id, asin, min(timeout, 4)
+                    )
                 if (
                     not edition
                     or not self._work_description_matches(row, edition)
