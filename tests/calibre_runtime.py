@@ -1933,6 +1933,62 @@ class InstalledPluginTests(unittest.TestCase):
                 self.assertEqual(queue.qsize(), 1)
                 self.assertEqual(queue.get()[1], png(600, 900))
 
+    def test_requested_edition_inherits_subjects_from_the_same_work(self):
+        """Return the requested edition with work tags from the other format."""
+        title = "Pumpkin Spice & Poltergeist: A cozy sapphic paranormal rom-com"
+        authors = ["Ali K. Mulford", "K. Elle Morrison"]
+        isbn, asin = "9781923184145", "B0D6R3GNS8"
+        base, subtitle = title.split(": ", 1)
+        edition = dict(
+            title=base,
+            subtitle=subtitle,
+            authors=authors,
+            isbn=isbn,
+            asin=asin,
+            source="hardcover",
+            series=[{"name": "Maple Hollow", "index": 1}],
+            tags=["Romance"],
+            description="Edition synopsis.",
+            confidence=0.5,
+        )
+        paperback = dict(
+            title=title + " (Maple Hollow)",
+            authors=authors,
+            isbn="9781923184176",
+            source="goodreads",
+            source_id="218151495",
+            tags=["Fantasy", "Witches"],
+            publisher="Paperback Publisher",
+            narrators=["spook louder, clearer"],
+            metadata_type="audiobooks",
+            extra={"format": "Paperback"},
+            confidence=1.0,
+        )
+        wrong = dict(
+            paperback, title=title + " (Maple Hollow Book 2)", tags=["Wrong volume"]
+        )
+        self.plugin.prefs["plugin_ids"] = "hardcover"
+        with patch.object(
+            self.plugin,
+            "_search",
+            side_effect=lambda *a, **k: deepcopy([paperback, wrong, edition]),
+        ):
+            (result,) = self.identify(
+                title=title + " (Maple Hollow Book 1)",
+                authors=authors,
+                identifiers={"isbn": isbn, "mobi-asin": asin},
+            )
+        self.assertEqual((result.series, result.series_index), ("Maple Hollow", 1.0))
+        self.assertEqual(result.tags, ["Romance", "Fantasy", "Witches"])
+        self.assertEqual(result.comments, "Edition synopsis.")
+        self.assertEqual(result.get_identifiers()["isbn"], isbn)
+        self.assertEqual(result.get_identifiers()["asin"], asin)
+        self.assertNotIn("goodreads", result.get_identifiers())
+        self.assertIsNone(result.publisher)
+        self.assertNotIn(
+            "Narrator(s)", self.plugin._to_metadata(paperback, 0).comments or ""
+        )
+
     def test_description_fill_does_not_cross_edition_or_overwrite_existing(self):
         """Fill only identical keys and leave caller-owned provider rows intact."""
         sparse = dict(ROWS[0], description=" ", confidence=1.0)

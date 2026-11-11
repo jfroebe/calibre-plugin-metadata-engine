@@ -249,6 +249,20 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Pumpkin Spice & Poltergeist: A cozy sapphic paranormal rom-com (Maple Hollow Book 1)",
+            "authors": ["Ali K. Mulford", "K. Elle Morrison"],
+            "isbn": "9781923184145",
+            "identifiers": {"mobi-asin": "B0D6R3GNS8"},
+            "canonical_isbn": "9781923184145",
+            "series": ("Maple Hollow", 1.0),
+            "expected_subjects": {"romance"},
+            "required_subjects": {"romance", "paranormal", "witches"},
+            "minimum_description": 300,
+            "topic": "jordyn",
+            "one_result": True,
+            "timeout": 30,
+        },
+        {
             "title": "Spice Box; Sixteen Steamy Stories",
             "authors": [
                 "Raine Miller",
@@ -421,6 +435,10 @@ def main():
         if error:
             raise AssertionError(error)
         print(f"LIVE_LOOKUP_SECONDS={time.monotonic() - started:.2f}", flush=True)
+        if case.get("one_result") and queue.qsize() != 1:
+            raise AssertionError(
+                f"Expected one edition for {case['title']}, got {queue.qsize()}"
+            )
         matching = [
             row
             for row in list(queue.queue)
