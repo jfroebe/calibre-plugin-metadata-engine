@@ -571,7 +571,19 @@ def main():
         print(f"LIVE_LOOKUP_SECONDS={time.monotonic() - started:.2f}", flush=True)
         if case.get("one_result") and queue.qsize() != 1:
             raise AssertionError(
-                f"Expected one edition for {case['title']}, got {queue.qsize()}"
+                f"Expected one edition for {case['title']}, got "
+                + repr(
+                    [
+                        (
+                            row.title,
+                            row.authors,
+                            row.get_identifiers(),
+                            row.series,
+                            row.series_index,
+                        )
+                        for row in queue.queue
+                    ]
+                )
             )
         candidates = list(queue.queue)
         if case.get("merge_identify"):
