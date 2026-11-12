@@ -490,6 +490,9 @@ def main():
                 "Cindy Tomamichel",
                 "Bonnie Milani",
             ],
+            # The paperback ISBN and Kindle ASIN are different editions.
+            # Supply the ISBN explicitly when qualifying the paperback metadata.
+            "isbn": "9781718159075",
             "identifiers": {"mobi-asin": "B07GBH1YNV"},
             "canonical_isbn": "9781718159075",
             "additional_authors": ["Leo McBride"],
