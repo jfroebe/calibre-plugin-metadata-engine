@@ -111,6 +111,13 @@ A live saved record with a conflicting ASIN, author, or title must be rejected.
 A bibliography that establishes only the work cannot supply a new edition ID
 or cover.
 
+Keep the original ISBN for `Star Wars: Knight Errant`. Cover a correct
+edition with an existing synopsis and missing or generic subjects, plus
+catalog timeouts and a separate comic by the same author. Exercise Open
+Library's edition response with the work title and franchise in separate
+fields. Require a relevant genre after Calibre's merger. Preserve the selected
+ISBN and synopsis, and reject subjects from mismatched ISBNs and contributors.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.
