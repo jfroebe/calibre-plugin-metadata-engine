@@ -1393,6 +1393,89 @@ class InstalledPluginTests(unittest.TestCase):
             result[0].tags, ["Sexuality", "Sacred Sexuality", "Sexual Instruction"]
         )
 
+    def test_isbn_genres_survive_catalog_timeouts_and_calibre_merge(self):
+        """Use exact ISBN classifications when normal providers leave tags sparse."""
+        from calibre.ebooks.metadata.sources.identify import merge_identify_results
+        from calibre.utils.logging import ThreadSafeLog
+
+        title = "Star Wars: Knight Errant"
+        author = "John Jackson Miller"
+        isbn = "9780345522641"
+        synopsis = "Jedi Kerra Holt confronts the Dark Lords."
+        hardcover = {
+            "title": title,
+            "authors": [author],
+            "isbn": isbn,
+            "description": synopsis,
+            "publisher": "LucasBooks",
+        }
+        comic = {
+            "title": "Star Wars: Knight Errant, Vol. 1: Aflame",
+            "authors": [author],
+            "isbn": "9781595826428",
+            "tags": ["Graphic Novels"],
+            "confidence": 0.99,
+        }
+        catalog = {
+            "title": "Knight Errant",
+            "subtitle": "Star Wars",
+            "authors": [{"name": author}],
+            "identifiers": {"isbn_10": ["0345522648"], "isbn_13": [isbn]},
+            "subjects": [
+                {"name": "Comics & graphic novels, science fiction"},
+                {"name": "Science fiction comic books, strips"},
+                {"name": "Fiction, science fiction, general"},
+                {"name": "collectionID:swTOR"},
+            ],
+        }
+        self.plugin.prefs["plugin_ids"] = "hardcover,open_library,goodreads"
+
+        for tags, changes, expected, called in (
+            ([], {}, {"Science Fiction"}, True),
+            (["Fiction"], {}, {"Fiction", "Science Fiction"}, True),
+            (["Space Opera"], {}, {"Space Opera"}, False),
+            ([], {"identifiers": {"isbn_10": ["0345528298"]}}, set(), True),
+            ([], {"title": comic["title"], "subtitle": None}, set(), True),
+            ([], {"authors": [{"name": "Another Writer"}]}, set(), True),
+        ):
+            with self.subTest(tags=tags, changes=changes):
+                def search(provider, *args, **kwargs):
+                    if provider == "hardcover":
+                        return [dict(hardcover, tags=tags)]
+                    if provider == "google_books":
+                        return [deepcopy(comic)]
+                    raise TimeoutError("Catalog timed out")
+
+                with (
+                    patch.object(self.plugin, "_search", side_effect=search),
+                    patch.object(
+                        self.plugin,
+                        "_http_json",
+                        return_value={f"ISBN:{isbn}": dict(catalog, **changes)},
+                    ) as lookup,
+                ):
+                    rows = self.identify(
+                        title=title, authors=[author], identifiers={"isbn": isbn}
+                    )
+                for rank, row in enumerate(rows):
+                    row.identify_plugin = self.plugin
+                    row.relevance_in_source = rank
+                (result,) = merge_identify_results({self.plugin: rows}, ThreadSafeLog())
+                self.assertEqual(set(result.tags), expected)
+                self.assertEqual(result.get_identifiers()["isbn"], isbn)
+                self.assertEqual(result.title, title)
+                self.assertEqual(result.authors, [author])
+                self.assertEqual(result.comments, synopsis)
+                self.assertEqual(result.publisher, "LucasBooks")
+                self.assertEqual(lookup.call_count, int(called))
+                if called:
+                    url, timeout = lookup.call_args.args
+                    self.assertEqual(urlsplit(url).netloc, "openlibrary.org")
+                    self.assertEqual(
+                        parse_qs(urlsplit(url).query)["bibkeys"], [f"ISBN:{isbn}"]
+                    )
+                    self.assertLessEqual(timeout, 5)
+
     def test_numbered_prefix_recovers_catalog_subjects_and_warning_labels(self):
         """Merge a verified edition and supplemental warnings through real identify."""
         title = "Wicked Darlings 1: A Court of Sugar and Spice"
