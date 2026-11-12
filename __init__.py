@@ -2118,11 +2118,7 @@ class MetadataEngineSource(Source):
                     "source": "google_books",
                     "source_id": google_id,
                     "metadata_type": "books",
-                    "native_google_cover": True,
-                    "cover_url": (
-                        f"https://books.google.com/books?id={google_id}"
-                        "&printsec=frontcover&img=1&zoom=0"
-                    ),
+                    **self._native_google_cover(google_id),
                 }
             )
 
@@ -2330,6 +2326,21 @@ class MetadataEngineSource(Source):
                         "Metadata Engine Apple ISBN lookup failed: %s",
                         exc,
                     )
+            if not google_id and not audiobook:
+                for row in rows:
+                    volume = self._text(row.get("source_id")) or ""
+                    if (
+                        row.get("source") == "google_books"
+                        and re.fullmatch(r"[A-Za-z0-9_-]{6,32}", volume)
+                        and self._work_description_matches(target, row)
+                    ):
+                        candidates.append(
+                            dict(
+                                row,
+                                **self._native_google_cover(volume, "/books/content"),
+                            )
+                        )
+                        break
             candidates.extend(rows)
 
         from qt.core import QImage
@@ -2466,6 +2477,17 @@ class MetadataEngineSource(Source):
         else:
             _log(log, "error", "Metadata Engine returned no cover candidates")
         return None
+
+    @staticmethod
+    def _native_google_cover(volume, path="/books"):
+        """Build a native-size cover request for a verified Google Books volume."""
+        return {
+            "native_google_cover": True,
+            "cover_url": (
+                f"https://books.google.com{path}?id={volume}"
+                "&printsec=frontcover&img=1&zoom=0"
+            ),
+        }
 
     @staticmethod
     def _cover_signature(image):
@@ -3648,6 +3670,13 @@ class MetadataEngineSource(Source):
                 ) as response:
                     return response.read(), response.geturl()
             except HTTPError as exc:
+                if (
+                    attempt == 0
+                    and exc.code == 503
+                    and urlsplit(url).hostname == "www.goodreads.com"
+                ):
+                    exc.close()
+                    continue
                 detail = exc.read().decode("utf-8", "replace")
                 raise RuntimeError("HTTP %s: %s" % (exc.code, detail or exc.reason))
             except (TimeoutError, URLError) as exc:
