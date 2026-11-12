@@ -1408,12 +1408,12 @@ class MetadataEngineSource(Source):
         if remaining <= 0 or abort.is_set() or len(authors) != 1:
             return []
         try:
-            return self._fantastic_fiction_work(target, min(remaining, 4))
+            return self._book_notification_work(target, min(remaining, 4))
         except (OSError, RuntimeError, ValueError) as exc:
             reason = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
-            raise RuntimeError(f"Fantastic Fiction unavailable: {reason}") from exc
+            raise RuntimeError(f"Book Notification unavailable: {reason}") from exc
 
-    def _fantastic_fiction_work(self, target, timeout):
+    def _book_notification_work(self, target, timeout):
         """Verify an unavailable catalog work against a single-author bibliography."""
         from lxml.html import fromstring
 
@@ -1423,43 +1423,42 @@ class MetadataEngineSource(Source):
             return []
         slug = "-".join(words)
         payload = self._http_bytes(
-            f"https://www.fantasticfiction.com/{words[-1][0]}/{slug}/", timeout
+            f"https://www.booknotification.com/authors/{slug}/", timeout
         )
         if not payload.strip():
             return []
         document = fromstring(payload)
-        headings = document.xpath("//h1[@itemprop='name']")
+        headings = document.xpath("//h1[@id='bnauthname']")
         if (
             len(headings) != 1
             or self._author_words(headings[0].text_content()) != words
         ):
             return []
         matches = []
-        for section in document.xpath("//div[@class='sectionleft']"):
-            names = section.xpath("./a/span[@class='ibig']")
-            if len(names) != 1:
+        for table in document.xpath("//table[starts-with(@id, 'books')]"):
+            headings = table.xpath("preceding::h3[@class='series_title'][1]")
+            if not headings:
                 continue
-            series = names[0].text_content().strip()
-            # The numbered entries have an internal book marker. Other links
-            # in the same section can be series headings or alternate titles.
-            entries = section.xpath(
-                "./span[@title='Not available'] | "
-                "./a[following-sibling::*[1][self::span and @class='year']]"
+            series = re.fullmatch(
+                r"List of (.+) Books in Publication Order",
+                headings[0].text_content().strip(),
             )
-            for entry in entries:
-                marker = entry.getprevious()
-                if marker is None:
+            if not series:
+                continue
+            for entry in table.xpath(".//tr[td//div[@class='titles']/a]"):
+                links = entry.xpath("./td//div[@class='titles']/a")
+                if len(links) != 1:
                     continue
-                marker_id = marker.get("id") or ""
-                number = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\.\s*", marker.tail or "")
-                if not number or not re.fullmatch(r"t[0-9]+", marker_id):
+                position = entry.xpath("string(./td[1])").strip()
+                source_id = re.fullmatch(r"hide([0-9]+)", entry.get("id") or "")
+                if not source_id or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", position):
                     continue
                 row = {
-                    "source": "fantastic_fiction",
-                    "source_id": marker_id[1:],
-                    "title": entry.text_content().strip(),
+                    "source": "book_notification",
+                    "source_id": source_id[1],
+                    "title": links[0].text_content().strip(),
                     "authors": [author],
-                    "series": [{"name": series, "position": float(number[1])}],
+                    "series": [{"name": series[1], "position": float(position)}],
                 }
                 if self._work_description_matches(target, row):
                     matches.append(row)
