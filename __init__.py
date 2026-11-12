@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 59)
+    version = (1, 1, 60)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -469,9 +469,10 @@ class MetadataEngineSource(Source):
                 and isbn
                 and rank(rows[0])[0]
                 and not abort.is_set()
-                and "tertulia_subjects" in provider_ids
             ):
-                self._recover_book_subjects(log, rows[0], isbn, timeout)
+                self._recover_book_subjects(
+                    log, rows[0], isbn, timeout, provider_ids, abort
+                )
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
             requested_asin = self._cover_asin(identifiers)
             if (
@@ -489,10 +490,7 @@ class MetadataEngineSource(Source):
                     None,
                 )
                 tags = self._to_metadata(candidate, 0).tags if candidate else []
-                if candidate is not None and all(
-                    tag.casefold() in {"fiction", "nonfiction", "non-fiction"}
-                    for tag in tags
-                ):
+                if candidate is not None and not self._has_specific_subjects(tags):
                     self._recover_goodreads_subjects(
                         log,
                         candidate,
@@ -555,32 +553,112 @@ class MetadataEngineSource(Source):
             return dict(row, genres=[*genres, "Horror"])
         return row
 
-    def _recover_book_subjects(self, log, row, isbn, timeout):
-        """Fill empty tags from a verified edition without replacing other fields."""
-        if self._to_metadata(row, 0).tags:
+    @staticmethod
+    def _has_specific_subjects(tags):
+        """Treat generic catalog categories as insufficient for genre recovery."""
+        return any(
+            tag.casefold() not in {"fiction", "nonfiction", "non-fiction"}
+            for tag in tags
+        )
+
+    def _recover_book_subjects(self, log, row, isbn, timeout, provider_ids, abort):
+        """Enrich the selected ISBN without replacing its edition fields."""
+        if self._has_specific_subjects(self._to_metadata(row, 0).tags):
+            return
+        deadline = time.monotonic() + min(timeout, 5)
+        authors = self._list(row.get("authors"))
+        open_library_enabled = "open_library" in provider_ids
+        if "tertulia_subjects" in provider_ids:
+            try:
+                donors = self._search(
+                    "tertulia_subjects",
+                    row["title"],
+                    authors,
+                    {"isbn": isbn},
+                    min(timeout, 2 if open_library_enabled else 5),
+                )
+                for donor in donors:
+                    if self._same_edition(row, donor):
+                        row["tags"] = self._list(row.get("tags")) + self._list(
+                            donor.get("tags")
+                        )
+            except (OSError, RuntimeError, ValueError) as exc:
+                _log(
+                    log, "info", "Metadata Engine Tertulia subject lookup failed: %s", exc
+                )
+        remaining = deadline - time.monotonic()
+        if (
+            not open_library_enabled
+            or remaining <= 0
+            or abort.is_set()
+            or self._has_specific_subjects(self._to_metadata(row, 0).tags)
+        ):
             return
         try:
-            donors = self._search(
-                "tertulia_subjects",
-                row["title"],
-                self._list(row.get("authors")),
-                {"isbn": isbn},
-                min(timeout, 5),
+            genres = self._open_library_isbn_genres(row, isbn, remaining)
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log(log, "info", "Metadata Engine Open Library ISBN lookup failed: %s", exc)
+            return
+        if genres:
+            row["genres"] = self._list(row.get("genres")) + genres
+            _log(
+                log, "info", "Metadata Engine recovered genres from Open Library ISBN %s",
+                isbn,
             )
 
-        except Exception as exc:
-            _log(log, "info", f"Metadata Engine subject lookup unavailable: {exc}")
-            return
-        for donor in donors:
-            if self._same_edition(row, donor):
-                tags = self._list(donor.get("tags"))
-                row["tags"] = self._list(row.get("tags")) + tags
-        if not self._to_metadata(row, 0).tags:
-            _log(
-                log,
-                "info",
-                "Metadata Engine found no catalog subjects for the matching ISBN",
+    def _open_library_isbn_genres(self, row, isbn, timeout):
+        """Read fiction subject classifications from an independently verified ISBN."""
+        key = f"ISBN:{isbn}"
+        params = urlencode({"bibkeys": key, "jscmd": "data", "format": "json"})
+        data = self._http_json(f"https://openlibrary.org/api/books?{params}", timeout)
+        record = data.get(key)
+        if not isinstance(record, dict):
+            return []
+        identifiers = record.get("identifiers")
+        if not isinstance(identifiers, dict) or not any(
+            self._canonical_isbn(value) == isbn
+            for field in ("isbn_13", "isbn_10")
+            for value in self._list(identifiers.get(field))
+        ):
+            return []
+        title = self._text(record.get("title"))
+        subtitle = self._text(record.get("subtitle"))
+        people = record.get("authors")
+        subjects = record.get("subjects")
+        if not isinstance(people, list) or not isinstance(subjects, list):
+            return []
+        authors = [
+            person["name"]
+            for person in people
+            if isinstance(person, dict) and self._text(person.get("name"))
+        ]
+        donor = {"title": title, "subtitle": subtitle, "authors": authors, "isbn": isbn}
+        # The catalog can put a franchise heading after the work title.
+        # Allow the reversal only when both labeled parts and the ISBN agree.
+        titles = [donor]
+        if title and subtitle:
+            titles.append(dict(donor, title=f"{subtitle}: {title}", subtitle=None))
+        if not any(
+            self._work_description_matches(row, variant)
+            and self._identity_consistent(row, variant)
+            for variant in titles
+        ):
+            return []
+        genres = []
+        # Open Library can mix work-wide topics, including related comics, into
+        # this response. Import only the genre hierarchy under Fiction.
+        for subject in subjects:
+            if not isinstance(subject, dict):
+                continue
+            parts = self._list((self._text(subject.get("name")) or "").split(","))
+            if len(parts) < 2 or parts[0].casefold() != "fiction":
+                continue
+            genres.extend(
+                part.title() if part.islower() else part
+                for part in parts[1:]
+                if part.casefold() != "general"
             )
+        return genres
 
     def _recover_supplements(
         self,
@@ -3167,7 +3245,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.59",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.60",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
