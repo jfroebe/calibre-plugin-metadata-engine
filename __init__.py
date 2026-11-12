@@ -604,6 +604,7 @@ class MetadataEngineSource(Source):
                     for variant in variants
                 ):
                     continue
+                row = self._with_edition_correction(row)
                 metadata = {
                     field: row[field]
                     for field in (
@@ -2366,12 +2367,19 @@ class MetadataEngineSource(Source):
                 "isbn": isbn,
                 "cover_url": url.geturl(),
             }
-            if (
-                row["title"]
-                and row["authors"]
-                and self._identity_consistent(target, row)
-            ):
+            if not row["title"] or not row["authors"]:
+                continue
+            if self._identity_consistent(target, row):
                 covers.append(row)
+                continue
+            title, separator, subtitle = row["title"].partition(": ")
+            if separator:
+                # Apple sometimes puts the franchise after the work title.
+                reversed_title = dict(row, title=f"{subtitle}: {title}")
+                if self._work_description_matches(
+                    target, reversed_title
+                ) and self._identity_consistent(target, reversed_title):
+                    covers.append(reversed_title)
         return covers
 
     @classmethod
@@ -2642,12 +2650,34 @@ class MetadataEngineSource(Source):
 
     @classmethod
     def _with_requested_series(cls, row, title, authors, identifiers):
-        """Recover a numbered prefix corroborated by the matching edition."""
+        """Restore series data explicitly supplied in a matching Calibre title."""
         if cls._series_identity(row)[0] or not authors or not row.get("authors"):
             return row
         isbn = cls._canonical_isbn(
             cls._identifier(identifiers, "isbn", "isbn13", "isbn10")
         )
+        suffix = re.fullmatch(
+            r"(.+?)\s+\((.+?)\s+(?:book\s*|#)(\d+(?:\.\d+)?)\)",
+            cls._text(title) or "",
+            re.IGNORECASE,
+        )
+        if suffix:
+            book_title, name, position = suffix.groups()
+            series = [{"name": name, "position": float(position)}]
+            target = {
+                "title": book_title,
+                "authors": authors,
+                "series": series,
+                "isbn": isbn,
+            }
+            asin = cls._cover_asin(identifiers)
+            if (
+                cls._work_description_matches(target, row)
+                and cls._identity_consistent(target, row)
+                and cls._compatible_identifiers(dict(target, asin=asin), row)
+            ):
+                return dict(row, series=series)
+            return row
         if not isbn or isbn != cls._canonical_isbn(row.get("isbn")):
             return row
         requested = re.fullmatch(
