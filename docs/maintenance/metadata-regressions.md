@@ -132,6 +132,14 @@ series can be supplied independently of tags. An unnumbered franchise
 collection, a conflicting title or author, or a different ISBN cannot supply
 the series. Preserve the edition's existing description, publisher and tags.
 
+Test the original `Star Wars - 201 - Shadows of the Empire` query with Steve
+Perry and ISBN `9780553574135`. A middle catalog index may narrow discovery,
+but cannot set the series position. Check the ISBN and author against bare
+and franchise-qualified catalog titles, and reject wrong ISBNs, authors and
+titles. Without an ISBN, require a catalog franchise label as well as the
+work title and author. Preserve literal titles when the shortened search
+misses. The verified Goodreads collection for this edition has no position.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.
