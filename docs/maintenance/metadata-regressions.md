@@ -126,6 +126,12 @@ synopsis, tags and identifiers in Calibre, and reject adaptations, audiobooks,
 unknown bindings and author conflicts. Keep the print edition's identifiers,
 publisher, date and cover out of the fallback result.
 
+The same live ISBN lookup must return `Star Wars: Knight Errant` #1.5. Reproduce
+the Goodreads ISBN redirect and exact edition response in Calibre. A numbered
+series can be supplied independently of tags. An unnumbered franchise
+collection, a conflicting title or author, or a different ISBN cannot supply
+the series. Preserve the edition's existing description, publisher and tags.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.
