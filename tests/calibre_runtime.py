@@ -4313,6 +4313,45 @@ class InstalledPluginTests(unittest.TestCase):
                     google + "1", {call.args[0] for call in download.call_args_list}
                 )
 
+    def test_google_cover_uses_discovered_volume_after_kindle_identification(self):
+        """Request the native cover of the verified Google work without an ISBN."""
+        title = "The Element Encyclopedia of the Psychic World: The Ultimate A–Z of Spirits, Mysteries and the Paranormal"
+        authors = ["Theresa Cheung"]
+        asin, volume = "B004FPYX40", "Ql1r0yAgl_oC"
+        native = f"https://books.google.com/books/content?id={volume}&printsec=frontcover&img=1&zoom=0"
+        kindle = f"https://ec2.images-amazon.com/images/P/{asin}.01.MAIN._SCRM_.jpg"
+        thumbnail = "https://example.test/google-thumbnail.jpg"
+        row = {
+            "title": title,
+            "authors": authors,
+            "source": "google_books",
+            "source_id": volume,
+            "cover_url": thumbnail,
+        }
+        data = {
+            native: png(2276, 2974),
+            kindle: png(1500, 1964),
+            thumbnail: png(128, 167),
+        }
+        queue = Queue()
+        self.plugin.prefs["plugin_ids"] = "google_books"
+        with (
+            patch.object(self.plugin, "_search", return_value=[row]),
+            patch.object(
+                self.plugin, "_http_bytes", side_effect=lambda url, _: data[url]
+            ),
+        ):
+            self.plugin.download_cover(
+                self.log,
+                queue,
+                Event(),
+                title=title,
+                authors=authors,
+                identifiers={"mobi-asin": asin},
+                get_best_cover=True,
+            )
+        self.assertEqual([image for _, image in queue.queue], [data[native]])
+
     def test_google_cover_uses_saved_volume_id(self):
         """Rank native Google artwork and retry the lower zoom when needed."""
         google_id = "pD6arNyKyi8C"
