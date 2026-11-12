@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 59)
+    version = (1, 1, 60)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -420,6 +420,22 @@ class MetadataEngineSource(Source):
             isbn = self._canonical_isbn(
                 self._identifier(identifiers, "isbn", "isbn13", "isbn10")
             )
+            if not any(
+                self._matches_requested(row, title, authors, identifiers)
+                and (
+                    not self._is_print_edition(row)
+                    or not (isbn or asin)
+                    or (isbn and isbn == self._canonical_isbn(row.get("isbn")))
+                    or (asin and asin == self._cover_asin(row))
+                )
+                for row in rows
+            ):
+                print_match = self._recover_print_metadata(
+                    log, abort, provider_ids, rows, requested, timeout
+                )
+                if print_match:
+                    rows = [print_match]
+
             exact = [
                 row
                 for row in rows
@@ -464,14 +480,10 @@ class MetadataEngineSource(Source):
                 return confirmed, confirmed and has_synopsis, confidence
 
             rows.sort(key=rank, reverse=True)
-            if (
-                rows
-                and isbn
-                and rank(rows[0])[0]
-                and not abort.is_set()
-                and "tertulia_subjects" in provider_ids
-            ):
-                self._recover_book_subjects(log, rows[0], isbn, timeout)
+            if rows and isbn and rank(rows[0])[0] and not abort.is_set():
+                self._recover_book_subjects(
+                    log, rows[0], isbn, timeout, provider_ids, abort
+                )
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
             requested_asin = self._cover_asin(identifiers)
             if (
@@ -489,10 +501,7 @@ class MetadataEngineSource(Source):
                     None,
                 )
                 tags = self._to_metadata(candidate, 0).tags if candidate else []
-                if candidate is not None and all(
-                    tag.casefold() in {"fiction", "nonfiction", "non-fiction"}
-                    for tag in tags
-                ):
+                if candidate is not None and not self._has_specific_subjects(tags):
                     self._recover_goodreads_subjects(
                         log,
                         candidate,
@@ -544,6 +553,114 @@ class MetadataEngineSource(Source):
             return "Metadata Engine identify failed: %s" % exc
 
     @classmethod
+    def _is_print_edition(cls, row):
+        """Require an explicit paperback or hardcover binding from the catalog."""
+        extra = row.get("extra")
+        extra = extra if isinstance(extra, dict) else {}
+        binding = " ".join(
+            cls._text(record.get(key)) or ""
+            for record in (row, extra)
+            for key in ("format", "physical_format", "edition_format", "binding")
+        )
+        media = cls._text(row.get("metadata_type")) or ""
+        return bool(
+            re.search(r"\b(?:paperback|softcover|hardcover|hardback)\b", binding, re.I)
+            and not re.search(
+                r"\b(?:audio(?:book)?s?|e-?books?|kindle|comics?|graphic novels?|manga)\b",
+                f"{binding} {media}",
+                re.I,
+            )
+        )
+
+    def _recover_print_metadata(self, log, abort, provider_ids, rows, target, timeout):
+        """Retry by title and author and keep only verified work metadata."""
+        authors = self._list(target.get("authors"))
+        query = self._search_title(target.get("title"))
+        if not query or not authors or abort.is_set():
+            return None
+
+        def matching_metadata(candidates):
+            for row in candidates:
+                if not self._is_print_edition(row) or len(
+                    self._list(row.get("authors"))
+                ) != len(authors):
+                    continue
+                variants = [row]
+                title = self._text(row.get("title"))
+                subtitle = self._text(row.get("subtitle"))
+                if title and not subtitle:
+                    parenthetical = re.fullmatch(r"(.+?)\s+\(([^()]+)\)", title)
+                    if parenthetical:
+                        title, subtitle = parenthetical.groups()
+                if title and subtitle:
+                    # Print catalogs sometimes move a franchise heading after
+                    # the work title. Require both labels to match in full.
+                    variants.append(
+                        dict(row, title=f"{subtitle}: {title}", subtitle=None)
+                    )
+                if not any(
+                    self._identity_consistent(target, variant)
+                    and self._work_description_matches(target, variant)
+                    for variant in variants
+                ):
+                    continue
+                row = self._with_edition_correction(row)
+                metadata = {
+                    field: row[field]
+                    for field in (
+                        "series",
+                        "genres",
+                        "tags",
+                        "content_warnings",
+                        "trigger_warnings",
+                        "parental_warnings",
+                    )
+                    if row.get(field)
+                }
+                description = self._usable_description(row.get("description"))
+                if description:
+                    metadata["description"] = description
+                if metadata:
+                    # Calibre already has the user's edition. Copy only fields
+                    # that describe the work and retain the requested title/IDs.
+                    yield dict(target, **metadata, source=row.get("source"))
+
+        matches = list(matching_metadata(rows))
+        if not matches:
+            providers = [
+                provider
+                for provider in provider_ids
+                if provider
+                in {"google_books", "goodreads", "hardcover", "open_library"}
+            ]
+            batch = self._initial_provider_batch(
+                providers, query, authors, {}, min(timeout, 5), abort
+            )
+            for (provider, _), (donors, error) in batch.items():
+                if error is not None:
+                    _log(
+                        log,
+                        "info",
+                        "Metadata Engine print lookup provider=%s failed: %s",
+                        provider,
+                        error,
+                    )
+                    continue
+                matches.extend(matching_metadata(donors))
+        if not matches or abort.is_set():
+            return None
+        # Prefer a usable synopsis, then merge subjects and series only when
+        # the independently verified print records are compatible.
+        matches.sort(key=lambda row: bool(row.get("description")), reverse=True)
+        result = matches[0]
+        for donor in matches[1:]:
+            self._merge_metadata(result, donor)
+        _log(
+            log, "info", "Metadata Engine recovered work metadata from a print edition"
+        )
+        return result
+
+    @classmethod
     def _with_catalog_subtitle_genre(cls, row):
         """Use explicit genre wording in the matched catalog's fiction subtitle."""
         genres = cls._list(row.get("genres"))
@@ -555,32 +672,119 @@ class MetadataEngineSource(Source):
             return dict(row, genres=[*genres, "Horror"])
         return row
 
-    def _recover_book_subjects(self, log, row, isbn, timeout):
-        """Fill empty tags from a verified edition without replacing other fields."""
-        if self._to_metadata(row, 0).tags:
+    @staticmethod
+    def _has_specific_subjects(tags):
+        """Treat generic catalog categories as insufficient for genre recovery."""
+        return any(
+            tag.casefold() not in {"fiction", "nonfiction", "non-fiction"}
+            for tag in tags
+        )
+
+    def _recover_book_subjects(self, log, row, isbn, timeout, provider_ids, abort):
+        """Enrich the selected ISBN without replacing its edition fields."""
+        if self._has_specific_subjects(self._to_metadata(row, 0).tags):
+            return
+        deadline = time.monotonic() + min(timeout, 5)
+        authors = self._list(row.get("authors"))
+        open_library_enabled = "open_library" in provider_ids
+        if "tertulia_subjects" in provider_ids:
+            try:
+                donors = self._search(
+                    "tertulia_subjects",
+                    row["title"],
+                    authors,
+                    {"isbn": isbn},
+                    min(timeout, 2 if open_library_enabled else 5),
+                )
+                for donor in donors:
+                    if self._same_edition(row, donor):
+                        row["tags"] = self._list(row.get("tags")) + self._list(
+                            donor.get("tags")
+                        )
+            except (OSError, RuntimeError, ValueError) as exc:
+                _log(
+                    log,
+                    "info",
+                    "Metadata Engine Tertulia subject lookup failed: %s",
+                    exc,
+                )
+        remaining = deadline - time.monotonic()
+        if (
+            not open_library_enabled
+            or remaining <= 0
+            or abort.is_set()
+            or self._has_specific_subjects(self._to_metadata(row, 0).tags)
+        ):
             return
         try:
-            donors = self._search(
-                "tertulia_subjects",
-                row["title"],
-                self._list(row.get("authors")),
-                {"isbn": isbn},
-                min(timeout, 5),
+            genres = self._open_library_isbn_genres(row, isbn, remaining)
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log(
+                log, "info", "Metadata Engine Open Library ISBN lookup failed: %s", exc
             )
-
-        except Exception as exc:
-            _log(log, "info", f"Metadata Engine subject lookup unavailable: {exc}")
             return
-        for donor in donors:
-            if self._same_edition(row, donor):
-                tags = self._list(donor.get("tags"))
-                row["tags"] = self._list(row.get("tags")) + tags
-        if not self._to_metadata(row, 0).tags:
+        if genres:
+            row["genres"] = self._list(row.get("genres")) + genres
             _log(
                 log,
                 "info",
-                "Metadata Engine found no catalog subjects for the matching ISBN",
+                "Metadata Engine recovered genres from Open Library ISBN %s",
+                isbn,
             )
+
+    def _open_library_isbn_genres(self, row, isbn, timeout):
+        """Read fiction subject classifications from an independently verified ISBN."""
+        key = f"ISBN:{isbn}"
+        params = urlencode({"bibkeys": key, "jscmd": "data", "format": "json"})
+        data = self._http_json(f"https://openlibrary.org/api/books?{params}", timeout)
+        record = data.get(key)
+        if not isinstance(record, dict):
+            return []
+        identifiers = record.get("identifiers")
+        if not isinstance(identifiers, dict) or not any(
+            self._canonical_isbn(value) == isbn
+            for field in ("isbn_13", "isbn_10")
+            for value in self._list(identifiers.get(field))
+        ):
+            return []
+        title = self._text(record.get("title"))
+        subtitle = self._text(record.get("subtitle"))
+        people = record.get("authors")
+        subjects = record.get("subjects")
+        if not isinstance(people, list) or not isinstance(subjects, list):
+            return []
+        authors = [
+            person["name"]
+            for person in people
+            if isinstance(person, dict) and self._text(person.get("name"))
+        ]
+        donor = {"title": title, "subtitle": subtitle, "authors": authors, "isbn": isbn}
+        # The catalog can put a franchise heading after the work title.
+        # Allow the reversal only when both labeled parts and the ISBN agree.
+        titles = [donor]
+        if title and subtitle:
+            titles.append(dict(donor, title=f"{subtitle}: {title}", subtitle=None))
+        if not any(
+            self._work_description_matches(row, variant)
+            and self._identity_consistent(row, variant)
+            for variant in titles
+        ):
+            return []
+        genres = []
+        # Open Library can mix work-wide topics, including related comics, into
+        # this response. Import only the genre hierarchy under Fiction.
+        for subject in subjects:
+            if not isinstance(subject, dict):
+                continue
+            parts = self._list((self._text(subject.get("name")) or "").split(","))
+            if len(parts) < 2 or parts[0].casefold() != "fiction":
+                continue
+            genres.extend(
+                part.title() if part.islower() else part
+                for part in parts[1:]
+                if part.casefold() != "general"
+            )
+        return genres
 
     def _recover_supplements(
         self,
@@ -2163,12 +2367,19 @@ class MetadataEngineSource(Source):
                 "isbn": isbn,
                 "cover_url": url.geturl(),
             }
-            if (
-                row["title"]
-                and row["authors"]
-                and self._identity_consistent(target, row)
-            ):
+            if not row["title"] or not row["authors"]:
+                continue
+            if self._identity_consistent(target, row):
                 covers.append(row)
+                continue
+            title, separator, subtitle = row["title"].partition(": ")
+            if separator:
+                # Apple sometimes puts the franchise after the work title.
+                reversed_title = dict(row, title=f"{subtitle}: {title}")
+                if self._work_description_matches(
+                    target, reversed_title
+                ) and self._identity_consistent(target, reversed_title):
+                    covers.append(reversed_title)
         return covers
 
     @classmethod
@@ -2439,12 +2650,34 @@ class MetadataEngineSource(Source):
 
     @classmethod
     def _with_requested_series(cls, row, title, authors, identifiers):
-        """Recover a numbered prefix corroborated by the matching edition."""
+        """Restore series data explicitly supplied in a matching Calibre title."""
         if cls._series_identity(row)[0] or not authors or not row.get("authors"):
             return row
         isbn = cls._canonical_isbn(
             cls._identifier(identifiers, "isbn", "isbn13", "isbn10")
         )
+        suffix = re.fullmatch(
+            r"(.+?)\s+\((.+?)\s+(?:book\s*|#)(\d+(?:\.\d+)?)\)",
+            cls._text(title) or "",
+            re.IGNORECASE,
+        )
+        if suffix:
+            book_title, name, position = suffix.groups()
+            series = [{"name": name, "position": float(position)}]
+            target = {
+                "title": book_title,
+                "authors": authors,
+                "series": series,
+                "isbn": isbn,
+            }
+            asin = cls._cover_asin(identifiers)
+            if (
+                cls._work_description_matches(target, row)
+                and cls._identity_consistent(target, row)
+                and cls._compatible_identifiers(dict(target, asin=asin), row)
+            ):
+                return dict(row, series=series)
+            return row
         if not isbn or isbn != cls._canonical_isbn(row.get("isbn")):
             return row
         requested = re.fullmatch(
@@ -3167,7 +3400,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.59",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.60",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

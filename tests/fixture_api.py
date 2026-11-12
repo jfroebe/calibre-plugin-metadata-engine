@@ -133,6 +133,24 @@ def serve():
                     }
             elif path.path == "/plugins/goodreads/search":
                 payload = {"results": []}
+                if (
+                    query.get("query") == ["Star Wars: Knight Errant"]
+                    and query.get("author") == ["John Jackson Miller"]
+                    and not query.get("isbn")
+                ):
+                    payload = {
+                        "results": [
+                            {
+                                "title": "Knight Errant (Star Wars)",
+                                "authors": ["John Jackson Miller"],
+                                "isbn": "9780345522641",
+                                "source_id": "8323122",
+                                "description": "Jedi Kerra Holt faces the Dark Lords.",
+                                "genres": ["Science Fiction", "Space Opera"],
+                                "extra": {"format": "Mass Market Paperback"},
+                            }
+                        ]
+                    }
                 if query.get("query") == [
                     "A Specter and an Invasion"
                 ] and not query.get("author"):

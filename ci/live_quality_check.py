@@ -271,6 +271,18 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Star Wars: Knight Errant",
+            "authors": ["John Jackson Miller"],
+            "isbn": "9780345522641",
+            "canonical_isbn": "9780345522641",
+            "one_result": True,
+            "merge_identify": True,
+            "minimum_description": 350,
+            "topic": "kerra holt",
+            "expected_subjects": {"science fiction", "space opera"},
+            "timeout": 30,
+        },
+        {
             "title": "Henrikk's Punishment",
             "authors": ["Darcy Fayton"],
             "identifiers": {
@@ -478,6 +490,9 @@ def main():
                 "Cindy Tomamichel",
                 "Bonnie Milani",
             ],
+            # The paperback ISBN and Kindle ASIN are different editions.
+            # Supply the ISBN explicitly when qualifying the paperback metadata.
+            "isbn": "9781718159075",
             "identifiers": {"mobi-asin": "B07GBH1YNV"},
             "canonical_isbn": "9781718159075",
             "additional_authors": ["Leo McBride"],

@@ -1100,6 +1100,44 @@ class InstalledPluginTests(unittest.TestCase):
                     self.assertFalse(result.comments)
                     self.assertFalse(result.tags)
 
+    def test_verified_work_restores_requested_numbered_series_suffix(self):
+        """Restore series lost by a catalog that returns the matching bare title."""
+        title = "Dark Town, A Fantasy LitRPG Adventure: Level One of the Dragon's Crawl"
+        authors = ["Palmer Pickering"]
+        identifiers = {"mobi-asin": "B0CYWJ48TS"}
+        row = {
+            "title": title,
+            "authors": authors,
+            "isbn": "9781960530028",
+            "description": "Temerity enters the underground Dragon's Game.",
+            "genres": ["Fantasy"],
+        }
+        requested = f"{title} (Tales of Temerity Book 1)"
+        with patch.object(
+            self.plugin,
+            "_search",
+            side_effect=lambda *args, **kwargs: [deepcopy(row)]
+            if args[0] == "google_books"
+            else [],
+        ):
+            (result,) = self.identify(
+                title=requested, authors=authors, identifiers=identifiers
+            )
+        self.assertEqual((result.series, result.series_index), ("Tales of Temerity", 1))
+        self.assertEqual(result.get_identifiers()["isbn"], row["isbn"])
+        self.assertEqual(result.get_identifiers()["asin"], identifiers["mobi-asin"])
+        for conflicting in (
+            dict(row, asin="B000000001"),
+            dict(row, authors=["Another Writer"]),
+            dict(row, title=title + " Part Two"),
+        ):
+            self.assertEqual(
+                self.plugin._with_requested_series(
+                    conflicting, requested, authors, identifiers
+                ),
+                conflicting,
+            )
+
     def test_initial_provider_requests_overlap_for_metadata_and_covers(self):
         """A barrier must admit every provider before any initial call completes."""
         providers = ["google_books", "goodreads", "open_library"]
@@ -1392,6 +1430,219 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(
             result[0].tags, ["Sexuality", "Sacred Sexuality", "Sexual Instruction"]
         )
+
+    def test_isbn_genres_survive_catalog_timeouts_and_calibre_merge(self):
+        """Use exact ISBN classifications when normal providers leave tags sparse."""
+        from calibre.ebooks.metadata.sources.identify import merge_identify_results
+        from calibre.utils.logging import ThreadSafeLog
+
+        title = "Star Wars: Knight Errant"
+        author = "John Jackson Miller"
+        isbn = "9780345522641"
+        synopsis = "Jedi Kerra Holt confronts the Dark Lords."
+        hardcover = {
+            "title": title,
+            "authors": [author],
+            "isbn": isbn,
+            "description": synopsis,
+            "publisher": "LucasBooks",
+        }
+        comic = {
+            "title": "Star Wars: Knight Errant, Vol. 1: Aflame",
+            "authors": [author],
+            "isbn": "9781595826428",
+            "tags": ["Graphic Novels"],
+            "confidence": 0.99,
+        }
+        catalog = {
+            "title": "Knight Errant",
+            "subtitle": "Star Wars",
+            "authors": [{"name": author}],
+            "identifiers": {"isbn_10": ["0345522648"], "isbn_13": [isbn]},
+            "subjects": [
+                {"name": "Comics & graphic novels, science fiction"},
+                {"name": "Science fiction comic books, strips"},
+                {"name": "Fiction, science fiction, general"},
+                {"name": "collectionID:swTOR"},
+            ],
+        }
+        self.plugin.prefs["plugin_ids"] = "hardcover,open_library,goodreads"
+
+        for tags, changes, expected, called in (
+            ([], {}, {"Science Fiction"}, True),
+            (["Fiction"], {}, {"Fiction", "Science Fiction"}, True),
+            (["Space Opera"], {}, {"Space Opera"}, False),
+            ([], {"identifiers": {"isbn_10": ["0345528298"]}}, set(), True),
+            ([], {"title": comic["title"], "subtitle": None}, set(), True),
+            ([], {"authors": [{"name": "Another Writer"}]}, set(), True),
+        ):
+            with self.subTest(tags=tags, changes=changes):
+
+                def search(provider, *args, **kwargs):
+                    if provider == "hardcover":
+                        return [dict(hardcover, tags=tags)]
+                    if provider == "google_books":
+                        return [deepcopy(comic)]
+                    raise TimeoutError("Catalog timed out")
+
+                with (
+                    patch.object(self.plugin, "_search", side_effect=search),
+                    patch.object(
+                        self.plugin,
+                        "_http_json",
+                        return_value={f"ISBN:{isbn}": dict(catalog, **changes)},
+                    ) as lookup,
+                ):
+                    rows = self.identify(
+                        title=title, authors=[author], identifiers={"isbn": isbn}
+                    )
+                for rank, row in enumerate(rows):
+                    row.identify_plugin = self.plugin
+                    row.relevance_in_source = rank
+                (result,) = merge_identify_results({self.plugin: rows}, ThreadSafeLog())
+                self.assertEqual(set(result.tags), expected)
+                self.assertEqual(result.get_identifiers()["isbn"], isbn)
+                self.assertEqual(result.title, title)
+                self.assertEqual(result.authors, [author])
+                self.assertEqual(result.comments, synopsis)
+                self.assertEqual(result.publisher, "LucasBooks")
+                self.assertEqual(lookup.call_count, int(called))
+                if called:
+                    url, timeout = lookup.call_args.args
+                    self.assertEqual(urlsplit(url).netloc, "openlibrary.org")
+                    self.assertEqual(
+                        parse_qs(urlsplit(url).query)["bibkeys"], [f"ISBN:{isbn}"]
+                    )
+                    self.assertLessEqual(timeout, 5)
+
+    def test_failed_edition_lookup_recovers_verified_print_metadata(self):
+        """Retry print catalogs and preserve the requested edition through Calibre."""
+        from calibre.ebooks.metadata.sources.identify import merge_identify_results
+        from calibre.utils.logging import ThreadSafeLog
+
+        title = "Star Wars: Knight Errant"
+        author = "John Jackson Miller"
+        isbn = "9780307796530"
+        paperback = {
+            "title": title,
+            "authors": [author],
+            "isbn": "9780345522641",
+            "description": "Jedi Kerra Holt faces the Dark Lords.",
+            "genres": ["Science Fiction"],
+            "source": "goodreads",
+            "source_id": "8323122",
+            "cover_url": "https://example.invalid/paperback.jpg",
+            "publisher": "Del Rey",
+            "published_year": 2011,
+            "extra": {"format": "Mass Market Paperback", "goodreads_id": "8323122"},
+        }
+        self.plugin.prefs["plugin_ids"] = "goodreads,open_library,hardcover"
+        scenarios = (
+            ("paperback", paperback, True),
+            (
+                "franchise suffix",
+                dict(paperback, title="Knight Errant (Star Wars)"),
+                True,
+            ),
+            (
+                "hardcover",
+                dict(paperback, extra={"physical_format": "Hardcover"}),
+                True,
+            ),
+            ("audiobook", dict(paperback, metadata_type="audiobook"), False),
+            ("comic", dict(paperback, metadata_type="graphic novel"), False),
+            ("wrong work", dict(paperback, title=title + ", Vol. 1: Aflame"), False),
+            ("wrong author", dict(paperback, authors=["Another Author"]), False),
+            ("unknown binding", dict(paperback, extra={}), False),
+        )
+        for name, candidate, matches in scenarios:
+            with self.subTest(name=name):
+
+                def search(provider, query, authors, ids, timeout, **kwargs):
+                    if ids and provider == "goodreads":
+                        raise TimeoutError("Edition search timed out")
+                    if not ids and provider == "open_library":
+                        return [deepcopy(candidate)]
+                    return []
+
+                with patch.object(self.plugin, "_search", side_effect=search) as lookup:
+                    rows = self.identify(
+                        title=title, authors=[author], identifiers={"isbn": isbn}
+                    )
+                self.assertTrue(
+                    any(
+                        call.args[:4] == ("open_library", title, [author], {})
+                        and call.args[4] <= 5
+                        for call in lookup.call_args_list
+                    )
+                )
+                if not matches:
+                    self.assertEqual(rows, [])
+                    continue
+                for rank, row in enumerate(rows):
+                    row.identify_plugin = self.plugin
+                    row.relevance_in_source = rank
+                (result,) = merge_identify_results({self.plugin: rows}, ThreadSafeLog())
+                self.assertEqual(result.get_identifiers(), {"isbn": isbn})
+                self.assertEqual(result.authors, [author])
+                self.assertEqual(result.comments, paperback["description"])
+                self.assertEqual(result.tags, ["Science Fiction"])
+                self.assertIsNone(result.publisher)
+                self.assertIsNone(result.pubdate)
+                self.assertIsNone(self.plugin._cached_cover(result.get_identifiers()))
+
+    def test_print_fallback_uses_engine_title_author_request(self):
+        """Exercise the real Calibre-to-engine request and provider payload shape."""
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        (book,) = self.identify(
+            title="Star Wars: Knight Errant",
+            authors=["John Jackson Miller"],
+            identifiers={"isbn": "9780307796530"},
+        )
+        lookups = [
+            query
+            for path, query in self.requests
+            if path == "/plugins/goodreads/search"
+        ]
+        self.assertEqual(len(lookups), 2)
+        self.assertEqual(lookups[0]["isbn"], ["9780307796530"])
+        self.assertNotIn("isbn", lookups[1])
+        self.assertEqual(lookups[1]["author"], ["John Jackson Miller"])
+        self.assertEqual(book.get_identifiers(), {"isbn": "9780307796530"})
+        self.assertEqual(book.tags, ["Science Fiction", "Space Opera"])
+        self.assertIn("Kerra Holt", book.comments)
+
+    def test_print_fallback_reuses_a_known_paperback_when_kindle_lookup_misses(self):
+        """Use a verified print result already returned by an enabled provider."""
+        title = "Star Wars: Knight Errant"
+        authors = ["John Jackson Miller"]
+        asin = "B0FSKX64P8"
+        print_result = {
+            "title": title,
+            "authors": authors,
+            "isbn": "9780345522641",
+            "asin": "0345522648",
+            "description": "Jedi Kerra Holt confronts the Sith.",
+            "tags": ["Science Fiction"],
+            "format": "Paperback",
+            "publisher": "Del Rey",
+        }
+        self.plugin.prefs["plugin_ids"] = "hardcover"
+        with patch.object(
+            self.plugin,
+            "_search",
+            side_effect=lambda provider, *a, **kw: (
+                [deepcopy(print_result)] if provider == "hardcover" else []
+            ),
+        ) as lookup:
+            (result,) = self.identify(
+                title=title, authors=authors, identifiers={"mobi-asin": asin}
+            )
+        self.assertEqual(result.get_identifiers(), {"asin": asin})
+        self.assertEqual(result.comments, print_result["description"])
+        self.assertEqual(result.tags, print_result["tags"])
+        self.assertIsNone(result.publisher)
+        self.assertFalse(any(call.args[3] == {} for call in lookup.call_args_list))
 
     def test_numbered_prefix_recovers_catalog_subjects_and_warning_labels(self):
         """Merge a verified edition and supplemental warnings through real identify."""
@@ -3600,6 +3851,34 @@ class InstalledPluginTests(unittest.TestCase):
                 self.assertEqual(
                     {call.args[0] for call in fetch.call_args_list}, set(images)
                 )
+
+    def test_apple_cover_accepts_reversed_franchise_title_for_same_author(self):
+        """Validate the exact ISBN cover when Apple reverses the two title labels."""
+        target = {
+            "title": "Star Wars: Knight Errant",
+            "authors": ["John Jackson Miller"],
+            "isbn": "9780345522641",
+        }
+        apple = {
+            "kind": "ebook",
+            "trackName": "Knight Errant: Star Wars",
+            "artistName": "John Jackson Miller",
+            "artworkUrl100": "https://is1-ssl.mzstatic.com/knight-errant.jpg",
+        }
+        with patch.object(
+            self.plugin,
+            "_http_json",
+            return_value={
+                "results": [
+                    dict(apple, artistName="Another Writer"),
+                    dict(apple, trackName="Knight Errant: Star Trek"),
+                    apple,
+                ]
+            },
+        ):
+            (cover,) = self.plugin._apple_cover_candidates(target, 5)
+        self.assertEqual(cover["cover_url"], apple["artworkUrl100"])
+        self.assertEqual(cover["isbn"], target["isbn"])
 
     def test_google_cover_uses_saved_volume_id(self):
         """Rank native Google artwork and retry the lower zoom when needed."""
