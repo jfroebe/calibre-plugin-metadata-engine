@@ -147,6 +147,12 @@ artwork. A mostly white title page is a fallback when no illustrated cover
 is available, in both the chooser and automatic selection. Compare cover
 quality using artwork when catalogs return both artwork and title pages.
 
+Use the original Calibre sort title `Element Encyclopedia of the Psychic
+World, The`, inverted author `Cheung, Theresa`, and Kindle ASIN
+`B004FPYX40`. Verify reading-order search queries and both catalog title
+forms, including the longer subtitle. Reject a different Kindle ASIN,
+title or author, and keep the paperback ISBN off the Kindle record.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.
