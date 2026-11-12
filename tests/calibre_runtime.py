@@ -633,6 +633,126 @@ class InstalledPluginTests(unittest.TestCase):
                 self.assertEqual(result.pubdate.year, 2020)
                 self.assertEqual(result.get_identifiers()["asin"], asin)
 
+    def test_sort_title_recovers_the_verified_kindle_edition(self):
+        """Find the Kindle edition from a trailing article and inverted author."""
+        from calibre.ebooks.metadata.sources.identify import merge_identify_results
+        from calibre.utils.logging import ThreadSafeLog
+
+        title = "Element Encyclopedia of the Psychic World, The"
+        work = "The Element Encyclopedia of the Psychic World"
+        full_title = (
+            work + ": The Ultimate A–Z of Spirits, Mysteries and the Paranormal"
+        )
+        asin, goodreads_id = "B004FPYX40", "19293856"
+        self.plugin.prefs["plugin_ids"] = "google_books,goodreads"
+        for candidate_title, candidate_author, candidate_asin, matches in (
+            (full_title, "Theresa Cheung", asin, True),
+            (full_title, "Theresa Cheung", "B0071JZSZK", False),
+            (full_title, "Another Writer", asin, False),
+            (work + " II", "Theresa Cheung", asin, False),
+        ):
+            with self.subTest(
+                title=candidate_title, author=candidate_author, asin=candidate_asin
+            ):
+                state = {
+                    "Book:1": {
+                        "__typename": "Book",
+                        "legacyId": int(goodreads_id),
+                        "titleComplete": candidate_title,
+                        "details": {
+                            "asin": candidate_asin,
+                            "publisher": "HarperElement",
+                        },
+                        "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                        "bookGenres": [{"genre": {"name": "Paranormal"}}],
+                        "description": "A reference to psychic phenomena and divination.",
+                    },
+                    "Author:1": {"name": candidate_author},
+                }
+                page = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                with (
+                    patch.object(self.plugin, "_search", return_value=[]) as search,
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            b'[{"bookId": "19293856"}]',
+                            f'<script id="__NEXT_DATA__">{page}</script>'.encode(),
+                        ],
+                    ) as fetch,
+                ):
+                    rows = self.identify(
+                        title=title,
+                        authors=["Cheung, Theresa"],
+                        identifiers={"mobi-asin": asin},
+                    )
+                self.assertEqual(
+                    search.call_args_list[0].args[1:3], (work, ["Theresa Cheung"])
+                )
+                self.assertEqual(
+                    parse_qs(urlsplit(fetch.call_args_list[0].args[0]).query)["q"],
+                    [asin],
+                )
+                if not matches:
+                    self.assertEqual(rows, [])
+                    continue
+                (book,) = rows
+                book.identify_plugin = self.plugin
+                book.relevance_in_source = 0
+                (result,) = merge_identify_results({self.plugin: rows}, ThreadSafeLog())
+                self.assertTrue(result.title.startswith(work))
+                self.assertEqual(result.authors, ["Theresa Cheung"])
+                self.assertEqual(result.get_identifiers()["asin"], asin)
+                self.assertEqual(result.get_identifiers()["goodreads"], goodreads_id)
+                self.assertNotIn("isbn", result.get_identifiers())
+                self.assertEqual(result.tags, ["Paranormal"])
+                self.assertIn("divination", result.comments)
+
+    def test_sort_title_matches_catalog_subtitle_only_for_the_same_asin(self):
+        """Keep the complete catalog record when the primary search succeeds."""
+        title = "Element Encyclopedia of the Psychic World, The"
+        work = "The Element Encyclopedia of the Psychic World"
+        asin = "B004FPYX40"
+        candidate = {
+            "title": work,
+            "subtitle": "The Ultimate A–Z of Spirits, Mysteries and the Paranormal",
+            "authors": ["Theresa Cheung"],
+            "asin": asin,
+            "description": "A reference to psychic phenomena.",
+            "genres": ["Paranormal"],
+        }
+        self.plugin.prefs["plugin_ids"] = "google_books"
+        with patch.object(self.plugin, "_search", return_value=[candidate]):
+            (result,) = self.identify(
+                title=title,
+                authors=["Cheung, Theresa"],
+                identifiers={"mobi-asin": asin},
+            )
+        self.assertEqual(result.get_identifiers()["asin"], asin)
+        self.assertTrue(result.title.startswith(work))
+        self.assertEqual(result.authors, ["Theresa Cheung"])
+        conflict = dict(
+            candidate, title="An Encyclopedia of Psychic Worlds", subtitle=None
+        )
+        self.assertFalse(
+            self.plugin._matches_requested(
+                conflict, title, ["Cheung, Theresa"], {"mobi-asin": asin}
+            )
+        )
+        self.assertFalse(
+            self.plugin._matches_requested(
+                dict(
+                    candidate,
+                    title=work + ": " + candidate["subtitle"],
+                    subtitle=None,
+                    asin="B0071JZSZK",
+                ),
+                title,
+                ["Cheung, Theresa"],
+                {"mobi-asin": asin},
+            )
+        )
+
     def test_goodreads_kindle_search_recovers_title_without_marketing_subtitle(self):
         """Retry an empty decorated-title search and verify the complete identity."""
         title = "Branding Belle: A Reverse Harem Contemporary Standalone"
