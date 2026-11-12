@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 60)
+    version = (1, 1, 61)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -484,6 +484,8 @@ class MetadataEngineSource(Source):
                 self._recover_book_subjects(
                     log, rows[0], isbn, timeout, provider_ids, abort
                 )
+                if "goodreads" in provider_ids and not abort.is_set():
+                    self._recover_goodreads_isbn_series(log, rows[0], isbn, timeout)
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
             requested_asin = self._cover_asin(identifiers)
             if (
@@ -729,6 +731,70 @@ class MetadataEngineSource(Source):
                 log,
                 "info",
                 "Metadata Engine recovered genres from Open Library ISBN %s",
+                isbn,
+            )
+
+    def _recover_goodreads_isbn_series(self, log, row, isbn, timeout):
+        """Fill a missing series number using the verified Goodreads edition."""
+        current_name, current_position = self._series_identity(row)
+        if current_position is not None:
+            return
+        deadline = time.monotonic() + min(timeout, 20)
+        try:
+            _, url = self._http_response(
+                f"https://www.goodreads.com/book/isbn/{isbn}", min(timeout, 14)
+            )
+            resolved = urlsplit(url)
+            book_id = re.fullmatch(
+                r"/(?:[a-z]{2}/)?book/show/([0-9]{1,16})(?:[-.][^/]*)?/?",
+                resolved.path,
+            )
+            remaining = deadline - time.monotonic()
+            if (
+                resolved.scheme != "https"
+                or resolved.hostname != "www.goodreads.com"
+                or not book_id
+                or remaining <= 0
+            ):
+                return
+            donor = self._goodreads_book(book_id[1], remaining)
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log(
+                log,
+                "info",
+                "Metadata Engine Goodreads ISBN series lookup failed: %s",
+                exc,
+            )
+            return
+        if not donor or self._canonical_isbn(donor.get("isbn")) != isbn:
+            return
+        work = dict(donor, series=None)
+        titles = [work]
+        parenthetical = re.fullmatch(r"(.+?)\s+\(([^()]+)\)", donor["title"])
+        if parenthetical:
+            title, label = parenthetical.groups()
+            titles.append(dict(work, title=f"{label}: {title}"))
+        if not any(self._work_description_matches(row, variant) for variant in titles):
+            return
+
+        numbered = {}
+        for item in donor.get("series") or []:
+            if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(item.get("position"))):
+                continue
+            name, position = self._series_identity({"series": [item]})
+            key = self._series_name_key(name)
+            if (
+                position is not None
+                and name
+                and (not current_name or key == self._series_name_key(current_name))
+            ):
+                numbered[(key, position)] = item
+        if len(numbered) == 1:
+            row["series"] = list(numbered.values())
+            _log(
+                log,
+                "info",
+                "Metadata Engine recovered series from Goodreads ISBN %s",
                 isbn,
             )
 
@@ -3398,9 +3464,13 @@ class MetadataEngineSource(Source):
         }
 
     def _http_bytes(self, url, timeout):
+        return self._http_response(url, timeout)[0]
+
+    def _http_response(self, url, timeout):
+        """Return the body and final URL after following redirects."""
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.60",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.61",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -3421,7 +3491,7 @@ class MetadataEngineSource(Source):
                 with urlopen(
                     req, timeout=remaining / (2 - attempt), context=context
                 ) as response:
-                    return response.read()
+                    return response.read(), response.geturl()
             except HTTPError as exc:
                 detail = exc.read().decode("utf-8", "replace")
                 raise RuntimeError("HTTP %s: %s" % (exc.code, detail or exc.reason))
