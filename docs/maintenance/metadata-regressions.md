@@ -104,6 +104,13 @@ Exercise a catalog status prefix on the title, and verify that the original
 work still resolves with its series and genres. Reject a different author,
 sequel, or rewrite. Keep edition-specific identifiers out of a work-only result.
 
+Keep the saved Goodreads and Kindle identifiers for Henrikk's Punishment.
+Exercise a Goodreads record that is unavailable and require an exact title and
+author in a separate bibliography before returning the work and series.
+A live saved record with a conflicting ASIN, author, or title must be rejected.
+A bibliography that establishes only the work cannot supply a new edition ID
+or cover.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.

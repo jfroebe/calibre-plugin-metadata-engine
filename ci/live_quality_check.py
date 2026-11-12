@@ -271,6 +271,20 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Henrikk's Punishment",
+            "authors": ["Darcy Fayton"],
+            "identifiers": {
+                "amazon": "B0CVZJHQ6W",
+                "goodreads": "208896222",
+                "mobi-asin": "B0CVZJHQ6W",
+            },
+            "expected_title": "Henrikk's Punishment",
+            "expected_catalog": ("metadata_engine_book_notification", "3886230"),
+            "series": ("Henrikk's Short Stories", 1.0),
+            "one_result": True,
+            "timeout": 30,
+        },
+        {
             "title": "Bedded by the Headmaster",
             "authors": ["Darcy Fayton"],
             "expected_goodreads": "217994670",
@@ -535,15 +549,20 @@ def main():
                 row.identify_plugin = plugin
                 row.relevance_in_source = rank
             candidates = merge_identify_results({plugin: candidates}, ThreadSafeLog())
+        catalog = case.get("expected_catalog")
         matching = [
             row
             for row in candidates
             if (
-                plugin._canonical_isbn(row.get_identifiers().get("isbn"))
-                == case["canonical_isbn"]
-                if "canonical_isbn" in case
-                else row.get_identifiers().get("goodreads")
-                == case["expected_goodreads"]
+                row.get_identifiers().get(catalog[0]) == catalog[1]
+                if catalog
+                else (
+                    plugin._canonical_isbn(row.get_identifiers().get("isbn"))
+                    == case["canonical_isbn"]
+                    if "canonical_isbn" in case
+                    else row.get_identifiers().get("goodreads")
+                    == case["expected_goodreads"]
+                )
             )
         ]
         if case.get("cover_only"):
@@ -604,6 +623,19 @@ def main():
             }
             if actual != expected:
                 raise AssertionError(book.authors)
+        if catalog:
+            ids = book.get_identifiers()
+            if (
+                ids.get("asin") != case["identifiers"]["mobi-asin"]
+                or ids.keys() & {"isbn", "goodreads"}
+                or (book.series, book.series_index) != case["series"]
+                or getattr(book, "has_cached_cover", False)
+            ):
+                raise AssertionError(
+                    f"Incorrect work-only match for {book.title}: {ids}"
+                )
+            print("LIVE_METADATA_QUALITY_PASS title=" + book.title)
+            continue
         description = plugin._usable_description(book.comments)
         if not (description and len(description) >= case["minimum_description"]):
             raise AssertionError("No full live synopsis for " + case["title"])

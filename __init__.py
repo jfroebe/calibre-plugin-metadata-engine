@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 58)
+    version = (1, 1, 59)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1311,6 +1311,15 @@ class MetadataEngineSource(Source):
         started = time.monotonic()
         deadline = started + min(timeout, 8)
         asin = self._cover_asin(identifiers or {})
+        saved_id = self._identifier(
+            identifiers or {}, "goodreads", "metadata_engine_goodreads"
+        )
+        if re.fullmatch(r"[0-9]{1,16}", saved_id or "") and re.fullmatch(
+            r"B[A-Z0-9]{9}", asin
+        ):
+            return self._goodreads_saved_kindle_fallback(
+                saved_id, title, authors, identifiers, abort, deadline
+            )
         base, separator, _ = query.partition(": ")
         decorated_kindle = bool(separator and re.fullmatch(r"B[A-Z0-9]{9}", asin))
         ids = self._goodreads_suggestions(f"{query} {authors[0]}", min(timeout, 4))
@@ -1361,6 +1370,99 @@ class MetadataEngineSource(Source):
                     }
                 ]
         return []
+
+    def _goodreads_saved_kindle_fallback(
+        self, book_id, title, authors, identifiers, abort, deadline
+    ):
+        """Use a saved record directly and corroborate a missing work separately."""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or abort.is_set():
+            return []
+        target = {"title": title, "authors": authors}
+        try:
+            row = self._goodreads_book(book_id, min(remaining, 4))
+        except (OSError, RuntimeError, ValueError):
+            # A blocked or unreachable Goodreads page cannot verify the edition.
+            # Fall back to independent work evidence without replacing its IDs.
+            row = None
+        if row:
+            if not self._work_description_matches(target, row):
+                # A publisher subtitle may be missing from the saved edition's
+                # catalog title. It is safe only with the exact saved ASIN.
+                base, separator, _ = title.partition(": ")
+                if not (
+                    separator
+                    and row.get("asin") == self._cover_asin(identifiers)
+                    and self._work_description_matches(dict(target, title=base), row)
+                    and self._work_title(row["title"])[0] == self._work_title(base)[0]
+                ):
+                    return []
+                name, position = self._series_identity(target)
+                if name:
+                    target["series"] = [{"name": name, "position": position}]
+            verified = self._verify_goodreads_edition(
+                row, dict(target, title=row["title"]), identifiers
+            )
+            return [verified] if verified else []
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or abort.is_set() or len(authors) != 1:
+            return []
+        try:
+            return self._book_notification_work(target, min(remaining, 4))
+        except (OSError, RuntimeError, ValueError) as exc:
+            reason = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+            raise RuntimeError(f"Book Notification unavailable: {reason}") from exc
+
+    def _book_notification_work(self, target, timeout):
+        """Verify an unavailable catalog work against a single-author bibliography."""
+        from lxml.html import fromstring
+
+        author = target["authors"][0]
+        words = self._author_words(author)
+        if len(words) < 2 or not all(re.fullmatch(r"[a-z]+", word) for word in words):
+            return []
+        slug = "-".join(words)
+        payload = self._http_bytes(
+            f"https://www.booknotification.com/authors/{slug}/", timeout
+        )
+        if not payload.strip():
+            return []
+        document = fromstring(payload)
+        headings = document.xpath("//h1[@id='bnauthname']")
+        if (
+            len(headings) != 1
+            or self._author_words(headings[0].text_content()) != words
+        ):
+            return []
+        matches = []
+        for table in document.xpath("//table[starts-with(@id, 'books')]"):
+            headings = table.xpath("preceding::h3[@class='series_title'][1]")
+            if not headings:
+                continue
+            series = re.fullmatch(
+                r"List of (.+) Books in Publication Order",
+                headings[0].text_content().strip(),
+            )
+            if not series:
+                continue
+            for entry in table.xpath(".//tr[td//div[@class='titles']/a]"):
+                links = entry.xpath("./td//div[@class='titles']/a")
+                if len(links) != 1:
+                    continue
+                position = entry.xpath("string(./td[1])").strip()
+                source_id = re.fullmatch(r"hide([0-9]+)", entry.get("id") or "")
+                if not source_id or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", position):
+                    continue
+                row = {
+                    "source": "book_notification",
+                    "source_id": source_id[1],
+                    "title": links[0].text_content().strip(),
+                    "authors": [author],
+                    "series": [{"name": series[1], "position": float(position)}],
+                }
+                if self._work_description_matches(target, row):
+                    matches.append(row)
+        return matches if len(matches) == 1 else []
 
     def _goodreads_suggestions(self, query, timeout):
         """Read unique Goodreads book IDs from autocomplete in catalog order."""
@@ -3065,7 +3167,7 @@ class MetadataEngineSource(Source):
     def _http_bytes(self, url, timeout):
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.58",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.59",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
