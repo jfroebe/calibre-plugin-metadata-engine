@@ -118,6 +118,14 @@ Library's edition response with the work title and franchise in separate
 fields. Require a relevant genre after Calibre's merger. Preserve the selected
 ISBN and synopsis, and reject subjects from mismatched ISBNs and contributors.
 
+When an edition lookup fails, retry book catalogs by title and author. Only
+confirmed paperback and hardcover records can supply fallback work metadata.
+Test the title and author request through the provider endpoint, including a
+catalog that moves the franchise label after the book title. Verify the
+synopsis, tags and identifiers in Calibre, and reject adaptations, audiobooks,
+unknown bindings and author conflicts. Keep the print edition's identifiers,
+publisher, date and cover out of the fallback result.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.
