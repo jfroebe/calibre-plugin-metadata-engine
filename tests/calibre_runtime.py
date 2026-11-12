@@ -1445,6 +1445,127 @@ class InstalledPluginTests(unittest.TestCase):
             result[0].tags, ["Sexuality", "Sacred Sexuality", "Sexual Instruction"]
         )
 
+    def test_indexed_catalog_title_uses_verified_work_and_series(self):
+        """Find the user's book without interpreting the middle index as a volume."""
+        from calibre.ebooks.metadata.sources.identify import merge_identify_results
+        from calibre.utils.logging import ThreadSafeLog
+
+        title = "Star Wars - 201 - Shadows of the Empire"
+        isbn = "9780553574135"
+        authors = ["Steve Perry"]
+        record = {
+            "title": "Shadows of the Empire: Star Wars Legends",
+            "authors": authors,
+            "isbn": isbn,
+            "genres": ["Science Fiction"],
+            "description": "Prince Xizor conspires against Darth Vader.",
+            "source": "google_books",
+            "asin": "0553574132",
+            "extra": {"goodreads_id": "205051218"},
+        }
+        collection = {"name": "Star Wars Legends: Novels", "position": ""}
+        goodreads = dict(record, title="Shadows of the Empire", series=[collection])
+        self.plugin.prefs["plugin_ids"] = "google_books,goodreads"
+
+        for candidate, expected in (
+            (record, True),
+            (dict(record, title="Shadows of the Empire", isbn="0553574132"), True),
+            (dict(record, title="Star Wars — Shadows of the Empire"), True),
+            (dict(record, title="Shadows of the Empire (Star Wars)"), True),
+            (dict(record, title="Shadows of the Empire II"), False),
+            (dict(record, title="Shadows of the Empire: Another Franchise"), False),
+            (dict(record, authors=["Another Writer"]), False),
+            (dict(record, isbn="9780593974766"), False),
+        ):
+            with self.subTest(
+                title=candidate["title"],
+                isbn=candidate["isbn"],
+                authors=candidate["authors"],
+            ):
+                with (
+                    patch.object(
+                        self.plugin,
+                        "_search",
+                        side_effect=lambda provider, *a, **k: [
+                            deepcopy(candidate),
+                            dict(
+                                candidate,
+                                asin="B000000002",
+                                extra={"goodreads_id": "123456"},
+                                description=None,
+                            ),
+                        ]
+                        if provider == "google_books"
+                        else [],
+                    ) as search,
+                    patch.object(
+                        self.plugin,
+                        "_http_response",
+                        return_value=(
+                            b"",
+                            "https://www.goodreads.com/book/show/205051218-shadows-of-the-empire",
+                        ),
+                    ),
+                    patch.object(
+                        self.plugin, "_goodreads_book", return_value=goodreads
+                    ),
+                ):
+                    rows = self.identify(
+                        title=title, authors=authors, identifiers={"isbn": isbn}
+                    )
+                self.assertEqual(
+                    search.call_args_list[0].args[1:4],
+                    (
+                        "Shadows of the Empire",
+                        authors,
+                        {"isbn": isbn},
+                    ),
+                )
+                if not expected:
+                    self.assertEqual(rows, [])
+                    continue
+                (book,) = rows
+                book.identify_plugin = self.plugin
+                book.relevance_in_source = 0
+                (result,) = merge_identify_results({self.plugin: rows}, ThreadSafeLog())
+                self.assertEqual(result.authors, authors)
+                self.assertEqual(result.title, "Shadows of the Empire")
+                self.assertEqual(
+                    self.plugin._canonical_isbn(result.get_identifiers()["isbn"]), isbn
+                )
+                self.assertEqual(result.series, collection["name"])
+                self.assertIsNone(result.series_index)
+                self.assertEqual(result.tags, record["genres"])
+                self.assertEqual(result.comments, record["description"])
+
+    def test_indexed_title_without_isbn_requires_franchise_evidence(self):
+        """Use the catalog franchise, author, and work title for ID-free matches."""
+        title = "Archive – 017 – A New Dawn"
+        authors = ["A Writer"]
+        book = {"title": "A New Dawn", "authors": authors, "source": "google_books"}
+        self.plugin.prefs["plugin_ids"] = "google_books"
+        for candidate, expected in (
+            (book, []),
+            (
+                dict(book, title="A New Dawn: Archive Legends"),
+                ["A New Dawn: Archive Legends"],
+            ),
+            (dict(book, title=title), [title]),
+        ):
+            with self.subTest(title=candidate["title"]):
+
+                def search(provider, query, *args, **kwargs):
+                    if candidate["title"] == title and query != title:
+                        return []
+                    return [deepcopy(candidate)]
+
+                with patch.object(self.plugin, "_search", side_effect=search):
+                    rows = self.identify(title=title, authors=authors)
+                self.assertEqual(
+                    [row.title.casefold() for row in rows],
+                    [value.casefold() for value in expected],
+                )
+
     def test_verified_isbn_recovers_numbered_goodreads_series_after_merge(self):
         """Use the paperback's numbered series and reject other edition records."""
         from calibre.ebooks.metadata.sources.identify import merge_identify_results

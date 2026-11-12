@@ -271,6 +271,20 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Star Wars - 201 - Shadows of the Empire",
+            "authors": ["Steve Perry"],
+            "isbn": "9780553574135",
+            "canonical_isbn": "9780553574135",
+            "expected_title": "Shadows of the Empire",
+            "series": ("Star Wars Legends: Novels", None),
+            "one_result": True,
+            "merge_identify": True,
+            "minimum_description": 150,
+            "topic": "xizor",
+            "expected_subjects": {"science fiction", "space opera", "star wars"},
+            "timeout": 30,
+        },
+        {
             "title": "Star Wars: Knight Errant",
             "authors": ["John Jackson Miller"],
             "isbn": "9780345522641",
@@ -557,7 +571,19 @@ def main():
         print(f"LIVE_LOOKUP_SECONDS={time.monotonic() - started:.2f}", flush=True)
         if case.get("one_result") and queue.qsize() != 1:
             raise AssertionError(
-                f"Expected one edition for {case['title']}, got {queue.qsize()}"
+                f"Expected one edition for {case['title']}, got "
+                + repr(
+                    [
+                        (
+                            row.title,
+                            row.authors,
+                            row.get_identifiers(),
+                            row.series,
+                            row.series_index,
+                        )
+                        for row in queue.queue
+                    ]
+                )
             )
         candidates = list(queue.queue)
         if case.get("merge_identify"):
