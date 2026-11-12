@@ -1460,6 +1460,8 @@ class InstalledPluginTests(unittest.TestCase):
             "genres": ["Science Fiction"],
             "description": "Prince Xizor conspires against Darth Vader.",
             "source": "google_books",
+            "asin": "0553574132",
+            "extra": {"goodreads_id": "205051218"},
         }
         collection = {"name": "Star Wars Legends: Novels", "position": ""}
         goodreads = dict(record, title="Shadows of the Empire", series=[collection])
@@ -1484,7 +1486,15 @@ class InstalledPluginTests(unittest.TestCase):
                     patch.object(
                         self.plugin,
                         "_search",
-                        side_effect=lambda provider, *a, **k: [deepcopy(candidate)]
+                        side_effect=lambda provider, *a, **k: [
+                            deepcopy(candidate),
+                            dict(
+                                candidate,
+                                asin="B000000002",
+                                extra={"goodreads_id": "123456"},
+                                description=None,
+                            ),
+                        ]
                         if provider == "google_books"
                         else [],
                     ) as search,
