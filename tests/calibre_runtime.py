@@ -785,13 +785,14 @@ class InstalledPluginTests(unittest.TestCase):
         ):
             with self.subTest(title=listing_title, author=listing_author):
                 bibliography = f"""
-                    <h1 itemprop="name">{listing_author}</h1>
-                    <div class="sectionleft">
-                      <a href="series/"><span class="ibig">Henrikk's Short Story</span></a>
-                      <br><span id="t1276579">&nbsp;</span>1.
-                      <span title="Not available">{listing_title}</span>
-                      <span class="year"> (2024)</span>
-                    </div>
+                    <h1 id="bnauthname">{listing_author}</h1>
+                    <h3 class="series_title">List of Henrikk's Short Stories Books in Publication Order</h3>
+                    <table id="books00121077">
+                      <tr id="hide3886230">
+                        <td>1</td>
+                        <td><div class="titles"><a href="">{listing_title}</a></div></td>
+                      </tr>
+                    </table>
                 """
                 with (
                     patch.object(self.plugin, "_search", return_value=[]),
@@ -808,7 +809,7 @@ class InstalledPluginTests(unittest.TestCase):
                     [call.args[0] for call in fetch.call_args_list],
                     [
                         f"https://www.goodreads.com/en/book/show/{goodreads_id}",
-                        "https://www.fantasticfiction.com/f/darcy-fayton/",
+                        "https://www.booknotification.com/authors/darcy-fayton/",
                     ],
                 )
                 if matches:
@@ -817,11 +818,11 @@ class InstalledPluginTests(unittest.TestCase):
                     self.assertEqual(book.title, title)
                     self.assertEqual(book.authors, [author])
                     self.assertEqual(
-                        (book.series, book.series_index), ("Henrikk's Short Story", 1)
+                        (book.series, book.series_index), ("Henrikk's Short Stories", 1)
                     )
                     self.assertEqual(
                         book.get_identifiers(),
-                        {"asin": asin, "metadata_engine_fantastic_fiction": "1276579"},
+                        {"asin": asin, "metadata_engine_book_notification": "3886230"},
                     )
                     self.assertFalse(book.comments)
                     self.assertFalse(getattr(book, "has_cached_cover", False))
