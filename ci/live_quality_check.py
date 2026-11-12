@@ -275,6 +275,7 @@ def main():
             "authors": ["John Jackson Miller"],
             "isbn": "9780345522641",
             "canonical_isbn": "9780345522641",
+            "series": ("Star Wars: Knight Errant", 1.5),
             "one_result": True,
             "merge_identify": True,
             "minimum_description": 350,

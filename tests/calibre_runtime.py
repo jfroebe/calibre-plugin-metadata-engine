@@ -57,6 +57,20 @@ class InstalledPluginTests(unittest.TestCase):
         )
         inventory.start()
         self.addCleanup(inventory.stop)
+        # Keep the new direct ISBN redirect off the network in fixture tests.
+        if hasattr(self.plugin, "_http_response"):
+            real_response = self.plugin._http_response
+
+            def fixture_response(url, timeout):
+                if url.startswith("https://www.goodreads.com/book/isbn/"):
+                    return b"", url
+                return real_response(url, timeout)
+
+            transport = patch.object(
+                self.plugin, "_http_response", side_effect=fixture_response
+            )
+            transport.start()
+            self.addCleanup(transport.stop)
         self.log = logging.getLogger("calibre-validation")
         self.abort = Event()
 
@@ -1430,6 +1444,92 @@ class InstalledPluginTests(unittest.TestCase):
         self.assertEqual(
             result[0].tags, ["Sexuality", "Sacred Sexuality", "Sexual Instruction"]
         )
+
+    def test_verified_isbn_recovers_numbered_goodreads_series_after_merge(self):
+        """Use the paperback's numbered series and reject other edition records."""
+        from calibre.ebooks.metadata.sources.identify import merge_identify_results
+        from calibre.utils.logging import ThreadSafeLog
+
+        title = "Star Wars: Knight Errant"
+        author = "John Jackson Miller"
+        isbn = "9780345522641"
+        row = {
+            "title": title,
+            "authors": [author],
+            "isbn": isbn,
+            "source": "hardcover",
+            "description": "Jedi Kerra Holt faces the Dark Lords.",
+            "genres": ["Science Fiction"],
+            "publisher": "National Geographic Books",
+        }
+        series = [
+            {"userPosition": "1.5", "series": {"__ref": "Series:1"}},
+            {"userPosition": "", "series": {"__ref": "Series:2"}},
+        ]
+        self.plugin.prefs["plugin_ids"] = "hardcover,goodreads"
+        isbn_url = f"https://www.goodreads.com/book/isbn/{isbn}"
+        book_url = "https://www.goodreads.com/en/book/show/8323122"
+        redirect = "https://www.goodreads.com/book/show/8323122-knight-errant"
+        cases = (
+            (isbn, author, "Knight Errant (Star Wars)", redirect, True),
+            ("9781595826428", author, "Knight Errant (Star Wars)", redirect, False),
+            (isbn, "Another Writer", "Knight Errant (Star Wars)", redirect, False),
+            (isbn, author, "Knight Errant, Vol. 1: Aflame", redirect, False),
+            (isbn, author, "Knight Errant (Star Wars)", isbn_url, False),
+        )
+        for catalog_isbn, person, catalog_title, location, match in cases:
+            with self.subTest(
+                isbn=catalog_isbn, author=person, title=catalog_title, location=location
+            ):
+                state = {
+                    "Book:1": {
+                        "__typename": "Book",
+                        "legacyId": 8323122,
+                        "titleComplete": catalog_title,
+                        "details": {"isbn13": catalog_isbn, "publisher": "Del Rey"},
+                        "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                        "bookSeries": series,
+                    },
+                    "Author:1": {"name": person},
+                    "Series:1": {"title": "Star Wars: Knight Errant"},
+                    "Series:2": {"title": "Star Wars Legends: Novels"},
+                }
+                data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                html = f'<script id="__NEXT_DATA__">{data}</script>'.encode()
+                with (
+                    patch.object(
+                        self.plugin,
+                        "_search",
+                        side_effect=lambda provider, *a, **k: [deepcopy(row)]
+                        if provider == "hardcover"
+                        else [],
+                    ),
+                    patch.object(
+                        self.plugin, "_http_response", return_value=(b"", location)
+                    ) as lookup,
+                    patch.object(
+                        self.plugin, "_http_bytes", return_value=html
+                    ) as detail,
+                ):
+                    (book,) = self.identify(
+                        title=title, authors=[author], identifiers={"isbn": isbn}
+                    )
+                book.identify_plugin = self.plugin
+                book.relevance_in_source = 0
+                (result,) = merge_identify_results(
+                    {self.plugin: [book]}, ThreadSafeLog()
+                )
+                expected = (title, 1.5) if match else (None, None)
+                self.assertEqual((result.series, result.series_index), expected)
+                self.assertEqual(result.get_identifiers()["isbn"], isbn)
+                self.assertEqual(result.comments, row["description"])
+                self.assertEqual(result.tags, row["genres"])
+                self.assertEqual(result.publisher, row["publisher"])
+                self.assertEqual(lookup.call_args.args[0], isbn_url)
+                if location == isbn_url:
+                    detail.assert_not_called()
+                else:
+                    self.assertEqual(detail.call_args.args[0], book_url)
 
     def test_isbn_genres_survive_catalog_timeouts_and_calibre_merge(self):
         """Use exact ISBN classifications when normal providers leave tags sparse."""
