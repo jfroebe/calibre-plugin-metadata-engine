@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 63)
+    version = (1, 1, 64)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -153,6 +153,8 @@ class MetadataEngineSource(Source):
         are logged and do not suppress other successful candidates.
         """
         identifiers = identifiers or {}
+        if authors:
+            authors = [self._canonical_author_name(author) for author in authors]
         query = self._make_query(title, authors, identifiers)
         if not query:
             return (
@@ -400,6 +402,7 @@ class MetadataEngineSource(Source):
                 "title": title,
                 "authors": authors,
                 "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
+                "asin": self._cover_asin(identifiers),
             }
             indexed = self._catalog_index_title(self._text(title))
             if indexed and self._canonical_isbn(requested["isbn"]):
@@ -434,15 +437,26 @@ class MetadataEngineSource(Source):
                 )
             rows = compatible
             asin = self._cover_asin(identifiers)
+            sorted_kindle = (
+                re.fullmatch(r"B[A-Z0-9]{9}", asin)
+                and self._restore_title_article(self._text(title) or "") != title
+            )
             if (
-                not rows
-                and "goodreads" in provider_ids
+                "goodreads" in provider_ids
                 and (not identifiers or re.fullmatch(r"B[A-Z0-9]{9}", asin))
+                and (
+                    not rows
+                    or (
+                        sorted_kindle
+                        and not any(self._cover_asin(row) == asin for row in rows)
+                    )
+                )
             ):
                 try:
-                    rows = self._goodreads_work_fallback(
+                    recovered = self._goodreads_work_fallback(
                         title, authors, abort, timeout, identifiers
                     )
+                    rows = recovered or rows
                 except (OSError, RuntimeError, ValueError) as exc:
                     _log(
                         log,
@@ -1109,10 +1123,13 @@ class MetadataEngineSource(Source):
             "title": title,
             "authors": authors,
             "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
+            "asin": self._cover_asin(identifiers),
         }
         if not self._identity_consistent(target, row):
             return False
-        matched_identifier = False
+        matched_identifier = bool(
+            target["asin"] and self._cover_asin(row) == target["asin"]
+        )
         extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
         for key, aliases in (
             ("asin", ("asin",)),
@@ -1181,11 +1198,7 @@ class MetadataEngineSource(Source):
                 if normalized_wanted and normalized_wanted == normalized_actual:
                     matched_identifier = True
         return matched_identifier or bool(
-            title
-            and authors
-            and self._work_description_matches(
-                {"title": title, "authors": authors}, row
-            )
+            title and authors and self._work_description_matches(target, row)
         )
 
     def _expand_identifiers(
@@ -1652,9 +1665,28 @@ class MetadataEngineSource(Source):
             )
         base, separator, _ = query.partition(": ")
         decorated_kindle = bool(separator and re.fullmatch(r"B[A-Z0-9]{9}", asin))
-        ids = self._goodreads_suggestions(f"{query} {authors[0]}", min(timeout, 4))
+        sorted_kindle = bool(
+            re.fullmatch(r"B[A-Z0-9]{9}", asin)
+            and self._restore_title_article(title) != title
+        )
+        if sorted_kindle:
+            deadline = started + min(timeout, 20)
+            ids = self._goodreads_suggestions(asin, min(timeout, 10))
+            remaining = deadline - time.monotonic()
+            if not ids and remaining > 0 and not abort.is_set():
+                ids = self._goodreads_suggestions(
+                    f"{query} {authors[0]}", min(remaining, 4)
+                )
+        else:
+            ids = self._goodreads_suggestions(f"{query} {authors[0]}", min(timeout, 4))
         remaining = deadline - time.monotonic()
-        if not ids and decorated_kindle and remaining > 0 and not abort.is_set():
+        if (
+            not ids
+            and decorated_kindle
+            and not sorted_kindle
+            and remaining > 0
+            and not abort.is_set()
+        ):
             # Marketing subtitles may be absent from the catalog's search index.
             deadline = started + min(timeout, 12)
             ids = self._goodreads_suggestions(asin, min(remaining, 4))
@@ -1663,14 +1695,25 @@ class MetadataEngineSource(Source):
             remaining = deadline - time.monotonic()
             if remaining <= 0 or abort.is_set():
                 break
-            row = self._goodreads_book(goodreads_id, min(remaining, 4))
+            row = self._goodreads_book(
+                goodreads_id, min(remaining, 12 if sorted_kindle else 4)
+            )
             if not row:
                 continue
             catalog_title = title_key(row["title"])
-            if catalog_title != title_key(query) and not (
-                decorated_kindle
-                and row.get("asin") == asin
-                and catalog_title == title_key(base)
+            if (
+                catalog_title != title_key(query)
+                and not (
+                    decorated_kindle
+                    and row.get("asin") == asin
+                    and catalog_title == title_key(base)
+                )
+                and not (
+                    sorted_kindle
+                    and self._work_titles_compatible(
+                        {"title": query, "asin": asin}, row
+                    )
+                )
             ):
                 continue
             target = {"title": row["title"], "authors": authors}
@@ -2075,11 +2118,7 @@ class MetadataEngineSource(Source):
                     "source": "google_books",
                     "source_id": google_id,
                     "metadata_type": "books",
-                    "native_google_cover": True,
-                    "cover_url": (
-                        f"https://books.google.com/books?id={google_id}"
-                        "&printsec=frontcover&img=1&zoom=0"
-                    ),
+                    **self._native_google_cover(google_id),
                 }
             )
 
@@ -2099,6 +2138,7 @@ class MetadataEngineSource(Source):
                 "title": title,
                 "authors": authors,
                 "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
+                "asin": self._cover_asin(identifiers),
             }
             provider_ids = self._book_provider_ids(log, min(timeout, 5), abort)
 
@@ -2286,6 +2326,21 @@ class MetadataEngineSource(Source):
                         "Metadata Engine Apple ISBN lookup failed: %s",
                         exc,
                     )
+            if not google_id and not audiobook:
+                for row in rows:
+                    volume = self._text(row.get("source_id")) or ""
+                    if (
+                        row.get("source") == "google_books"
+                        and re.fullmatch(r"[A-Za-z0-9_-]{6,32}", volume)
+                        and self._work_description_matches(target, row)
+                    ):
+                        candidates.append(
+                            dict(
+                                row,
+                                **self._native_google_cover(volume, "/books/content"),
+                            )
+                        )
+                        break
             candidates.extend(rows)
 
         from qt.core import QImage
@@ -2422,6 +2477,17 @@ class MetadataEngineSource(Source):
         else:
             _log(log, "error", "Metadata Engine returned no cover candidates")
         return None
+
+    @staticmethod
+    def _native_google_cover(volume, path="/books"):
+        """Build a native-size cover request for a verified Google Books volume."""
+        return {
+            "native_google_cover": True,
+            "cover_url": (
+                f"https://books.google.com{path}?id={volume}"
+                "&printsec=frontcover&img=1&zoom=0"
+            ),
+        }
 
     @staticmethod
     def _cover_signature(image):
@@ -3581,7 +3647,7 @@ class MetadataEngineSource(Source):
         """Return the body and final URL after following redirects."""
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.63",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.64",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -3604,6 +3670,13 @@ class MetadataEngineSource(Source):
                 ) as response:
                     return response.read(), response.geturl()
             except HTTPError as exc:
+                if (
+                    attempt == 0
+                    and exc.code == 503
+                    and urlsplit(url).hostname == "www.goodreads.com"
+                ):
+                    exc.close()
+                    continue
                 detail = exc.read().decode("utf-8", "replace")
                 raise RuntimeError("HTTP %s: %s" % (exc.code, detail or exc.reason))
             except (TimeoutError, URLError) as exc:
@@ -3704,10 +3777,16 @@ class MetadataEngineSource(Source):
         value = cls._text(value)
         return [value] if value else []
 
+    @staticmethod
+    def _restore_title_article(title):
+        """Convert an English catalog sort title to reading order."""
+        match = re.fullmatch(r"(.+),\s*(the|an|a)", title, re.IGNORECASE)
+        return f"{match[2].capitalize()} {match[1]}" if match else title
+
     @classmethod
     def _search_title(cls, value, subtitle=None):
         """Extract the work title for search without changing its case."""
-        title = cls._text(value) or ""
+        title = cls._restore_title_article(cls._text(value) or "")
         indexed = cls._catalog_index_title(title)
         if indexed:
             title = indexed[1]
@@ -3806,7 +3885,9 @@ class MetadataEngineSource(Source):
     @classmethod
     def _work_title(cls, value):
         """Extract a numbered series suffix only for matching book works."""
-        title = unicodedata.normalize("NFKC", cls._text(value) or "").casefold()
+        title = cls._restore_title_article(
+            unicodedata.normalize("NFKC", cls._text(value) or "")
+        ).casefold()
         title = title.translate(str.maketrans({"’": "'", "‘": "'", "–": "-", "—": "-"}))
         title = " ".join(title.split())
         title = re.sub(r"\s+:\s*", ": ", title)
@@ -3983,6 +4064,16 @@ class MetadataEngineSource(Source):
             right_title, right_edition = cls._edition_title_key(right_title)
             if left_edition and right_edition and left_edition != right_edition:
                 return False
+        left_asin = cls._cover_asin(left)
+        if re.fullmatch(r"B[A-Z0-9]{9}", left_asin) and left_asin == cls._cover_asin(
+            right
+        ):
+            left_base, _, left_sub = left_title.partition(": ")
+            right_base, _, right_sub = right_title.partition(": ")
+            left_sub = left_sub or cls._work_title(left.get("subtitle"))[0]
+            right_sub = right_sub or cls._work_title(right.get("subtitle"))[0]
+            if left_base == right_base and not (left_sub and right_sub):
+                return True
         if left_isbn and left_isbn == right_isbn and left_title != right_title:
             a, _, a_sub = left_title.partition(": ")
             b, _, b_sub = right_title.partition(": ")

@@ -313,6 +313,20 @@ def main():
     plugin._recover_supplements = inspect_supplements
     cases = [
         {
+            "title": "Element Encyclopedia of the Psychic World, The",
+            "authors": ["Cheung, Theresa"],
+            "expected_authors": ["Theresa Cheung"],
+            "identifiers": {"mobi-asin": "B004FPYX40"},
+            "expected_asin": "B004FPYX40",
+            "rejected_isbn": "9780007211487",
+            "one_result": True,
+            "merge_identify": True,
+            "expected_subjects": {"paranormal", "spirituality", "reference"},
+            "minimum_description": 350,
+            "topic": "divination",
+            "timeout": 30,
+        },
+        {
             "title": "Star Wars - 201 - Shadows of the Empire",
             "authors": ["Steve Perry"],
             "isbn": "9780553574135",
@@ -332,6 +346,8 @@ def main():
             "isbn": "9780345522641",
             "canonical_isbn": "9780345522641",
             "series": ("Star Wars: Knight Errant", 1.5),
+            # Apple also returns unrelated Star Wars sampler covers by title.
+            "isbn_first_covers": ("Apple Books covers",),
             "one_result": True,
             "merge_identify": True,
             "minimum_description": 350,
@@ -644,6 +660,9 @@ def main():
                     plugin._canonical_isbn(row.get_identifiers().get("isbn"))
                     == case["canonical_isbn"]
                     if "canonical_isbn" in case
+                    else plugin._cover_asin(row.get_identifiers())
+                    == case["expected_asin"]
+                    if "expected_asin" in case
                     else row.get_identifiers().get("goodreads")
                     == case["expected_goodreads"]
                 )
