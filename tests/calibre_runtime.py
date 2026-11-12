@@ -769,6 +769,114 @@ class InstalledPluginTests(unittest.TestCase):
                 self.assertEqual(result.tags, ["Anthologies"])
                 self.assertFalse(result.series)
 
+    def test_unavailable_saved_goodreads_id_uses_verified_bibliography(self):
+        """Match the original short story when the saved edition page is gone."""
+        title, author = "Henrikk's Punishment", "Darcy Fayton"
+        asin, goodreads_id = "B0CVZJHQ6W", "208896222"
+        ids = {"amazon": asin, "goodreads": goodreads_id, "mobi-asin": asin}
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for listing_title, listing_author, matches in (
+            (title, author, True),
+            ("Henrikk's Prisoner", author, False),
+            ("Punished by the Vampire King", author, False),
+            (title, "Different Author", False),
+        ):
+            with self.subTest(title=listing_title, author=listing_author):
+                bibliography = f"""
+                    <h1 itemprop="name">{listing_author}</h1>
+                    <div class="sectionleft">
+                      <a href="series/"><span class="ibig">Henrikk's Short Story</span></a>
+                      <br><span id="t1276579">&nbsp;</span>1.
+                      <span title="Not available">{listing_title}</span>
+                      <span class="year"> (2024)</span>
+                    </div>
+                """
+                with (
+                    patch.object(self.plugin, "_search", return_value=[]),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[b"<h1>Page not found</h1>", bibliography.encode()],
+                    ) as fetch,
+                ):
+                    results = self.identify(
+                        title=title, authors=[author], identifiers=ids
+                    )
+                self.assertEqual(
+                    [call.args[0] for call in fetch.call_args_list],
+                    [
+                        f"https://www.goodreads.com/en/book/show/{goodreads_id}",
+                        "https://www.fantasticfiction.com/f/darcy-fayton/",
+                    ],
+                )
+                if matches:
+                    self.assertEqual(len(results), 1)
+                    (book,) = results
+                    self.assertEqual(book.title, title)
+                    self.assertEqual(book.authors, [author])
+                    self.assertEqual(
+                        (book.series, book.series_index), ("Henrikk's Short Story", 1)
+                    )
+                    self.assertEqual(
+                        book.get_identifiers(),
+                        {"asin": asin, "metadata_engine_fantastic_fiction": "1276579"},
+                    )
+                    self.assertFalse(book.comments)
+                    self.assertFalse(getattr(book, "has_cached_cover", False))
+                else:
+                    self.assertFalse(results)
+
+    def test_saved_goodreads_record_requires_compatible_title_author_and_asin(self):
+        """Resolve a live saved record directly and reject contradictory evidence."""
+        title, author = "Henrikk's Punishment", "Darcy Fayton"
+        asin, goodreads_id = "B0CVZJHQ6W", "208896222"
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for returned_title, returned_author, returned_asin, matches in (
+            (title, author, asin, True),
+            (title, author, "B000000001", False),
+            ("Henrikk's Prisoner", author, asin, False),
+            (title, "Different Author", asin, False),
+        ):
+            with self.subTest(
+                title=returned_title, author=returned_author, asin=returned_asin
+            ):
+                state = {
+                    "Book:1": {
+                        "__typename": "Book",
+                        "legacyId": int(goodreads_id),
+                        "titleComplete": returned_title,
+                        "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                        "details": {"asin": returned_asin},
+                        "description": "A short story from the vampire king's court.",
+                        "bookGenres": [{"genre": {"name": "Vampires"}}],
+                    },
+                    "Author:1": {"name": returned_author},
+                }
+                data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                with (
+                    patch.object(self.plugin, "_search", return_value=[]),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        return_value=f'<script id="__NEXT_DATA__">{data}</script>'.encode(),
+                    ) as fetch,
+                ):
+                    results = self.identify(
+                        title=title,
+                        authors=[author],
+                        identifiers={"goodreads": goodreads_id, "mobi-asin": asin},
+                    )
+                self.assertEqual(len(results), int(matches))
+                if matches:
+                    self.assertEqual(
+                        results[0].get_identifiers()["goodreads"], goodreads_id
+                    )
+                    self.assertEqual(results[0].get_identifiers()["asin"], asin)
+                self.assertEqual(fetch.call_count, 1)
+                self.assertTrue(
+                    fetch.call_args.args[0].endswith("/book/show/" + goodreads_id)
+                )
+
     def test_goodreads_retired_edition_label_preserves_original_work_identity(self):
         """Recover the retired work without treating a rewrite as the same title."""
         title, author = "Bedded by the Headmaster", "Darcy Fayton"
