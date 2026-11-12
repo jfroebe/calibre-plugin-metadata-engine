@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 62)
+    version = (1, 1, 63)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -2362,10 +2362,18 @@ class MetadataEngineSource(Source):
                     shape = self._cover_aspect_rank(
                         image.width(), image.height(), audiobook
                     )
-                    rank = (shape, score > 1, image.width() * image.height(), score)
+                    signature = self._cover_signature(image)
+                    illustrated = not self._mostly_white_cover(signature)
+                    rank = (
+                        illustrated,
+                        shape,
+                        score > 1,
+                        image.width() * image.height(),
+                        score,
+                    )
                     if best is None or rank > best[0]:
-                        best = (rank, row, candidate_url, data)
-                    if row.get("native_google_cover") and shape == 2:
+                        best = (rank, row, candidate_url, data, signature)
+                    if row.get("native_google_cover") and shape == 2 and illustrated:
                         break
                 except Exception as exc:
                     _log(
@@ -2384,14 +2392,20 @@ class MetadataEngineSource(Source):
                 covers = [item for item in executor.map(download, requests) if item]
 
         if covers:
-            covers.sort(key=lambda item: item[0], reverse=True)
-            winner = covers[0]
-            for rank, row, url, data in covers:
+            preferred = max(item[0][:2] for item in covers)
+            # Calibre sorts multi-cover results by area. Filter fallback pages
+            # and less suitable shapes before the results leave this plugin.
+            covers = [item for item in covers if item[0][:2] == preferred]
+            covers.sort(key=lambda item: (item[0][3], item[0][4]), reverse=True)
+            unique = []
+            for cover in covers:
+                if not any(self._same_cover_art(cover[4], item[4]) for item in unique):
+                    unique.append(cover)
+            unique.sort(key=lambda item: item[0], reverse=True)
+            winner = unique[0]
+            for _, _, _, data, _ in unique:
                 if abort.is_set():
                     return None
-                # Calibre can sort a multi-cover response by pixel area.
-                if rank[0] != winner[0][0]:
-                    break
                 result_queue.put((self, data))
                 if get_best_cover:
                     break
@@ -2408,6 +2422,43 @@ class MetadataEngineSource(Source):
         else:
             _log(log, "error", "Metadata Engine returned no cover candidates")
         return None
+
+    @staticmethod
+    def _cover_signature(image):
+        """Sample decoded color and aspect independently of encoding and resolution."""
+        from qt.core import QImage, Qt
+
+        sample = image.scaled(
+            32,
+            32,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ).convertToFormat(QImage.Format.Format_RGB888)
+        return image.width() / image.height(), sample.constBits().asstring(
+            sample.sizeInBytes()
+        )
+
+    @staticmethod
+    def _mostly_white_cover(signature):
+        """Recognize near-white pages with little artwork as fallback images."""
+        _, pixels = signature
+        white = sum(
+            min(pixel) >= 235 and max(pixel) - min(pixel) <= 14
+            for pixel in zip(pixels[::3], pixels[1::3], pixels[2::3])
+        )
+        return white >= 0.95 * (len(pixels) // 3)
+
+    @staticmethod
+    def _same_cover_art(first, second):
+        """Match copies with minor crop, color, or compression differences."""
+        first_aspect, first_pixels = first
+        second_aspect, second_pixels = second
+        if max(first_aspect, second_aspect) > min(first_aspect, second_aspect) * 1.08:
+            return False
+        differences = [abs(a - b) for a, b in zip(first_pixels, second_pixels)]
+        return sum(differences) <= 11 * len(differences) and sum(
+            value > 35 for value in differences
+        ) <= 0.06 * len(differences)
 
     @staticmethod
     def _cover_aspect_rank(width, height, audiobook):
@@ -3530,7 +3581,7 @@ class MetadataEngineSource(Source):
         """Return the body and final URL after following redirects."""
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.62",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.63",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
