@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 61)
+    version = (1, 1, 62)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -271,6 +271,29 @@ class MetadataEngineSource(Source):
                             exc,
                         )
 
+            if (
+                self._catalog_index_title(self._text(title))
+                and not abort.is_set()
+                and not any(
+                    self._matches_requested(row, title, authors, identifiers)
+                    for row in rows
+                )
+            ):
+                # A title with this punctuation can also be literal. Retain
+                # the original spelling when the shorter search has no match.
+                catalogs = [
+                    provider
+                    for provider in provider_ids
+                    if provider
+                    in {"google_books", "goodreads", "hardcover", "open_library"}
+                ]
+                literal = self._initial_provider_batch(
+                    catalogs, title, authors, identifiers, min(timeout, 5), abort
+                )
+                for found, error in literal.values():
+                    if error is None:
+                        rows.extend(found)
+
             authors = self._recover_incomplete_author(
                 log, rows, title, authors, identifiers
             )
@@ -373,12 +396,23 @@ class MetadataEngineSource(Source):
                 self._recover_catalog_series(
                     log, rows, title, authors, identifiers, abort, timeout
                 )
-            rows = self._dedupe(rows)
             requested = {
                 "title": title,
                 "authors": authors,
                 "isbn": self._identifier(identifiers, "isbn", "isbn13", "isbn10"),
             }
+            indexed = self._catalog_index_title(self._text(title))
+            if indexed and self._canonical_isbn(requested["isbn"]):
+                # Normalize verified spellings before deduplication. An
+                # alternate title can still describe the very same ISBN.
+                rows = [
+                    dict(row, title=indexed[1], subtitle=None)
+                    if self._indexed_title_matches(requested, row, *indexed)
+                    and self._matches_requested(row, title, authors, identifiers)
+                    else row
+                    for row in rows
+                ]
+            rows = self._dedupe(rows)
             # A shared title alone cannot verify an authorless candidate.
             # Keep rows corroborated above or tied to a requested identifier.
             compatible = [
@@ -485,7 +519,9 @@ class MetadataEngineSource(Source):
                     log, rows[0], isbn, timeout, provider_ids, abort
                 )
                 if "goodreads" in provider_ids and not abort.is_set():
-                    self._recover_goodreads_isbn_series(log, rows[0], isbn, timeout)
+                    self._recover_goodreads_isbn_series(
+                        log, rows[0], isbn, timeout, requested
+                    )
             maximum = max(1, int(self.prefs.get("max_results", 20) or 20))
             requested_asin = self._cover_asin(identifiers)
             if (
@@ -734,8 +770,8 @@ class MetadataEngineSource(Source):
                 isbn,
             )
 
-    def _recover_goodreads_isbn_series(self, log, row, isbn, timeout):
-        """Fill a missing series number using the verified Goodreads edition."""
+    def _recover_goodreads_isbn_series(self, log, row, isbn, timeout, requested=None):
+        """Fill missing series information using the verified Goodreads edition."""
         current_name, current_position = self._series_identity(row)
         if current_position is not None:
             return
@@ -774,23 +810,36 @@ class MetadataEngineSource(Source):
         if parenthetical:
             title, label = parenthetical.groups()
             titles.append(dict(work, title=f"{label}: {title}"))
-        if not any(self._work_description_matches(row, variant) for variant in titles):
+        indexed = self._catalog_index_title(self._text((requested or {}).get("title")))
+        witnesses = [row, requested] if indexed else [row]
+        if not any(
+            self._work_description_matches(witness, variant)
+            for witness in witnesses
+            for variant in titles
+        ):
             return
 
         numbered = {}
+        collections = {}
         for item in donor.get("series") or []:
-            if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(item.get("position"))):
-                continue
             name, position = self._series_identity({"series": [item]})
             key = self._series_name_key(name)
-            if (
-                position is not None
-                and name
-                and (not current_name or key == self._series_name_key(current_name))
+            label = self._text(item.get("position"))
+            if not name or (
+                current_name and key != self._series_name_key(current_name)
             ):
+                continue
+            if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", label or ""):
                 numbered[(key, position)] = item
-        if len(numbered) == 1:
-            row["series"] = list(numbered.values())
+            elif (
+                not label
+                and indexed
+                and self._franchise_label_matches(indexed[0], name)
+            ):
+                collections[key] = item
+        series = numbered or collections
+        if len(series) == 1:
+            row["series"] = list(series.values())
             _log(
                 log,
                 "info",
@@ -3470,7 +3519,7 @@ class MetadataEngineSource(Source):
         """Return the body and final URL after following redirects."""
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.61",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.62",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
@@ -3595,8 +3644,11 @@ class MetadataEngineSource(Source):
 
     @classmethod
     def _search_title(cls, value, subtitle=None):
-        """Remove a numbered series suffix without changing provider query case."""
+        """Extract the work title for search without changing its case."""
         title = cls._text(value) or ""
+        indexed = cls._catalog_index_title(title)
+        if indexed:
+            title = indexed[1]
         prefix = cls._numbered_title_prefix(title, subtitle)
         if prefix:
             title = prefix[2]
@@ -3606,6 +3658,61 @@ class MetadataEngineSource(Source):
             re.IGNORECASE,
         )
         return match.group(1).strip() if match else title
+
+    @staticmethod
+    def _catalog_index_title(value):
+        """Extract franchise and work hints from a title with a middle index."""
+        match = re.fullmatch(
+            r"(.+?)\s+[-–—]\s+[0-9]+(?:\.[0-9]+)?\s+[-–—]\s+(\S.*)",
+            value or "",
+        )
+        return match.groups() if match else None
+
+    @classmethod
+    def _indexed_title_matches(cls, indexed, catalog, franchise, work):
+        """Verify a stripped search hint against edition or catalog evidence."""
+        if not cls._list(indexed.get("authors")) or not cls._list(
+            catalog.get("authors")
+        ):
+            return False
+        expected_isbn = cls._canonical_isbn(indexed.get("isbn"))
+        if expected_isbn and expected_isbn != cls._canonical_isbn(catalog.get("isbn")):
+            return False
+        base = cls._work_title(work)[0]
+        title = cls._work_title(catalog.get("title"))[0]
+        subtitle = cls._work_title(catalog.get("subtitle"))[0]
+
+        def franchise_label(value):
+            return cls._franchise_label_matches(franchise, value)
+
+        if title == base:
+            if subtitle:
+                return franchise_label(subtitle)
+            return bool(expected_isbn) or franchise_label(
+                cls._series_identity(catalog)[0]
+            )
+        labels = re.split(r":\s+|\s+[-–—]\s+", title, maxsplit=1)
+        if len(labels) == 2:
+            first, second = labels
+            if (first == base and franchise_label(second)) or (
+                second == base and franchise_label(first)
+            ):
+                return True
+        parenthetical = re.fullmatch(r"(.+?)\s+\(([^()]+)\)", title)
+        return bool(
+            parenthetical
+            and parenthetical[1] == base
+            and franchise_label(parenthetical[2])
+        )
+
+    @staticmethod
+    def _franchise_label_matches(franchise, label):
+        """Recognize catalog extensions of a franchise name at a word boundary."""
+        prefix, value = (
+            re.sub(r"[^\w]+", " ", text.casefold()).strip()
+            for text in (franchise, label)
+        )
+        return bool(prefix and (value == prefix or value.startswith(prefix + " ")))
 
     @classmethod
     def _numbered_title_prefix(cls, value, subtitle=None):
@@ -3760,6 +3867,10 @@ class MetadataEngineSource(Source):
         right_title, _, _ = cls._work_title(right.get("title"))
         if not left_title or not right_title:
             return False
+        for decorated, catalog in ((left, right), (right, left)):
+            indexed = cls._catalog_index_title(cls._text(decorated.get("title")))
+            if indexed and cls._indexed_title_matches(decorated, catalog, *indexed):
+                return True
         left_isbn = cls._canonical_isbn(left.get("isbn"))
         right_isbn = cls._canonical_isbn(right.get("isbn"))
         left_prefix = cls._numbered_title_prefix(
