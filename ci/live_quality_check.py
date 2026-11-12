@@ -346,6 +346,8 @@ def main():
             "isbn": "9780345522641",
             "canonical_isbn": "9780345522641",
             "series": ("Star Wars: Knight Errant", 1.5),
+            # Apple also returns unrelated Star Wars sampler covers by title.
+            "isbn_first_covers": ("Apple Books covers",),
             "one_result": True,
             "merge_identify": True,
             "minimum_description": 350,
