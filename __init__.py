@@ -1381,9 +1381,9 @@ class MetadataEngineSource(Source):
         target = {"title": title, "authors": authors}
         try:
             row = self._goodreads_book(book_id, min(remaining, 4))
-        except RuntimeError as exc:
-            if not str(exc).startswith(("HTTP 404:", "HTTP 410:")):
-                raise
+        except (OSError, RuntimeError, ValueError):
+            # A blocked or unreachable Goodreads page cannot verify the edition.
+            # Fall back to independent work evidence without replacing its IDs.
             row = None
         if row:
             if not self._work_description_matches(target, row):
@@ -1407,7 +1407,11 @@ class MetadataEngineSource(Source):
         remaining = deadline - time.monotonic()
         if remaining <= 0 or abort.is_set() or len(authors) != 1:
             return []
-        return self._fantastic_fiction_work(target, min(remaining, 4))
+        try:
+            return self._fantastic_fiction_work(target, min(remaining, 4))
+        except (OSError, RuntimeError, ValueError) as exc:
+            reason = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+            raise RuntimeError(f"Fantastic Fiction unavailable: {reason}") from exc
 
     def _fantastic_fiction_work(self, target, timeout):
         """Verify an unavailable catalog work against a single-author bibliography."""
