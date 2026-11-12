@@ -464,12 +464,7 @@ class MetadataEngineSource(Source):
                 return confirmed, confirmed and has_synopsis, confidence
 
             rows.sort(key=rank, reverse=True)
-            if (
-                rows
-                and isbn
-                and rank(rows[0])[0]
-                and not abort.is_set()
-            ):
+            if rows and isbn and rank(rows[0])[0] and not abort.is_set():
                 self._recover_book_subjects(
                     log, rows[0], isbn, timeout, provider_ids, abort
                 )
@@ -584,7 +579,10 @@ class MetadataEngineSource(Source):
                         )
             except (OSError, RuntimeError, ValueError) as exc:
                 _log(
-                    log, "info", "Metadata Engine Tertulia subject lookup failed: %s", exc
+                    log,
+                    "info",
+                    "Metadata Engine Tertulia subject lookup failed: %s",
+                    exc,
                 )
         remaining = deadline - time.monotonic()
         if (
@@ -597,12 +595,16 @@ class MetadataEngineSource(Source):
         try:
             genres = self._open_library_isbn_genres(row, isbn, remaining)
         except (OSError, RuntimeError, ValueError) as exc:
-            _log(log, "info", "Metadata Engine Open Library ISBN lookup failed: %s", exc)
+            _log(
+                log, "info", "Metadata Engine Open Library ISBN lookup failed: %s", exc
+            )
             return
         if genres:
             row["genres"] = self._list(row.get("genres")) + genres
             _log(
-                log, "info", "Metadata Engine recovered genres from Open Library ISBN %s",
+                log,
+                "info",
+                "Metadata Engine recovered genres from Open Library ISBN %s",
                 isbn,
             )
 
