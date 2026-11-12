@@ -775,11 +775,13 @@ class InstalledPluginTests(unittest.TestCase):
         asin, goodreads_id = "B0CVZJHQ6W", "208896222"
         ids = {"amazon": asin, "goodreads": goodreads_id, "mobi-asin": asin}
         self.plugin.prefs["plugin_ids"] = "goodreads"
-        for listing_title, listing_author, matches in (
-            (title, author, True),
-            ("Henrikk's Prisoner", author, False),
-            ("Punished by the Vampire King", author, False),
-            (title, "Different Author", False),
+        missing = b"<h1>Page not found</h1>"
+        for response, listing_title, listing_author, matches in (
+            (missing, title, author, True),
+            (RuntimeError("HTTP 405: Human Verification"), title, author, True),
+            (missing, "Henrikk's Prisoner", author, False),
+            (missing, "Punished by the Vampire King", author, False),
+            (missing, title, "Different Author", False),
         ):
             with self.subTest(title=listing_title, author=listing_author):
                 bibliography = f"""
@@ -796,7 +798,7 @@ class InstalledPluginTests(unittest.TestCase):
                     patch.object(
                         self.plugin,
                         "_http_bytes",
-                        side_effect=[b"<h1>Page not found</h1>", bibliography.encode()],
+                        side_effect=[response, bibliography.encode()],
                     ) as fetch,
                 ):
                     results = self.identify(
