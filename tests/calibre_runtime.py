@@ -1100,6 +1100,44 @@ class InstalledPluginTests(unittest.TestCase):
                     self.assertFalse(result.comments)
                     self.assertFalse(result.tags)
 
+    def test_verified_work_restores_requested_numbered_series_suffix(self):
+        """Restore series lost by a catalog that returns the matching bare title."""
+        title = "Dark Town, A Fantasy LitRPG Adventure: Level One of the Dragon's Crawl"
+        authors = ["Palmer Pickering"]
+        identifiers = {"mobi-asin": "B0CYWJ48TS"}
+        row = {
+            "title": title,
+            "authors": authors,
+            "isbn": "9781960530028",
+            "description": "Temerity enters the underground Dragon's Game.",
+            "genres": ["Fantasy"],
+        }
+        requested = f"{title} (Tales of Temerity Book 1)"
+        with patch.object(
+            self.plugin,
+            "_search",
+            side_effect=lambda *args, **kwargs: [deepcopy(row)]
+            if args[0] == "google_books"
+            else [],
+        ):
+            (result,) = self.identify(
+                title=requested, authors=authors, identifiers=identifiers
+            )
+        self.assertEqual((result.series, result.series_index), ("Tales of Temerity", 1))
+        self.assertEqual(result.get_identifiers()["isbn"], row["isbn"])
+        self.assertEqual(result.get_identifiers()["asin"], identifiers["mobi-asin"])
+        for conflicting in (
+            dict(row, asin="B000000001"),
+            dict(row, authors=["Another Writer"]),
+            dict(row, title=title + " Part Two"),
+        ):
+            self.assertEqual(
+                self.plugin._with_requested_series(
+                    conflicting, requested, authors, identifiers
+                ),
+                conflicting,
+            )
+
     def test_initial_provider_requests_overlap_for_metadata_and_covers(self):
         """A barrier must admit every provider before any initial call completes."""
         providers = ["google_books", "goodreads", "open_library"]
@@ -3813,6 +3851,34 @@ class InstalledPluginTests(unittest.TestCase):
                 self.assertEqual(
                     {call.args[0] for call in fetch.call_args_list}, set(images)
                 )
+
+    def test_apple_cover_accepts_reversed_franchise_title_for_same_author(self):
+        """Validate the exact ISBN cover when Apple reverses the two title labels."""
+        target = {
+            "title": "Star Wars: Knight Errant",
+            "authors": ["John Jackson Miller"],
+            "isbn": "9780345522641",
+        }
+        apple = {
+            "kind": "ebook",
+            "trackName": "Knight Errant: Star Wars",
+            "artistName": "John Jackson Miller",
+            "artworkUrl100": "https://is1-ssl.mzstatic.com/knight-errant.jpg",
+        }
+        with patch.object(
+            self.plugin,
+            "_http_json",
+            return_value={
+                "results": [
+                    dict(apple, artistName="Another Writer"),
+                    dict(apple, trackName="Knight Errant: Star Trek"),
+                    apple,
+                ]
+            },
+        ):
+            (cover,) = self.plugin._apple_cover_candidates(target, 5)
+        self.assertEqual(cover["cover_url"], apple["artworkUrl100"])
+        self.assertEqual(cover["isbn"], target["isbn"])
 
     def test_google_cover_uses_saved_volume_id(self):
         """Rank native Google artwork and retry the lower zoom when needed."""
