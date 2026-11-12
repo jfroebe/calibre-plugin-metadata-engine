@@ -514,6 +514,11 @@ class MetadataEngineSource(Source):
                 return confirmed, confirmed and has_synopsis, confidence
 
             rows.sort(key=rank, reverse=True)
+            if indexed and rows and isbn and rank(rows[0])[0]:
+                # One indexed title and exact ISBN identify a single requested
+                # edition. Prefer the richest compatible record without
+                # mixing source records that disagree on secondary IDs.
+                rows = rows[:1]
             if rows and isbn and rank(rows[0])[0] and not abort.is_set():
                 self._recover_book_subjects(
                     log, rows[0], isbn, timeout, provider_ids, abort
@@ -825,8 +830,14 @@ class MetadataEngineSource(Source):
             name, position = self._series_identity({"series": [item]})
             key = self._series_name_key(name)
             label = self._text(item.get("position"))
+            same_franchise = indexed and (
+                self._franchise_label_matches(indexed[0], current_name)
+                and self._franchise_label_matches(indexed[0], name)
+            )
             if not name or (
-                current_name and key != self._series_name_key(current_name)
+                current_name
+                and key != self._series_name_key(current_name)
+                and not same_franchise
             ):
                 continue
             if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", label or ""):
