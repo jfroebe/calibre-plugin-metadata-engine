@@ -16,6 +16,7 @@ from threading import Event
 from urllib.request import urlopen
 
 from calibre.customize.ui import add_plugin, all_metadata_plugins, metadata_plugins
+from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ebooks.metadata.sources.base import Source
 from calibre.ebooks.metadata.sources.covers import Worker
 from calibre.ebooks.metadata.sources.identify import merge_identify_results
@@ -113,6 +114,7 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
 
     workers = {}
     report = {}
+    failures = []
     timeout = case.get("timeout", 30)
     deadline = time.monotonic() + timeout + 25
     for source in sources:
@@ -132,7 +134,7 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
             timeout,
             Queue(),
             get_best_cover=(
-                source.name == engine.name
+                (source.name == engine.name and not case.get("dedupe_covers"))
                 or source.name in case.get("isbn_first_covers", ())
             ),
         )
@@ -146,12 +148,28 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
             stalled_sources.add(name)
         with worker.rq.mutex:
             downloads = list(worker.rq.queue)
-        images = [QImage.fromData(data) for _, data in downloads]
-        sizes = [
-            (image.width(), image.height())
-            for image in images
-            if not image.isNull() and min(image.width(), image.height()) >= 100
+        images = [
+            image
+            for _, data in downloads
+            if not (image := QImage.fromData(data)).isNull()
+            and min(image.width(), image.height()) >= 100
         ]
+        sizes = [(image.width(), image.height()) for image in images]
+        signatures = [engine._cover_signature(image) for image in images]
+        artwork = [
+            size
+            for size, signature in zip(sizes, signatures)
+            if not engine._mostly_white_cover(signature)
+        ]
+        if source.name == engine.name and case.get("dedupe_covers"):
+            if not artwork or len(artwork) != len(sizes):
+                failures.append(f"{merged.title}: expected illustrated covers only")
+            if any(
+                engine._same_cover_art(signature, previous)
+                for index, signature in enumerate(signatures)
+                for previous in signatures[:index]
+            ):
+                failures.append(f"{merged.title}: duplicate artwork in cover choices")
         report[name] = {
             "status": (
                 "timeout"
@@ -163,6 +181,7 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
                 else "no_cover"
             ),
             "size": max(sizes, key=quality, default=None),
+            "artwork_size": max(artwork, key=quality, default=None),
             "seconds": worker.time_spent,
         }
 
@@ -179,7 +198,14 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
         )
         and source.name != "Google Images"
     }
-    actual = report[engine.name].get("size")
+    size_field = (
+        "artwork_size"
+        if any(
+            report[name].get("artwork_size") for name in catalog_names | {engine.name}
+        )
+        else "size"
+    )
+    actual = report[engine.name].get(size_field)
     print(
         "LIVE_COVER_COMPARISON="
         + json.dumps(
@@ -193,12 +219,11 @@ def check_cover_quality(engine, sources, book, case, stalled_sources):
         ),
         flush=True,
     )
-    failures = []
     for name in case.get("required_covers", ()):
         if not report[name].get("size"):
             failures.append(f"Known {name} reference unavailable: {merged.title}")
     for name in sorted(catalog_names):
-        reference = report[name].get("size")
+        reference = report[name].get(size_field)
         if reference and (actual is None or quality(actual) < quality(reference)):
             failures.append(
                 f"{merged.title}: Metadata Engine {actual} ranks below {name} {reference}"
@@ -222,6 +247,23 @@ def main():
     )
     plugin.prefs["base_url"] = "http://192.168.0.59:14000"
     plugin.prefs["plugin_ids"] = ""
+    cover_book = Metadata("Constance Verity Destroys the Universe", ["A. Lee Martinez"])
+    cover_book.set_identifiers(
+        {
+            "isbn": "9781481443579",
+            "asin": "B075RLFZDJ",
+            "metadata_engine_google_books": "En9dEAAAQBAJ",
+        }
+    )
+    cover_failures.extend(
+        check_cover_quality(
+            plugin,
+            cover_sources,
+            cover_book,
+            {"dedupe_covers": True, "required_covers": ("Kindle hi-res covers",)},
+            set(),
+        )
+    )
     recover = plugin._recover_supplements
 
     def inspect_supplements(*args):

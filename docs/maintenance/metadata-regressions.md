@@ -140,6 +140,13 @@ titles. Without an ISBN, require a catalog franchise label as well as the
 work title and author. Preserve literal titles when the shortened search
 misses. The verified Goodreads collection for this edition has no position.
 
+Exercise the cover choices for `Constance Verity Destroys the Universe` with
+the ISBN, Kindle ASIN and Google Books volume ID. Check decoded images across
+sources and resolutions. Keep one highest-resolution copy of each distinct
+artwork. A mostly white title page is a fallback when no illustrated cover
+is available, in both the chooser and automatic selection. Compare cover
+quality using artwork when catalogs return both artwork and title pages.
+
 For distribution, qualify the exact deterministic ZIP with the existing Docker
 integration workflow. Inspect all mandatory job outcomes and import the original
 qualification record. Source or README changes invalidate the ZIP digest.

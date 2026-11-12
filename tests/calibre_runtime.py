@@ -3881,7 +3881,7 @@ class InstalledPluginTests(unittest.TestCase):
             },
         ]
         images = {
-            "https://example.test/small.png": png(265, 400),
+            "https://example.test/small.png": png(265, 400, (155, 48, 36)),
             "https://example.test/large.png": png(1200, 1800),
         }
         queue = Queue()
@@ -4100,6 +4100,98 @@ class InstalledPluginTests(unittest.TestCase):
             (cover,) = self.plugin._apple_cover_candidates(target, 5)
         self.assertEqual(cover["cover_url"], apple["artworkUrl100"])
         self.assertEqual(cover["isbn"], target["isbn"])
+
+    def test_cover_dedupe_and_white_title_page_fallback(self):
+        """Offer one copy per artwork and keep a white page only as fallback."""
+        from qt.core import QBuffer, QColor, QImage, QIODevice, QPainter
+
+        def cover(width, height, background, encoding):
+            image = QImage(width, height, QImage.Format.Format_RGB32)
+            image.fill(QColor(background))
+            painter = QPainter(image)
+            painter.fillRect(
+                width * 3 // 10,
+                height // 2,
+                width * 4 // 10,
+                height // 60,
+                QColor("#292929"),
+            )
+            painter.end()
+            buffer = QBuffer()
+            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+            self.assertTrue(image.save(buffer, encoding))
+            return bytes(buffer.data())
+
+        isbn = "9781481443579"
+        title = "Constance Verity Destroys the Universe"
+        authors = ["A. Lee Martinez"]
+        google_id = "En9dEAAAQBAJ"
+        google = f"https://books.google.com/books?id={google_id}&printsec=frontcover&img=1&zoom="
+        white = cover(1500, 2200, "#fcfcfc", "PNG")
+        thumb = cover(128, 194, "#53a1bd", "JPEG")
+        full = cover(1400, 2127, "#53a1bd", "PNG")
+        duplicate = cover(1400, 2100, "#54a2be", "JPEG")
+        different = cover(600, 900, "#87223f", "JPEG")
+        sources = {
+            "hardcover": full,
+            "isbnlab": duplicate,
+            "open_library": thumb,
+            "goodreads": different,
+        }
+        self.plugin.prefs["plugin_ids"] = ",".join(sources)
+        for include_artwork, best_only, expected in (
+            (True, False, [full, different]),
+            (True, True, [full]),
+            (False, False, [white]),
+            (False, True, [white]),
+        ):
+            with self.subTest(include_artwork=include_artwork, best_only=best_only):
+                self.plugin._cover_urls.clear()
+                queue = Queue()
+                data = {
+                    google + "0": white,
+                    google + "1": thumb if include_artwork else b"",
+                }
+                rows = {
+                    provider: {
+                        "title": title,
+                        "authors": authors,
+                        "isbn": isbn,
+                        "source": provider,
+                        "cover_url": f"https://example.test/{provider}.jpg",
+                    }
+                    for provider in sources
+                }
+                if include_artwork:
+                    data.update(
+                        (rows[provider]["cover_url"], image)
+                        for provider, image in sources.items()
+                    )
+                with (
+                    patch.object(
+                        self.plugin,
+                        "_search",
+                        side_effect=lambda provider, *a, **kw: [rows[provider]]
+                        if include_artwork and provider in rows
+                        else [],
+                    ),
+                    patch.object(
+                        self.plugin, "_http_bytes", side_effect=lambda url, _: data[url]
+                    ) as download,
+                ):
+                    self.plugin.download_cover(
+                        self.log,
+                        queue,
+                        Event(),
+                        title=title,
+                        authors=authors,
+                        identifiers={"isbn": isbn, "google": google_id},
+                        get_best_cover=best_only,
+                    )
+                self.assertEqual([image for _, image in queue.queue], expected)
+                self.assertIn(
+                    google + "1", {call.args[0] for call in download.call_args_list}
+                )
 
     def test_google_cover_uses_saved_volume_id(self):
         """Rank native Google artwork and retry the lower zoom when needed."""

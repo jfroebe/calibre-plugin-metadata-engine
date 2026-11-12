@@ -15,7 +15,9 @@ from urllib.parse import parse_qs, urlsplit
 ROWS = json.loads(Path(__file__).with_name("fixtures.json").read_text("utf-8"))
 
 
-def png(width: int = 120, height: int = 180) -> bytes:
+def png(
+    width: int = 120, height: int = 180, rgb: tuple[int, int, int] = (48, 112, 160)
+) -> bytes:
     """Return a synthetic, decodable RGB cover with no external licensing."""
 
     def chunk(kind, data):
@@ -26,7 +28,7 @@ def png(width: int = 120, height: int = 180) -> bytes:
             + struct.pack("!I", zlib.crc32(kind + data))
         )
 
-    raw = (b"\0" + b"\x30\x70\xa0" * width) * height
+    raw = (b"\0" + bytes(rgb) * width) * height
     return (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", struct.pack("!2I5B", width, height, 8, 2, 0, 0, 0))
