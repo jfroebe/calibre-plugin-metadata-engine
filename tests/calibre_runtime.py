@@ -1439,6 +1439,7 @@ class InstalledPluginTests(unittest.TestCase):
             ([], {"authors": [{"name": "Another Writer"}]}, set(), True),
         ):
             with self.subTest(tags=tags, changes=changes):
+
                 def search(provider, *args, **kwargs):
                     if provider == "hardcover":
                         return [dict(hardcover, tags=tags)]
