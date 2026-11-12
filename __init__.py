@@ -420,6 +420,22 @@ class MetadataEngineSource(Source):
             isbn = self._canonical_isbn(
                 self._identifier(identifiers, "isbn", "isbn13", "isbn10")
             )
+            if not any(
+                self._matches_requested(row, title, authors, identifiers)
+                and (
+                    not self._is_print_edition(row)
+                    or not (isbn or asin)
+                    or (isbn and isbn == self._canonical_isbn(row.get("isbn")))
+                    or (asin and asin == self._cover_asin(row))
+                )
+                for row in rows
+            ):
+                print_match = self._recover_print_metadata(
+                    log, abort, provider_ids, rows, requested, timeout
+                )
+                if print_match:
+                    rows = [print_match]
+
             exact = [
                 row
                 for row in rows
@@ -535,6 +551,113 @@ class MetadataEngineSource(Source):
         except Exception as exc:
             _log(log, "exception", "Metadata Engine identify failed")
             return "Metadata Engine identify failed: %s" % exc
+
+    @classmethod
+    def _is_print_edition(cls, row):
+        """Require an explicit paperback or hardcover binding from the catalog."""
+        extra = row.get("extra")
+        extra = extra if isinstance(extra, dict) else {}
+        binding = " ".join(
+            cls._text(record.get(key)) or ""
+            for record in (row, extra)
+            for key in ("format", "physical_format", "edition_format", "binding")
+        )
+        media = cls._text(row.get("metadata_type")) or ""
+        return bool(
+            re.search(r"\b(?:paperback|softcover|hardcover|hardback)\b", binding, re.I)
+            and not re.search(
+                r"\b(?:audio(?:book)?s?|e-?books?|kindle|comics?|graphic novels?|manga)\b",
+                f"{binding} {media}",
+                re.I,
+            )
+        )
+
+    def _recover_print_metadata(self, log, abort, provider_ids, rows, target, timeout):
+        """Retry by title and author and keep only verified work metadata."""
+        authors = self._list(target.get("authors"))
+        query = self._search_title(target.get("title"))
+        if not query or not authors or abort.is_set():
+            return None
+
+        def matching_metadata(candidates):
+            for row in candidates:
+                if not self._is_print_edition(row) or len(
+                    self._list(row.get("authors"))
+                ) != len(authors):
+                    continue
+                variants = [row]
+                title = self._text(row.get("title"))
+                subtitle = self._text(row.get("subtitle"))
+                if title and not subtitle:
+                    parenthetical = re.fullmatch(r"(.+?)\s+\(([^()]+)\)", title)
+                    if parenthetical:
+                        title, subtitle = parenthetical.groups()
+                if title and subtitle:
+                    # Print catalogs sometimes move a franchise heading after
+                    # the work title. Require both labels to match in full.
+                    variants.append(
+                        dict(row, title=f"{subtitle}: {title}", subtitle=None)
+                    )
+                if not any(
+                    self._identity_consistent(target, variant)
+                    and self._work_description_matches(target, variant)
+                    for variant in variants
+                ):
+                    continue
+                metadata = {
+                    field: row[field]
+                    for field in (
+                        "series",
+                        "genres",
+                        "tags",
+                        "content_warnings",
+                        "trigger_warnings",
+                        "parental_warnings",
+                    )
+                    if row.get(field)
+                }
+                description = self._usable_description(row.get("description"))
+                if description:
+                    metadata["description"] = description
+                if metadata:
+                    # Calibre already has the user's edition. Copy only fields
+                    # that describe the work and retain the requested title/IDs.
+                    yield dict(target, **metadata, source=row.get("source"))
+
+        matches = list(matching_metadata(rows))
+        if not matches:
+            providers = [
+                provider
+                for provider in provider_ids
+                if provider
+                in {"google_books", "goodreads", "hardcover", "open_library"}
+            ]
+            batch = self._initial_provider_batch(
+                providers, query, authors, {}, min(timeout, 5), abort
+            )
+            for (provider, _), (donors, error) in batch.items():
+                if error is not None:
+                    _log(
+                        log,
+                        "info",
+                        "Metadata Engine print lookup provider=%s failed: %s",
+                        provider,
+                        error,
+                    )
+                    continue
+                matches.extend(matching_metadata(donors))
+        if not matches or abort.is_set():
+            return None
+        # Prefer a usable synopsis, then merge subjects and series only when
+        # the independently verified print records are compatible.
+        matches.sort(key=lambda row: bool(row.get("description")), reverse=True)
+        result = matches[0]
+        for donor in matches[1:]:
+            self._merge_metadata(result, donor)
+        _log(
+            log, "info", "Metadata Engine recovered work metadata from a print edition"
+        )
+        return result
 
     @classmethod
     def _with_catalog_subtitle_genre(cls, row):
