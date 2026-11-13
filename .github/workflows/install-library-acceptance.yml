@@ -2,7 +2,7 @@ name: Install local Calibre acceptance runner
 on:
   push:
     branches: [deploy/calibre-library-acceptance]
-    paths: [.github/workflows/install-library-acceptance.yml, 'ci/library_acceptance*.py']
+    paths: [.github/workflows/install-library-acceptance.yml, 'ci/library_acceptance*.py', docs/library-acceptance.md]
   workflow_dispatch:
 
 permissions:
@@ -85,6 +85,7 @@ jobs:
           umask 077
           root="$HOME/.local/share/calibre-library-acceptance"
           credentials=/home/ubuntu/metadata_test.txt
+          # Read locally without printing the credential file.
           if [ -s "$credentials" ] && [ -r "$credentials" ]; then
             reader=(cat)
           elif sudo -n -u ubuntu test -s "$credentials" 2>/dev/null; then

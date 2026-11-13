@@ -1,5 +1,6 @@
 """Provision the acceptance worker's private libpq password file."""
 
+import json
 import os
 import re
 import sys
@@ -10,6 +11,26 @@ from psycopg.conninfo import conninfo_to_dict
 
 def password(text):
     """Read a bare password, a connection string, or a labeled password."""
+    trimmed = text.lstrip("\ufeff").strip()
+    if trimmed.startswith("{"):
+        config = json.loads(trimmed)
+        if isinstance(config, dict):
+            for field, value in config.items():
+                if field.casefold() in {
+                    "password",
+                    "pgpassword",
+                    "db_password",
+                    "pass",
+                    "pwd",
+                }:
+                    return value if isinstance(value, str) else None
+    if "=" in trimmed and re.search(r"\bpassword\s*=", trimmed, re.I):
+        try:
+            value = conninfo_to_dict(trimmed).get("password")
+        except Exception:
+            value = None
+        if value:
+            return value
     lines = [
         line.strip()
         for line in text.lstrip("\ufeff").splitlines()
@@ -37,6 +58,15 @@ def password(text):
             if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'`":
                 return value[1:-1]
             return value
+    if len(lines) == 2 and lines[0] == "metadata_test":
+        return lines[1]
+    if len(lines) == 5 and lines[:4] == [
+        "192.168.0.59",
+        "5432",
+        "metadata_test",
+        "metadata_test",
+    ]:
+        return lines[4]
     if len(lines) == 1:
         line = lines[0]
         if re.match(r"(?:host|port|dbname|database|user)\s*=", line, re.I):
@@ -49,13 +79,19 @@ def main():
     """Write credentials atomically without logging their values."""
     destination = Path(sys.argv[1])
     try:
-        value = password(sys.stdin.read())
+        text = sys.stdin.read()
+        value = password(text)
     except (ValueError, TypeError):
         value = None
     except Exception:
         raise SystemExit("Unsupported PostgreSQL credentials format.") from None
     if not value or any(char in value for char in "\r\n\0"):
-        raise SystemExit("Could not read a PostgreSQL password from the worker file.")
+        raise SystemExit(
+            "Unrecognized credential layout "
+            f"({len(text.splitlines())} lines; "
+            f"colon fields={sum(':' in line for line in text.splitlines())}; "
+            f"equals fields={sum('=' in line for line in text.splitlines())})."
+        )
     os.umask(0o077)
     temporary = destination.with_suffix(".tmp")
     try:
