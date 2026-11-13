@@ -1,0 +1,91 @@
+name: Run one local Calibre acceptance pilot
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/run-library-acceptance-pilot.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: run-calibre-library-acceptance-pilot-1
+  cancel-in-progress: false
+
+env:
+  http_proxy: http://192.168.0.59:8118
+  https_proxy: http://192.168.0.59:8118
+  no_proxy: localhost,127.0.0.1,::1,.localhost,192.168.0.59
+
+jobs:
+  pilot:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 160
+    steps:
+      - name: Run the frozen pilot and return only the acceptance summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(hostname -s)" = chatgpt-build-02
+          test "$(id -un)" = agent
+          state="$HOME/.local/state/calibre-library-acceptance/pilot-1"
+          runner="$HOME/.local/share/calibre-library-acceptance/current/library_acceptance.py"
+          run="$state/runs/pilot"
+          endpoint="http://192.168.0.59:14000"
+          revision="$(python3 - "$endpoint" <<'PY'
+          import hashlib
+          import sys
+          from urllib.request import urlopen
+
+          with urlopen(sys.argv[1] + "/health", timeout=15) as response:
+              print("shared-working-test/health-sha256:" + hashlib.sha256(response.read()).hexdigest())
+          PY
+          )"
+          for input in manifest.json baseline.zip candidate.zip; do
+            test -r "$state/$input"
+          done
+          python3 - "$state/manifest.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          manifest = json.loads(Path(sys.argv[1]).read_text())
+          if manifest["counts"] != {"processed": 20, "no_saved_marker": 20} or len(manifest["cases"]) != 54:
+              raise SystemExit("Frozen pilot input differs from preflight")
+          PY
+          printf 'Starting the local 54-case comparison against the shared test engine.\n'
+          python3 "$runner" --state "$state" run --name pilot \
+            --baseline-zip "$state/baseline.zip" --candidate-zip "$state/candidate.zip" \
+            --baseline-engine "$endpoint" --candidate-engine "$endpoint" \
+            --baseline-revision "$revision" --candidate-revision "$revision" &
+          worker=$!
+          trap 'kill "$worker" 2>/dev/null || true' EXIT
+          while kill -0 "$worker" 2>/dev/null; do
+            sleep 20 &
+            wait $!
+            python3 - "$run" <<'PY'
+          import json
+          import sys
+          from collections import Counter
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          progress = {}
+          for build in ("baseline", "candidate"):
+              latest = {}
+              for result in sorted(root.glob(f"*/{build}/attempt-*/result.json")):
+                  latest[result.parents[2].name] = json.loads(result.read_text())["status"]
+              progress[build] = dict(Counter(latest.values()))
+          print(json.dumps({"progress": progress}))
+          PY
+          done
+          status=0
+          wait "$worker" || status=$?
+          test -s "$run/summary.json"
+          {
+            printf '### Calibre acceptance pilot\n\n'
+            printf '\x60\x60\x60json\n'
+            cat "$run/summary.json"
+            printf '\x60\x60\x60\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
