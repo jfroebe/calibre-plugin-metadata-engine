@@ -910,20 +910,23 @@ class InstalledPluginTests(unittest.TestCase):
         ids = {"amazon": asin, "goodreads": goodreads_id, "mobi-asin": asin}
         self.plugin.prefs["plugin_ids"] = "goodreads"
         missing = b"<h1>Page not found</h1>"
-        for response, listing_title, listing_author, matches in (
-            (missing, title, author, True),
-            (RuntimeError("HTTP 405: Human Verification"), title, author, True),
-            (missing, "Henrikk's Prisoner", author, False),
-            (missing, "Punished by the Vampire King", author, False),
-            (missing, title, "Different Author", False),
+        for response, listing_title, listing_author, position, matches in (
+            (missing, title, author, 1, True),
+            (RuntimeError("HTTP 405: Human Verification"), title, author, 1, True),
+            (missing, "Henrikk's Prisoner", author, 2, False),
+            (missing, "Punished by the Vampire King", author, 1, False),
+            (missing, title, "Different Author", 1, False),
+            (missing, title, author, 2, True),
         ):
-            with self.subTest(title=listing_title, author=listing_author):
+            with self.subTest(
+                title=listing_title, author=listing_author, position=position
+            ):
                 bibliography = f"""
                     <h1 id="bnauthname">{listing_author}</h1>
                     <h3 class="series_title">List of Henrikk's Short Stories Books in Publication Order</h3>
                     <table id="books00121077">
                       <tr id="hide3886230">
-                        <td>1</td>
+                        <td>{position}</td>
                         <td><div class="titles"><a href="">{listing_title}</a></div></td>
                       </tr>
                     </table>
@@ -952,13 +955,22 @@ class InstalledPluginTests(unittest.TestCase):
                     self.assertEqual(book.title, title)
                     self.assertEqual(book.authors, [author])
                     self.assertEqual(
-                        (book.series, book.series_index), ("Henrikk's Short Stories", 1)
+                        (book.series, book.series_index),
+                        ("Henrikk's Short Stories", position),
                     )
                     self.assertEqual(
                         book.get_identifiers(),
                         {"asin": asin, "metadata_engine_book_notification": "3886230"},
                     )
-                    self.assertFalse(book.comments)
+                    if position == 1:
+                        self.assertIn("General Asher", book.comments or "")
+                        self.assertIn("Vampires", book.tags)
+                        self.assertIn("Dark Romance", book.tags)
+                    else:
+                        self.assertFalse(book.comments)
+                        self.assertFalse(book.tags)
+                    self.assertFalse(book.publisher)
+                    self.assertFalse(book.pubdate)
                     self.assertFalse(getattr(book, "has_cached_cover", False))
                 else:
                     self.assertFalse(results)

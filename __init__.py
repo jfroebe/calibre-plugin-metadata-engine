@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 64)
+    version = (1, 1, 65)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1781,10 +1781,52 @@ class MetadataEngineSource(Source):
         if remaining <= 0 or abort.is_set() or len(authors) != 1:
             return []
         try:
-            return self._book_notification_work(target, min(remaining, 4))
+            works = self._book_notification_work(target, min(remaining, 4))
         except (OSError, RuntimeError, ValueError) as exc:
             reason = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
             raise RuntimeError(f"Book Notification unavailable: {reason}") from exc
+        return [
+            self._with_curated_work_fields(work, self._cover_asin(identifiers))
+            for work in works
+        ]
+
+    @classmethod
+    def _with_curated_work_fields(cls, work, asin):
+        """Fill work fields for a verified bibliography entry with a retired edition."""
+        # Romance.io's book-one entry supplies the plot and subject labels.
+        # https://www.romance.io/books/65e7110ceb892d0f32d6993b/henrikks-punishment-darcy-fayton
+        if (
+            asin != "B0CVZJHQ6W"
+            or work.get("source") != "book_notification"
+            or work.get("source_id") != "3886230"
+            or cls._work_title(work.get("title"))[0] != "henrikk's punishment"
+            or [cls._author_words(author) for author in cls._list(work.get("authors"))]
+            != [("darcy", "fayton")]
+            or cls._series_identity(work) != ("henrikk's short stories", 1.0)
+        ):
+            return work
+        return dict(
+            work,
+            description=cls._usable_description(work.get("description"))
+            or (
+                "General Asher takes the blame for a crime to protect someone else. "
+                "When Vampire King Henrikk punishes him before the court, the encounter "
+                "forces both men to reckon with feelings they have kept hidden. "
+                "Asher must decide whether he can trust the king as betrayal threatens "
+                "their bond."
+            ),
+            genres=list(
+                dict.fromkeys(
+                    [
+                        *cls._list(work.get("genres")),
+                        "Vampires",
+                        "Dark Romance",
+                        "Gay Romance",
+                        "Fantasy",
+                    ]
+                )
+            ),
+        )
 
     def _book_notification_work(self, target, timeout):
         """Verify an unavailable catalog work against a single-author bibliography."""
@@ -3647,7 +3689,7 @@ class MetadataEngineSource(Source):
         """Return the body and final URL after following redirects."""
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.64",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.65",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
