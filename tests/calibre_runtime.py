@@ -968,6 +968,47 @@ class InstalledPluginTests(unittest.TestCase):
                     self.assertFalse(book.pubdate)
                     self.assertFalse(getattr(book, "has_cached_cover", False))
 
+    def test_omnibus_catalog_outage_preserves_the_verified_kindle_match(self):
+        """Use corroborated work metadata during a catalog access failure."""
+        base = "Collared and Groomed by the Vampire Prince"
+        title = (
+            f"{base} (Complete Story): Spicy Dark Romantasy (Kira & Nathaniel's Duet)"
+        )
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for query, author, asin, expected in (
+            (title, "Darcy Fayton", "B0DNWMQBN8", True),
+            (title, "Darcy Fayton", "B0DPNHH8MD", False),
+            (title, "Different Author", "B0DNWMQBN8", False),
+            (
+                "Groomed by the Vampire Prince (Complete Story)",
+                "Darcy Fayton",
+                "B0DNWMQBN8",
+                False,
+            ),
+        ):
+            with (
+                self.subTest(query=query, author=author, asin=asin),
+                patch.object(self.plugin, "_search", return_value=[]),
+                patch.object(self.plugin, "_goodreads_suggestions", return_value=[]),
+                patch.object(
+                    self.plugin, "_http_bytes", side_effect=RuntimeError("HTTP 405")
+                ),
+            ):
+                results = self.identify(
+                    title=query, authors=[author], identifiers={"mobi-asin": asin}
+                )
+                self.assertEqual(len(results), int(expected))
+                if expected:
+                    (book,) = results
+                    self.assertEqual(book.title, base)
+                    self.assertEqual(book.get_identifiers(), {"asin": asin})
+                    self.assertIn("Volmasque Academy", book.comments)
+                    self.assertIn("Plugged at the Gates", book.comments)
+                    self.assertEqual(book.tags, ["Paranormal Romance", "Omnibus"])
+                    self.assertEqual(
+                        (book.series, book.series_index), ("Collared Duet", None)
+                    )
+
     def test_unavailable_saved_goodreads_id_uses_verified_bibliography(self):
         """Match the original short story when the saved edition page is gone."""
         title, author = "Henrikk's Punishment", "Darcy Fayton"

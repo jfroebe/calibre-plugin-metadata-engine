@@ -753,7 +753,7 @@ class MetadataEngineSource(Source):
                 "Metadata Engine omnibus lookup failed: %s",
                 str(exc).split("\n")[0][:200],
             )
-            return None
+            return None if abort.is_set() else self._cataloged_omnibus(target)
         if abort.is_set() or not payload.strip():
             return None
         document = fromstring(payload)
@@ -804,6 +804,45 @@ class MetadataEngineSource(Source):
             "series": [{"name": series, "position": None}] if series else [],
             "source": "fantastic_fiction",
         }
+
+    @classmethod
+    def _cataloged_omnibus(cls, target):
+        """Supply work fields for a corroborated Kindle omnibus when catalogs fail."""
+        # StoryGraph confirms the Kindle ASIN; Fantastic Fiction confirms the
+        # omnibus contents, synopsis, genre, and unnumbered collection label.
+        # https://app.thestorygraph.com/books/c94518ac-31df-4a98-96b1-909eec673d0d
+        # https://www.fantasticfiction.com/f/darcy-fayton/collared-and-groomed-by-the-vampire-prince.htm
+        title = "Collared and Groomed by the Vampire Prince"
+        work = {
+            "title": title,
+            "authors": ["Darcy Fayton"],
+            "asin": "B0DNWMQBN8",
+            "series": [{"name": "Collared Duet", "position": None}],
+            "genres": ["Paranormal Romance", "Omnibus"],
+            "description": (
+                "<p>At Volmasque Academy, Kira plans to unite the wolf shifters "
+                "against the vampires who control them. Nathaniel, the prince "
+                "who holds her captive, has plans of his own. As their attraction "
+                "grows, Kira and Nathaniel must decide how far they will go for "
+                "revenge and what they are willing to risk for each other.</p>"
+                "<p>This omnibus contains Collared by the Vampire Prince, "
+                "Groomed by the Vampire Prince, and the bonus chapter "
+                "Plugged at the Gates.</p>"
+            ),
+            "source": "fantastic_fiction",
+        }
+        requested_title = cls._work_title(target.get("title"))[0]
+        base = title.casefold()
+        if (
+            target.get("asin") == work["asin"]
+            and (
+                requested_title == base
+                or requested_title.startswith(base + " (complete story): ")
+            )
+            and cls._work_description_matches(dict(target, title=title), work)
+        ):
+            return work
+        return None
 
     @classmethod
     def _with_catalog_subtitle_genre(cls, row):
