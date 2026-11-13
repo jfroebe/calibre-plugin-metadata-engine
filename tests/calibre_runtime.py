@@ -64,6 +64,8 @@ class InstalledPluginTests(unittest.TestCase):
             def fixture_response(url, timeout):
                 if url.startswith("https://www.goodreads.com/book/isbn/"):
                     return b"", url
+                if url.startswith("https://openlibrary.org/api/books?"):
+                    return b"{}", url
                 return real_response(url, timeout)
 
             transport = patch.object(
@@ -881,6 +883,88 @@ class InstalledPluginTests(unittest.TestCase):
                     )
                     self.assertIn("Volmasque Academy", book.comments)
                     self.assertEqual(book.tags, ["Paranormal Romance"])
+
+    def test_isbn_series_lookup_recovers_volume_and_rejects_conflicts(self):
+        """Verify numbered volumes using edition and author data for the same ISBN."""
+        isbn = "9781452137445"
+        title = "The Hidden Art of Disney's Musical Years"
+        series = "They Drew as They Pleased"
+        author = "Didier Ghez"
+        key = "/books/OL26975127M"
+        edition = {
+            "key": key,
+            "title": title,
+            "isbn_13": [isbn],
+            "series": [f"{series} -- vol. 2", f"{series} -- v. 2."],
+            "subjects": ["Animated films"],
+        }
+        details = {"key": key, "authors": [{"name": author}]}
+        donor = {
+            "title": series,
+            "subtitle": title + " (The 1940s – Part One)",
+            "authors": [author],
+            "isbn": isbn,
+            "description": "Five artists helped shape Disney animation.",
+        }
+        self.plugin.prefs["plugin_ids"] = "open_library"
+        for query, result, book_details, provider, matches, description in (
+            (title.replace("Musical", "Music"), edition, details, donor, True, True),
+            (series, edition, details, donor, True, True),
+            (title, edition, details, donor, True, True),
+            (
+                "The Hidden Art of Disney's Mid-Century Era",
+                edition,
+                details,
+                {},
+                False,
+                False,
+            ),
+            (series, dict(edition, isbn_13=[]), details, {}, False, False),
+            (
+                series,
+                edition,
+                dict(details, authors=[{"name": "Another Author"}]),
+                {},
+                False,
+                False,
+            ),
+            (series, edition, dict(details, key="/books/OL1M"), {}, False, False),
+            (series, edition, details, dict(donor, isbn="9780345522641"), True, False),
+            (
+                title,
+                edition,
+                details,
+                dict(donor, subtitle="The Hidden Art of Disney's Late Golden Age"),
+                True,
+                False,
+            ),
+        ):
+            with (
+                self.subTest(
+                    query=query, edition=result, details=book_details, provider=provider
+                ),
+                patch.object(
+                    self.plugin, "_search", return_value=[provider] if provider else []
+                ),
+                patch.object(
+                    self.plugin,
+                    "_http_json",
+                    side_effect=[{f"ISBN:{isbn}": book_details}, result],
+                ),
+            ):
+                books = self.identify(
+                    title=query, authors=[author], identifiers={"isbn": isbn}
+                )
+                self.assertEqual(len(books), int(matches))
+                if matches:
+                    (book,) = books
+                    self.assertEqual(book.title, title)
+                    self.assertEqual((book.series, book.series_index), (series, 2))
+                    self.assertEqual(book.get_identifiers()["isbn"], isbn)
+                    self.assertIn(
+                        "animated films", {tag.casefold() for tag in book.tags}
+                    )
+                    self.assertEqual(bool(book.comments), description)
 
     def test_verified_kindle_title_aliases_preserve_original_editions(self):
         """Match the original title only to its corroborated Kindle edition."""
