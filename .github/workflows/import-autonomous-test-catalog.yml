@@ -49,7 +49,21 @@ jobs:
           set -euo pipefail
           source=""
           while read -r container; do
-            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432 --snapshot "$snapshot" --books "$mount" --library-id unraid-main
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -X -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          GRANT USAGE ON SCHEMA metadata_queue TO metadata_test;
+          GRANT SELECT, INSERT, UPDATE ON metadata_queue.media, metadata_queue.works TO metadata_test;
+          GRANT SELECT, INSERT ON metadata_queue.metadata_versions, metadata_queue.identifiers, metadata_queue.artifacts TO metadata_test;
+          GRANT USAGE ON SEQUENCE metadata_queue.media_id_seq, metadata_queue.works_id_seq, metadata_queue.metadata_versions_id_seq, metadata_queue.artifacts_id_seq TO metadata_test;
+          SQL
+          REMOTE
+          "$python" "$work/metadata_queue_catalog.py" --snapshot "$snapshot" --books "$mount" --library-id unraid-main
 ; then
               test -z "$source"
               source="$container"
