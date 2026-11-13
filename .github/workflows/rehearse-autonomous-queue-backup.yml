@@ -1,0 +1,58 @@
+name: Verify metadata_test backup and isolated restore
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/rehearse-autonomous-queue-backup.yml]
+permissions:
+  contents: read
+jobs:
+  backup:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 15
+    steps:
+      - name: Back up metadata_test and rehearse restore in an isolated container
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          umask 077
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          export_dir="/mnt/user/database-backup/metadata_test/$(date -u +%Y%m%dT%H%M%SZ)-queue-v2"
+          install -d -m 700 "$export_dir"
+          docker exec "$source" pg_dump -w -U "$db_user" -d metadata_test -Fc > "$export_dir/metadata_test.dump"
+          docker exec "$source" pg_dump -w -U "$db_user" -d metadata_test --schema-only > "$export_dir/metadata_test.schema.sql"
+          (
+            cd "$export_dir"
+            sha256sum metadata_test.dump metadata_test.schema.sql > SHA256SUMS
+            sha256sum metadata_test.dump > metadata_test.dump.sha256
+            sha256sum -c SHA256SUMS
+          )
+          image="$(docker inspect --format '{{.Image}}' "$source")"
+          restore="$(docker run -d --network none --tmpfs /var/lib/postgresql --tmpfs /var/lib/postgresql/data -e PGDATA=/tmp/queue-postgres -e POSTGRES_HOST_AUTH_METHOD=trust "$image")"
+          trap 'docker rm -f -v "$restore" >/dev/null' EXIT
+          for i in $(seq 1 60); do
+            if docker exec "$restore" pg_isready -q -h 127.0.0.1 -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec "$restore" createdb -U postgres metadata_queue_restore_rehearsal
+          docker exec -i "$restore" pg_restore --exit-on-error --single-transaction --no-owner --no-privileges -U postgres -d metadata_queue_restore_rehearsal < "$export_dir/metadata_test.dump"
+          for relation in runs lookups attempts; do
+            sql="SELECT count(*) FROM calibre_acceptance.$relation"
+            before="$(docker exec "$source" psql -XAt -U "$db_user" -d metadata_test -c "$sql")"
+            after="$(docker exec "$restore" psql -XAt -U postgres -d metadata_queue_restore_rehearsal -c "$sql")"
+            test "$before" = "$after"
+            printf '%s %s\n' "$relation" "$after" >> "$export_dir/.verified"
+          done
+          mv "$export_dir/.verified" "$export_dir/restore-verified.txt"
+          printf 'Verified backup and restore: %s\n' "$export_dir"
+          cat "$export_dir/restore-verified.txt"
+          REMOTE
