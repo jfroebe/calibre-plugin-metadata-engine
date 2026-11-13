@@ -1,0 +1,41 @@
+name: Inspect metadata queue test environment
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/check-autonomous-queue-environment.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 5
+    steps:
+      - name: Inspect migration and backup prerequisites
+        shell: bash
+        run: |
+          set -eu
+          test "$(hostname -s)" = chatgpt-build-02
+          root="$HOME/.local/share/calibre-library-acceptance"
+          "$root/current/python-env/bin/python" - "$root/current" <<'PY'
+          import json
+          import sys
+
+          sys.path.insert(0, sys.argv[1])
+          from library_acceptance_db import connect
+
+          with connect() as db:
+              print("PostgreSQL major:", db.info.server_version // 10000)
+              print("Historical records:", json.dumps({
+                  "runs": db.execute("SELECT count(*) FROM calibre_acceptance.runs").fetchone()[0],
+                  "lookups": db.execute("SELECT count(*) FROM calibre_acceptance.lookups").fetchone()[0],
+                  "attempts": db.execute("SELECT count(*) FROM calibre_acceptance.attempts").fetchone()[0],
+              }))
+              print("Autonomous schema exists:", db.execute("SELECT to_regnamespace('metadata_queue') IS NOT NULL").fetchone()[0])
+              print("Role capabilities:", db.execute("SELECT rolcreatedb, rolcreaterole, rolsuper FROM pg_roles WHERE rolname=current_user").fetchone())
+          PY
+          if ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'test -d /mnt/user/database-backup && test -w /mnt/user/database-backup'; then
+            printf '%s\n' 'Unraid backup parent directory verified.'
+          else
+            printf '%s\n' 'Unraid backup directory or SSH route unavailable.'
+          fi
+          command -v pg_dump || true
