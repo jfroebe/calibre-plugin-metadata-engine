@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 66)
+    version = (1, 1, 67)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -1843,6 +1843,16 @@ class MetadataEngineSource(Source):
                 )
             ):
                 continue
+            if (
+                not series
+                and decorated_kindle
+                and row.get("asin") == asin
+                and row.get("series")
+                and catalog_title == title_key(base)
+            ):
+                # The verified edition can carry a separate collection label in
+                # its display title. Prefer its structured series and position.
+                row = dict(row, title=self._search_title(row["title"]))
             target = {"title": row["title"], "authors": authors}
             if series:
                 target["series"] = [{"name": series, "position": position}]
@@ -3816,7 +3826,7 @@ class MetadataEngineSource(Source):
         """Return the body and final URL after following redirects."""
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.66",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.67",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

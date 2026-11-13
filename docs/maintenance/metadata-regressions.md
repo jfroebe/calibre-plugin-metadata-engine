@@ -114,6 +114,12 @@ verified work fallback in the live check. Curated fields for the retired
 Kindle listing require the confirmed bibliography entry and series position.
 A sequel, rewrite, or conflicting series position cannot supply those fields.
 
+Keep the original Kindle-only query for Plug and Drain. Its Goodreads title
+carries the Plug Collection number while the structured series identifies
+Susie & Arken's Duet. Require the exact Kindle ASIN and Goodreads edition,
+canonical title, structured series, synopsis, and tags after Calibre's merger.
+Exercise a conflicting subtitle, author, sequel, and ASIN.
+
 Keep the original Kindle-only lookup for Collared and Groomed by the Vampire
 Prince, including its complete-story marker and marketing subtitle. Require
 a source that identifies the collection itself and verify its synopsis, tags,
