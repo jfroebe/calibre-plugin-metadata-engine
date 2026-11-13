@@ -58,12 +58,18 @@ jobs:
           fi
           test -x "$runtime/calibre-debug"
           test -x "$runtime/calibre-customize"
+          python_env="$root/python-psycopg-3.2.13"
+          if [ ! -x "$python_env/bin/python" ] || ! "$python_env/bin/python" -c 'import psycopg'; then
+            python3 -m venv "$python_env"
+            "$python_env/bin/python" -m pip install --disable-pip-version-check --quiet 'psycopg[binary]==3.2.13'
+          fi
           release="$root/releases/$GITHUB_SHA"
           stage="$(mktemp -d "$root/.install.XXXXXX")"
           trap 'rm -rf "$stage"' EXIT
-          install -m 600 ci/library_acceptance{,_runtime,_sources}.py "$stage/"
+          install -m 600 ci/library_acceptance{,_runtime,_sources,_db}.py "$stage/"
           install -m 600 docs/library-acceptance.md "$stage/"
           ln -s "$runtime" "$stage/calibre"
+          ln -s "$python_env/bin/python" "$stage/python"
           if [ ! -d "$release" ]; then
             mv "$stage" "$release"
           fi
@@ -71,3 +77,21 @@ jobs:
           mv -Tf "$root/.current-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$root/current"
           printf 'Installed %s on %s. No acceptance command was invoked.\n' "$GITHUB_SHA" "$(hostname -s)"
           printf 'Pinned Calibre %s installed.\n' "$version"
+      - name: Initialize PostgreSQL and index the saved pilot
+        if: matrix.host == 'chatgpt-build-02'
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          root="$HOME/.local/share/calibre-library-acceptance"
+          credentials=/home/ubuntu/metadata_test.txt
+          if [ -r "$credentials" ]; then
+            "$root/current/python" ci/library_acceptance_credentials.py "$root/pgpass" < "$credentials"
+          else
+            sudo -n -u ubuntu cat "$credentials" 2>/dev/null | \
+              "$root/current/python" ci/library_acceptance_credentials.py "$root/pgpass"
+          fi
+          "$root/current/python" "$root/current/library_acceptance.py" db-init
+          state="$HOME/.local/state/calibre-library-acceptance/pilot-1"
+          "$root/current/python" "$root/current/library_acceptance.py" --state "$state" db-import --name pilot
+          "$root/current/python" "$root/current/library_acceptance.py" db-status

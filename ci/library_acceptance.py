@@ -10,6 +10,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from library_acceptance_db import preflight, track
+from library_acceptance_db import status as database_status
+
 RUNTIME = Path(__file__).resolve().with_name("library_acceptance_runtime.py")
 
 
@@ -117,6 +120,7 @@ def attempt(args, state, entry, build, run, reference, replay):
         },
     )
     result = directory / "result.json"
+    args.tracker.sync(entry["id"], build, directory)
     try:
         installed = command(
             [calibre(args, "calibre-customize"), "-a", args.zips[build]],
@@ -143,11 +147,14 @@ def attempt(args, state, entry, build, run, reference, replay):
                 env,
             )
             if status == 0 and result.is_file():
-                return directory, read(result)
+                outcome = read(result)
+                args.tracker.sync(entry["id"], build, directory, outcome)
+                return directory, outcome
             outcome = {"status": "runner_error", "failures": ["calibre_runtime"]}
     except subprocess.TimeoutExpired:
         outcome = {"status": "transient", "failures": ["process_timeout"]}
     write(result, outcome)
+    args.tracker.sync(entry["id"], build, directory, outcome)
     return directory, outcome
 
 
@@ -179,7 +186,9 @@ def run_case(args, state, run, entry):
             continue
         if previous:
             prior = read(previous / "result.json")
-            if prior["status"] == "pass" or not args.retry_failed:
+            if prior["status"] != "interrupted" and (
+                prior["status"] == "pass" or not args.retry_failed
+            ):
                 continue
         for index in range(args.retries + 1):
             if index:
@@ -319,21 +328,79 @@ def run_suite(args, state):
     pinned = run / "builds.json"
     if pinned.exists() and read(pinned) != configuration:
         raise SystemExit("Run inputs changed. Choose a new --name.")
-    write(pinned, configuration)
-    with ThreadPoolExecutor(max_workers=args.workers) as workers:
-        list(
-            workers.map(
-                lambda entry: run_case(args, state, run, entry),
-                (entry for entry in manifest["cases"] if entry["id"] in ids),
+    entries = [entry for entry in manifest["cases"] if entry["id"] in ids]
+    builds = (
+        ("candidate",)
+        if args.replay_from or args.baseline_run
+        else ("baseline", "candidate")
+    )
+    with track(args.name, configuration, entries, builds) as tracker:
+        args.tracker = tracker
+        write(pinned, configuration)
+        for entry in entries:
+            for build in builds:
+                for directory in sorted((run / entry["id"] / build).glob("attempt-*")):
+                    checkpoint = directory / "result.json"
+                    if not checkpoint.exists():
+                        write(
+                            checkpoint,
+                            {"status": "interrupted", "failures": ["interrupted"]},
+                        )
+                    tracker.sync(entry["id"], build, directory, read(checkpoint))
+        with ThreadPoolExecutor(max_workers=args.workers) as workers:
+            list(workers.map(lambda entry: run_case(args, state, run, entry), entries))
+        result = report(state, run)
+        summary = read(run / "summary.json")
+        disposition = "failed" if result else "passed"
+        tracker.finish(disposition, summary)
+        if result and not args.replay_from and not args.skip_diagnostics:
+            args.zip = args.candidate_zip
+            args.engine = args.candidate_engine
+            args.timeout = 5
+            tracker.finish("diagnosing", summary)
+            diagnose(args, state)
+            tracker.finish(
+                disposition, summary, read(run / "diagnostics" / "summary.json")
             )
+    return result
+
+
+def import_run(state, name):
+    """Index completed historical attempts without running any new lookups."""
+    run = state / "runs" / name
+    configuration = read(run / "builds.json")
+    summary = read(run / "summary.json")
+    entries = [
+        entry
+        for entry in read(state / "manifest.json")["cases"]
+        if entry["id"] in configuration["cases"]
+    ]
+    builds = (
+        ("candidate",)
+        if configuration["replay_from"] or configuration["baseline_run"]
+        else ("baseline", "candidate")
+    )
+    with track(name, configuration, entries, builds) as tracker:
+        for entry in entries:
+            for build in builds:
+                for result in sorted(
+                    (run / entry["id"] / build).glob("attempt-*/result.json")
+                ):
+                    tracker.sync(entry["id"], build, result.parent, read(result))
+        selected = {entry["id"] for entry in entries}
+        failed = any(
+            row["candidate"]["status"] != "pass"
+            for row in read(run / "report.local.json")["cases"]
+            if row["id"] in selected
         )
-    status = report(state, run)
-    if status and not args.replay_from and not args.skip_diagnostics:
-        args.zip = args.candidate_zip
-        args.engine = args.candidate_engine
-        args.timeout = 5
-        diagnose(args, state)
-    return status
+        diagnostics = run / "diagnostics" / "summary.json"
+        tracker.finish(
+            "failed" if failed else "passed",
+            summary,
+            read(diagnostics) if diagnostics.is_file() else None,
+        )
+    print(f"Indexed {len(entries)} saved cases in PostgreSQL.")
+    return 0
 
 
 def diagnose(args, state):
@@ -401,9 +468,12 @@ def label(value):
 def main():
     """Parse commands without reading a library or contacting providers by default."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--state", required=True, type=Path)
+    parser.add_argument("--state", type=Path)
     parser.add_argument("--calibre-bin", type=Path, default=RUNTIME.parent / "calibre")
     commands = parser.add_subparsers(dest="action", required=True)
+    commands.add_parser("db-init")
+    commands.add_parser("db-status")
+    commands.add_parser("db-import").add_argument("--name", required=True, type=label)
     prepare = commands.add_parser("prepare")
     prepare.add_argument("--database", required=True, type=Path)
     prepare.add_argument("--books", required=True, type=Path)
@@ -437,6 +507,12 @@ def main():
     )
     commands.add_parser("report").add_argument("--name", required=True, type=label)
     args = parser.parse_args()
+    if args.action == "db-init":
+        return preflight()
+    if args.action == "db-status":
+        return database_status()
+    if args.state is None:
+        parser.error("--state is required for this command")
     os.umask(0o077)
     state = args.state.resolve()
     state.mkdir(parents=True, exist_ok=True)
@@ -445,6 +521,8 @@ def main():
     args.calibre_bin = args.calibre_bin.resolve()
     with (state / "lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if args.action == "db-import":
+            return import_run(state, args.name)
         if args.action == "prepare":
             args.database = args.database.resolve()
             args.books = args.books.resolve()

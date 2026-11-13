@@ -94,3 +94,25 @@ lookups. It records source attribution and distinguishes work matches from
 exact edition matches. It checks cover artwork only for edition-verified
 results. It leaves the original report intact and checkpoints findings under
 `runs/pilot/diagnostics` so an interrupted analysis can resume locally.
+
+## Shared PostgreSQL tracking
+
+The installed runner uses `192.168.0.59:5432/metadata_test` with the
+`metadata_test` role. Use its bundled Python environment when invoking it:
+
+```bash
+installation="$HOME/.local/share/calibre-library-acceptance/current"
+"$installation/python" "$installation/library_acceptance.py" db-status
+```
+
+The worker uses its private libpq password file. Other authorized clients can
+use their own `PGPASSFILE`. Run `db-init` to initialize the dedicated
+`calibre_acceptance` schema and `db-import --name pilot` with the same
+`--state` argument to index the original pilot without new lookups.
+
+PostgreSQL records each run, its worker and build fingerprints, the pending
+lookups, every attempt, status, failure reasons, and aggregate diagnostics. A
+database lock prevents two coordinators from starting the same run. Resume on
+the original worker, where the runner can reconcile interrupted attempts
+with its local checkpoints. Production metadata, source payloads, images,
+and credentials stay outside the tracking tables.
