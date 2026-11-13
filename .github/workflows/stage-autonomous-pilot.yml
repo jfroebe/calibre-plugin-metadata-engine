@@ -44,12 +44,14 @@ jobs:
           revoke() {
             admin <<'SQL'
           REVOKE SELECT, INSERT ON metadata_queue.campaigns, metadata_queue.campaign_members FROM metadata_test;
+          REVOKE UPDATE (version) ON metadata_queue.campaigns FROM metadata_test;
           REVOKE EXECUTE ON FUNCTION metadata_queue.transition(uuid,bigint,uuid,metadata_queue.campaign_state,jsonb), metadata_queue.campaign_hash(uuid) FROM metadata_test;
           SQL
           }
           trap 'revoke; rm -rf "$work"' EXIT
           admin <<'SQL'
           GRANT SELECT, INSERT ON metadata_queue.campaigns, metadata_queue.campaign_members TO metadata_test;
+          GRANT UPDATE (version) ON metadata_queue.campaigns TO metadata_test;
           GRANT EXECUTE ON FUNCTION metadata_queue.transition(uuid,bigint,uuid,metadata_queue.campaign_state,jsonb), metadata_queue.campaign_hash(uuid) TO metadata_test;
           SQL
           export PGPASSFILE="$root/pgpass"
