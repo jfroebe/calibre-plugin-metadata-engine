@@ -69,7 +69,7 @@ jobs:
           install -m 600 ci/library_acceptance{,_runtime,_sources,_db}.py "$stage/"
           install -m 600 docs/library-acceptance.md "$stage/"
           ln -s "$runtime" "$stage/calibre"
-          ln -s "$python_env/bin/python" "$stage/python"
+          ln -s "$python_env" "$stage/python-env"
           if [ ! -d "$release" ]; then
             mv "$stage" "$release"
           fi
@@ -86,12 +86,12 @@ jobs:
           root="$HOME/.local/share/calibre-library-acceptance"
           credentials=/home/ubuntu/metadata_test.txt
           if [ -r "$credentials" ]; then
-            "$root/current/python" ci/library_acceptance_credentials.py "$root/pgpass" < "$credentials"
+            "$root/current/python-env/bin/python" ci/library_acceptance_credentials.py "$root/pgpass" < "$credentials"
           else
             sudo -n -u ubuntu cat "$credentials" 2>/dev/null | \
-              "$root/current/python" ci/library_acceptance_credentials.py "$root/pgpass"
+              "$root/current/python-env/bin/python" ci/library_acceptance_credentials.py "$root/pgpass"
           fi
-          "$root/current/python" "$root/current/library_acceptance.py" db-init
+          "$root/current/python-env/bin/python" "$root/current/library_acceptance.py" db-init
           state="$HOME/.local/state/calibre-library-acceptance/pilot-1"
-          "$root/current/python" "$root/current/library_acceptance.py" --state "$state" db-import --name pilot
-          "$root/current/python" "$root/current/library_acceptance.py" db-status
+          "$root/current/python-env/bin/python" "$root/current/library_acceptance.py" --state "$state" db-import --name pilot
+          "$root/current/python-env/bin/python" "$root/current/library_acceptance.py" db-status

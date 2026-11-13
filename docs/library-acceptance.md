@@ -102,7 +102,7 @@ The installed runner uses `192.168.0.59:5432/metadata_test` with the
 
 ```bash
 installation="$HOME/.local/share/calibre-library-acceptance/current"
-"$installation/python" "$installation/library_acceptance.py" db-status
+"$installation/python-env/bin/python" "$installation/library_acceptance.py" db-status
 ```
 
 The worker uses its private libpq password file. Other authorized clients can
