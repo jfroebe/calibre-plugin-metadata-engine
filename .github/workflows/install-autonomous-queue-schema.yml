@@ -73,7 +73,7 @@ jobs:
             cat <<'SQL'
           SELECT pg_advisory_xact_lock(89411833);
           LOCK TABLE calibre_acceptance.attempts IN SHARE MODE;
-          DO $
+          DO $queue_check$
           BEGIN
             IF to_regnamespace('metadata_queue') IS NOT NULL THEN
               RAISE EXCEPTION 'metadata_queue schema already exists';
@@ -82,7 +82,7 @@ jobs:
               RAISE EXCEPTION 'acceptance history changed since backup';
             END IF;
           END
-          $;
+          $queue_check$;
           SQL
             cat "$work/sql/v1" "$work/sql/v2"
             cat <<'SQL'
