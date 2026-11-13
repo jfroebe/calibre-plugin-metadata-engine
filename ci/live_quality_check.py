@@ -357,6 +357,24 @@ def main():
         },
         {
             "title": (
+                "Plug and Drain: An addictive Teacher-Student Steamy Dark Paranormal Romance"
+            ),
+            "authors": ["Darcy Fayton"],
+            "identifiers": {"mobi-asin": "B0CQ7YW5P5"},
+            "expected_asin": "B0CQ7YW5P5",
+            "expected_goodreads": "217994467",
+            "expected_title": "Plug and Drain",
+            "series": ("Susie & Arken's Duet", 1.0),
+            "one_result": True,
+            "merge_identify": True,
+            "minimum_description": 350,
+            "topic": "volmasque academy",
+            "expected_subjects": {"paranormal romance", "vampires"},
+            "required_subjects": {"paranormal romance", "vampires"},
+            "timeout": 30,
+        },
+        {
+            "title": (
                 "Collared and Groomed by the Vampire Prince (Complete Story): "
                 "Spicy Dark Romantasy (Kira & Nathaniel's Duet)"
             ),

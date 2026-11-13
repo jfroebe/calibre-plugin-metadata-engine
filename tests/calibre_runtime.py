@@ -818,6 +818,70 @@ class InstalledPluginTests(unittest.TestCase):
                     [asin],
                 )
 
+    def test_decorated_kindle_match_uses_structured_series_over_title_label(self):
+        """Use the exact Kindle edition and prefer its structured series."""
+        title = "Plug and Drain: An addictive Teacher-Student Steamy Dark Paranormal Romance"
+        asin = "B0CQ7YW5P5"
+        author = "Darcy Fayton"
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for name, edition, person, matches in (
+            ("Plug and Drain (Plug Collection #4)", asin, author, True),
+            ("Plug and Drain (Plug Collection #4)", "B0DHQPGWD7", author, False),
+            ("Plug and Drain (Plug Collection #4)", asin, "Another Author", False),
+            (
+                "Plug and Drain: A Different Subtitle (Plug Collection #4)",
+                asin,
+                author,
+                False,
+            ),
+            ("Shared by the Headmaster (Plug Collection #4)", asin, author, False),
+        ):
+            with self.subTest(title=name, asin=edition, author=person):
+                state = {
+                    "Book:1": {
+                        "__typename": "Book",
+                        "legacyId": 217994467,
+                        "titleComplete": name,
+                        "primaryContributorEdge": {"node": {"__ref": "Author:1"}},
+                        "details": {"asin": edition},
+                        "bookSeries": [
+                            {"series": {"__ref": "Series:1"}, "userPosition": "1"}
+                        ],
+                        "description": "Susie protects another student at Volmasque Academy.",
+                        "bookGenres": [{"genre": {"name": "Paranormal Romance"}}],
+                    },
+                    "Author:1": {"name": person},
+                    "Series:1": {"title": "Susie & Arken's Duet"},
+                }
+                data = json.dumps({"props": {"pageProps": {"apolloState": state}}})
+                with (
+                    patch.object(self.plugin, "_search", return_value=[]),
+                    patch.object(
+                        self.plugin,
+                        "_http_bytes",
+                        side_effect=[
+                            b"[]",
+                            b'[{"bookId":"217994467"}]',
+                            f'<script id="__NEXT_DATA__">{data}</script>'.encode(),
+                        ],
+                    ),
+                ):
+                    results = self.identify(
+                        title=title, authors=[author], identifiers={"mobi-asin": asin}
+                    )
+                self.assertEqual(len(results), int(matches))
+                if matches:
+                    (book,) = results
+                    self.assertEqual(book.title, "Plug and Drain")
+                    self.assertEqual(book.authors, [author])
+                    self.assertEqual(book.get_identifiers()["asin"], asin)
+                    self.assertEqual(book.get_identifiers()["goodreads"], "217994467")
+                    self.assertEqual(
+                        (book.series, book.series_index), ("Susie & Arken's Duet", 1)
+                    )
+                    self.assertIn("Volmasque Academy", book.comments)
+                    self.assertEqual(book.tags, ["Paranormal Romance"])
+
     def test_goodreads_fallback_verifies_anthology_asin_and_credits(self):
         """Recover a verified box set with alternate credits and an included series."""
         title = "Spice Box: Sixteen Steamy Stories"
