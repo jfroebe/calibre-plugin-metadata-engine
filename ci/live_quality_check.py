@@ -356,6 +356,25 @@ def main():
             "timeout": 30,
         },
         {
+            "title": (
+                "Collared and Groomed by the Vampire Prince (Complete Story): "
+                "Spicy Dark Romantasy (Kira & Nathaniel's Duet)"
+            ),
+            "authors": ["Darcy Fayton"],
+            "identifiers": {"mobi-asin": "B0DNWMQBN8"},
+            "expected_asin": "B0DNWMQBN8",
+            "expected_title": "Collared and Groomed by the Vampire Prince",
+            "series": ("Collared Duet", None),
+            "one_result": True,
+            "merge_identify": True,
+            "work_only_asin": True,
+            "minimum_description": 350,
+            "topic": "volmasque academy",
+            "expected_subjects": {"paranormal romance"},
+            "required_subjects": {"paranormal romance", "omnibus"},
+            "timeout": 30,
+        },
+        {
             "title": "Henrikk's Punishment",
             "authors": ["Darcy Fayton"],
             "identifiers": {
@@ -741,6 +760,13 @@ def main():
                 raise AssertionError(
                     f"Incorrect work-only match for {book.title}: {ids}"
                 )
+        if case.get("work_only_asin") and (
+            book.get_identifiers() != {"asin": case["expected_asin"]}
+            or book.pubdate
+            or book.publisher
+            or getattr(book, "has_cached_cover", False)
+        ):
+            raise AssertionError(f"Unverified edition fields for {book.title}")
         description = plugin._usable_description(book.comments)
         if not (description and len(description) >= case["minimum_description"]):
             raise AssertionError("No full live synopsis for " + case["title"])
@@ -787,7 +813,7 @@ def main():
         print("LIVE_SUBJECTS=" + repr(book.tags))
         if case.get("warnings"):
             print("LIVE_COMMENTS=" + book.comments)
-        if not (catalog or case.get("metadata_only")):
+        if not (catalog or case.get("metadata_only") or case.get("work_only_asin")):
             cover_failures.extend(
                 check_cover_quality(plugin, cover_sources, book, case, stalled_sources)
             )

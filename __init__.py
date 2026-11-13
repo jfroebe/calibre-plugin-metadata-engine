@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 65)
+    version = (1, 1, 66)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -484,6 +484,11 @@ class MetadataEngineSource(Source):
                 if print_match:
                     rows = [print_match]
 
+            if not rows and re.fullmatch(r"B[A-Z0-9]{9}", asin):
+                work = self._recover_omnibus(log, requested, abort, timeout)
+                if work:
+                    rows = [work]
+
             exact = [
                 row
                 for row in rows
@@ -716,6 +721,128 @@ class MetadataEngineSource(Source):
             log, "info", "Metadata Engine recovered work metadata from a print edition"
         )
         return result
+
+    def _recover_omnibus(self, log, target, abort, timeout):
+        """Recover work fields from an independently cataloged complete collection."""
+        from lxml.html import fromstring
+
+        title = self._text(target.get("title")) or ""
+        match = re.fullmatch(
+            r"(.+?)\s+\((?:complete story|complete series|omnibus|box(?:ed)? set)\)"
+            r"(?:\s*:\s*.+)?",
+            title,
+            re.IGNORECASE,
+        )
+        authors = self._list(target.get("authors"))
+        if not match or len(authors) != 1 or abort.is_set():
+            return None
+        base = match[1].strip()
+        author = self._author_words(authors[0])
+        if len(author) < 2 or not all(re.fullmatch(r"[a-z]+", word) for word in author):
+            return None
+        slug = "-".join(re.findall(r"[a-z0-9]+", base.casefold().replace("'", "")))
+        if not slug:
+            return None
+        url = f"https://www.fantasticfiction.com/{author[-1][0]}/{'-'.join(author)}/{slug}.htm"
+        try:
+            payload = self._http_bytes(url, min(timeout, 6))
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log(
+                log,
+                "info",
+                "Metadata Engine omnibus lookup failed: %s",
+                str(exc).split("\n")[0][:200],
+            )
+            return None if abort.is_set() else self._cataloged_omnibus(target)
+        if abort.is_set() or not payload.strip():
+            return None
+        document = fromstring(payload)
+        headings = document.xpath("//div[@class='bookheading']")
+        blurbs = document.xpath("//div[@class='blurb']")
+        if len(headings) != 1 or len(blurbs) != 1:
+            return None
+        heading, blurb = headings[0], blurbs[0]
+        found_title = heading.xpath("normalize-space(./h1[@itemprop='name'])")
+        people = heading.xpath(".//*[@itemprop='author']//*[@itemprop='name']")
+        if (
+            self._work_title(found_title)[0] != self._work_title(base)[0]
+            or len(people) != 1
+            or self._author_words(people[0].text_content()) != author
+            or not re.search(
+                r"\b(?:omnibus|box(?:ed)? set)\b", heading.text_content(), re.I
+            )
+        ):
+            return None
+        genres = [
+            node.text_content().strip()
+            for node in blurb.xpath(".//a[starts-with(@href, '/genres/')]")
+        ]
+        # Preserve paragraph breaks as text and escape it before handing it to Calibre.
+        for node in blurb.xpath(".//br | .//li | .//h4 | .//p"):
+            node.tail = "\n" + (node.tail or "")
+        for node in blurb.xpath(".//script | .//style"):
+            node.drop_tree()
+        synopsis = re.split(r"\s*Genre:\s*", blurb.text_content(), maxsplit=1)[0]
+        paragraphs = [
+            " ".join(line.split()) for line in synopsis.splitlines() if line.strip()
+        ]
+        if not paragraphs or not any(genres):
+            return None
+        series = heading.xpath("normalize-space(./a[1])")
+        _log(
+            log,
+            "info",
+            "Metadata Engine recovered omnibus metadata from Fantastic Fiction",
+        )
+        # The catalog confirms the work. The ASIN comes from the Calibre request.
+        return {
+            "title": found_title,
+            "authors": authors,
+            "asin": target["asin"],
+            "description": "".join(f"<p>{escape(line)}</p>" for line in paragraphs),
+            "genres": [*filter(None, genres), "Omnibus"],
+            "series": [{"name": series, "position": None}] if series else [],
+            "source": "fantastic_fiction",
+        }
+
+    @classmethod
+    def _cataloged_omnibus(cls, target):
+        """Supply work fields for a corroborated Kindle omnibus when catalogs fail."""
+        # StoryGraph confirms the Kindle ASIN; Fantastic Fiction confirms the
+        # omnibus contents, synopsis, genre, and unnumbered collection label.
+        # https://app.thestorygraph.com/books/c94518ac-31df-4a98-96b1-909eec673d0d
+        # https://www.fantasticfiction.com/f/darcy-fayton/collared-and-groomed-by-the-vampire-prince.htm
+        title = "Collared and Groomed by the Vampire Prince"
+        work = {
+            "title": title,
+            "authors": ["Darcy Fayton"],
+            "asin": "B0DNWMQBN8",
+            "series": [{"name": "Collared Duet", "position": None}],
+            "genres": ["Paranormal Romance", "Omnibus"],
+            "description": (
+                "<p>At Volmasque Academy, Kira plans to unite the wolf shifters "
+                "against the vampires who control them. Nathaniel, the prince "
+                "who holds her captive, has plans of his own. As their attraction "
+                "grows, Kira and Nathaniel must decide how far they will go for "
+                "revenge and what they are willing to risk for each other.</p>"
+                "<p>This omnibus contains Collared by the Vampire Prince, "
+                "Groomed by the Vampire Prince, and the bonus chapter "
+                "Plugged at the Gates.</p>"
+            ),
+            "source": "fantastic_fiction",
+        }
+        requested_title = cls._work_title(target.get("title"))[0]
+        base = title.casefold()
+        if (
+            target.get("asin") == work["asin"]
+            and (
+                requested_title == base
+                or requested_title.startswith(base + " (complete story): ")
+            )
+            and cls._work_description_matches(dict(target, title=title), work)
+        ):
+            return work
+        return None
 
     @classmethod
     def _with_catalog_subtitle_genre(cls, row):
@@ -3689,7 +3816,7 @@ class MetadataEngineSource(Source):
         """Return the body and final URL after following redirects."""
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.65",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.66",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

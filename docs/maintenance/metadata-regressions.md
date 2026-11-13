@@ -114,6 +114,13 @@ verified work fallback in the live check. Curated fields for the retired
 Kindle listing require the confirmed bibliography entry and series position.
 A sequel, rewrite, or conflicting series position cannot supply those fields.
 
+Keep the original Kindle-only lookup for Collared and Groomed by the Vampire
+Prince, including its complete-story marker and marketing subtitle. Require
+a source that identifies the collection itself and verify its synopsis, tags,
+and unnumbered series after Calibre's merger. Exercise an empty Goodreads
+lookup, a component book, a rewrite, and a conflicting author. Preserve the
+requested ASIN and keep the catalog's edition fields out of the result.
+
 Keep the original ISBN for `Star Wars: Knight Errant`. Cover a correct
 edition with an existing synopsis and missing or generic subjects, plus
 catalog timeouts and a separate comic by the same author. Exercise Open

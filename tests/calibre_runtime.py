@@ -903,6 +903,112 @@ class InstalledPluginTests(unittest.TestCase):
                 self.assertEqual(result.tags, ["Anthologies"])
                 self.assertFalse(result.series)
 
+    def test_decorated_omnibus_uses_verified_work_catalog(self):
+        """Find a complete edition without borrowing a component book's metadata."""
+        base = "Collared and Groomed by the Vampire Prince"
+        title = (
+            f"{base} (Complete Story): Spicy Dark Romantasy (Kira & Nathaniel's Duet)"
+        )
+        authors = ["Darcy Fayton"]
+        asin = "B0DNWMQBN8"
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        description = "At Volmasque Academy, Kira plans a revolt against the vampires."
+        url = (
+            "https://www.fantasticfiction.com/f/darcy-fayton/"
+            "collared-and-groomed-by-the-vampire-prince.htm"
+        )
+        for catalog_title, author, kind, valid in (
+            (base, authors[0], "An omnibus of novels by", True),
+            (
+                "Collared by the Vampire Prince",
+                authors[0],
+                "An omnibus of novels by",
+                False,
+            ),
+            (base, "Another Author", "An omnibus of novels by", False),
+            (base, authors[0], "A novel by", False),
+            (base + " (2026 Rewrite)", authors[0], "An omnibus of novels by", False),
+        ):
+            with self.subTest(title=catalog_title, author=author, kind=kind):
+                payload = f"""
+                    <div class="bookheading">
+                      <h1 itemprop="name">{catalog_title}</h1>
+                      (A book in the <a href="/f/darcy-fayton/collared-duet/">Collared Duet</a> series)
+                      <br>{kind} <span itemprop="author"><span itemprop="name">{author}</span></span>
+                    </div>
+                    <div class="blurb">{description}<br><br>Genre:
+                      <a href="/genres/?gp=PR">Paranormal Romance</a>
+                    </div>
+                """.encode()
+                with (
+                    patch.object(self.plugin, "_search", return_value=[]),
+                    patch.object(
+                        self.plugin, "_goodreads_suggestions", return_value=[]
+                    ),
+                    patch.object(
+                        self.plugin, "_http_bytes", return_value=payload
+                    ) as fetch,
+                ):
+                    results = self.identify(
+                        title=title, authors=authors, identifiers={"mobi-asin": asin}
+                    )
+                self.assertEqual(len(results), int(valid))
+                if valid:
+                    fetch.assert_called_once()
+                    self.assertEqual(fetch.call_args.args[0], url)
+                    (book,) = results
+                    self.assertEqual(book.title, base)
+                    self.assertEqual(book.authors, authors)
+                    self.assertEqual(book.get_identifiers(), {"asin": asin})
+                    self.assertIn(description, book.comments)
+                    self.assertEqual(book.tags, ["Paranormal Romance", "Omnibus"])
+                    self.assertEqual(book.series, "Collared Duet")
+                    self.assertIsNone(book.series_index)
+                    self.assertFalse(book.publisher)
+                    self.assertFalse(book.pubdate)
+                    self.assertFalse(getattr(book, "has_cached_cover", False))
+
+    def test_omnibus_catalog_outage_preserves_the_verified_kindle_match(self):
+        """Use corroborated work metadata during a catalog access failure."""
+        base = "Collared and Groomed by the Vampire Prince"
+        title = (
+            f"{base} (Complete Story): Spicy Dark Romantasy (Kira & Nathaniel's Duet)"
+        )
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for query, author, asin, expected in (
+            (title, "Darcy Fayton", "B0DNWMQBN8", True),
+            (title, "Darcy Fayton", "B0DPNHH8MD", False),
+            (title, "Different Author", "B0DNWMQBN8", False),
+            (
+                "Groomed by the Vampire Prince (Complete Story)",
+                "Darcy Fayton",
+                "B0DNWMQBN8",
+                False,
+            ),
+        ):
+            with (
+                self.subTest(query=query, author=author, asin=asin),
+                patch.object(self.plugin, "_search", return_value=[]),
+                patch.object(self.plugin, "_goodreads_suggestions", return_value=[]),
+                patch.object(
+                    self.plugin, "_http_bytes", side_effect=RuntimeError("HTTP 405")
+                ),
+            ):
+                results = self.identify(
+                    title=query, authors=[author], identifiers={"mobi-asin": asin}
+                )
+                self.assertEqual(len(results), int(expected))
+                if expected:
+                    (book,) = results
+                    self.assertEqual(book.title, base)
+                    self.assertEqual(book.get_identifiers(), {"asin": asin})
+                    self.assertIn("Volmasque Academy", book.comments)
+                    self.assertIn("Plugged at the Gates", book.comments)
+                    self.assertEqual(book.tags, ["Paranormal Romance", "Omnibus"])
+                    self.assertEqual(
+                        (book.series, book.series_index), ("Collared Duet", None)
+                    )
+
     def test_unavailable_saved_goodreads_id_uses_verified_bibliography(self):
         """Match the original short story when the saved edition page is gone."""
         title, author = "Henrikk's Punishment", "Darcy Fayton"
