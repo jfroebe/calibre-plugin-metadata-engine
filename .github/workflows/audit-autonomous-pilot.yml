@@ -1,0 +1,91 @@
+name: Record offline metadata quality and worker health
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/audit-autonomous-pilot.yml]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 5
+    steps:
+      - name: Record offline scoring and the queue health snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          -- Preserve historical scores and record conservative replacement recommendations.
+          -- Saved pilot results lack an independent edition and artwork verification.
+          BEGIN;
+          WITH pilot_evidence AS (
+              SELECT media_id,count(*) AS versions,max(quality_score) AS best_completeness
+              FROM metadata_queue.metadata_versions
+              WHERE source_name='calibre-pilot'
+              GROUP BY media_id
+          )
+          UPDATE metadata_queue.media m
+          SET replacement_recommended=false,
+              replacement_reason=CASE
+                  WHEN p.best_completeness <= m.metadata_quality THEN 'no_higher_saved_candidate_score'
+                  ELSE 'saved_candidate_requires_edition_and_cover_verification'
+              END,
+              updated_at=clock_timestamp()
+          FROM pilot_evidence p
+          WHERE m.id=p.media_id AND m.media_type='book'
+            AND (m.replacement_reason IS NULL OR m.replacement_reason IN (
+                'no_higher_saved_candidate_score',
+                'saved_candidate_requires_edition_and_cover_verification'
+            ));
+          COMMIT;
+          SELECT replacement_reason,count(*) FROM metadata_queue.media
+          WHERE media_type='book' AND replacement_reason IS NOT NULL GROUP BY 1 ORDER BY 1;
+          -- Run as the maintenance account in metadata_test. Keep only aggregate evidence.
+          INSERT INTO metadata_queue.supervisor_events(action,evidence)
+          SELECT 'local_health_snapshot', jsonb_build_object(
+              'runners', COALESCE((
+                  SELECT jsonb_agg(jsonb_build_object(
+                      'id',id,'desired',desired_state,'observed',observed_state,
+                      'heartbeat',heartbeat_at,'stale',
+                      heartbeat_at IS NULL OR heartbeat_at < now() - interval '30 seconds'
+                  ) ORDER BY id) FROM metadata_queue.runners
+              ), '[]'),
+              'campaigns', COALESCE((
+                  SELECT jsonb_agg(jsonb_build_object('id',id,'state',state,'synthetic',synthetic)
+                                   ORDER BY id) FROM metadata_queue.campaigns
+              ), '[]'),
+              'jobs', COALESCE((
+                  SELECT jsonb_object_agg(state,n) FROM (
+                      SELECT state,count(*) n FROM metadata_queue.jobs GROUP BY state
+                  ) totals
+              ), '{}'),
+              'retry_success_today', (
+                  SELECT count(*) FROM metadata_queue.job_attempts
+                  WHERE outcome='retry_success' AND finished_at >= now()-interval '1 day'
+              ),
+              'expired_leases', (
+                  SELECT count(*) FROM metadata_queue.jobs WHERE state='leased' AND lease_until<=now()
+              ),
+              'quality', COALESCE((
+                  SELECT jsonb_object_agg(band,n) FROM (
+                      SELECT floor(metadata_quality/10)*10 AS band,count(*) n
+                      FROM metadata_queue.media WHERE media_type='book' AND metadata_quality IS NOT NULL
+                      GROUP BY 1
+                  ) scores
+              ), '{}')
+          )
+          RETURNING id,evidence;
+          SQL
+          REMOTE
