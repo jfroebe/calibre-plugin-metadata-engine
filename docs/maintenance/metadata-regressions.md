@@ -109,7 +109,10 @@ Exercise a Goodreads record that is unavailable and require an exact title and
 author in a separate bibliography before returning the work and series.
 A live saved record with a conflicting ASIN, author, or title must be rejected.
 A bibliography that establishes only the work cannot supply a new edition ID
-or cover.
+or cover. Require a synopsis and Vampires and Dark Romance tags from the
+verified work fallback in the live check. Curated fields for the retired
+Kindle listing require the confirmed bibliography entry and series position.
+A sequel, rewrite, or conflicting series position cannot supply those fields.
 
 Keep the original ISBN for `Star Wars: Knight Errant`. Cover a correct
 edition with an existing synopsis and missing or generic subjects, plus

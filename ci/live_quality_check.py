@@ -367,6 +367,10 @@ def main():
             "expected_catalog": ("metadata_engine_book_notification", "3886230"),
             "series": ("Henrikk's Short Stories", 1.0),
             "one_result": True,
+            "minimum_description": 200,
+            "topic": "general asher",
+            "expected_subjects": {"dark romance", "vampires"},
+            "required_subjects": {"dark romance", "vampires"},
             "timeout": 30,
         },
         {
@@ -737,8 +741,6 @@ def main():
                 raise AssertionError(
                     f"Incorrect work-only match for {book.title}: {ids}"
                 )
-            print("LIVE_METADATA_QUALITY_PASS title=" + book.title)
-            continue
         description = plugin._usable_description(book.comments)
         if not (description and len(description) >= case["minimum_description"]):
             raise AssertionError("No full live synopsis for " + case["title"])
@@ -785,7 +787,7 @@ def main():
         print("LIVE_SUBJECTS=" + repr(book.tags))
         if case.get("warnings"):
             print("LIVE_COMMENTS=" + book.comments)
-        if not case.get("metadata_only"):
+        if not (catalog or case.get("metadata_only")):
             cover_failures.extend(
                 check_cover_quality(plugin, cover_sources, book, case, stalled_sources)
             )
