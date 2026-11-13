@@ -1,0 +1,94 @@
+name: Verify autonomous PostgreSQL queue on the test VMs
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/verify-autonomous-queue.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {host: chatgpt-build-02, role: docker-build}
+          - {host: chatgpt-dev, role: calibre-controller}
+    runs-on: [self-hosted, linux, x64, '${{ matrix.role }}', '${{ matrix.host }}']
+    timeout-minutes: 5
+    env:
+      EXPECTED_HOST: ${{ matrix.host }}
+    steps:
+      - name: Verify authenticated routes and synthetic worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = "$EXPECTED_HOST"
+          for peer in 192.168.0.13 192.168.0.25; do
+            ssh -o BatchMode=yes -o ConnectTimeout=4 "agent@$peer" 'hostname -s' || true
+          done
+          ssh -o BatchMode=yes -o ConnectTimeout=4 root@192.168.0.59 'hostname -s' || true
+          if [ "$EXPECTED_HOST" != chatgpt-build-02 ]; then exit 0; fi
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          systemctl --user is-active metadata-queue-worker.service
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'script=$(mktemp); trap "rm -f -- $script" EXIT; cat > "$script"; bash "$script" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          db() { docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test "$@"; }
+          db <<'SQL'
+          SELECT 'catalog',count(*),count(DISTINCT work_id) FROM metadata_queue.media WHERE media_type='book';
+          SELECT 'versions',count(*) FROM metadata_queue.metadata_versions;
+          SELECT 'covers',count(*),sum(octet_length(bytes)) FROM metadata_queue.artifacts;
+          SELECT 'duplicate_identifier_groups',count(*) FROM (
+              SELECT lower(scheme),upper(identifier) FROM metadata_queue.identifiers
+              GROUP BY 1,2 HAVING count(DISTINCT media_id)>1
+          ) d;
+          SELECT 'historical_attempts',count(*) FROM metadata_queue.historical_lookups;
+          SELECT 'runner',id,desired_state,observed_state,
+              heartbeat_at > now() - interval '30 seconds'
+              FROM metadata_queue.runners;
+          SELECT 'real_campaigns',count(*) FROM metadata_queue.campaigns WHERE NOT synthetic;
+          SQL
+          test "$(db -c "SELECT count(*) FROM metadata_queue.runners WHERE id='chatgpt-build-02' AND desired_state='running' AND heartbeat_at>now()-interval '30 seconds'")" = 1
+          id="$(db -c 'SELECT gen_random_uuid()')"
+          db -v id="$id" <<'SQL'
+          BEGIN;
+          INSERT INTO metadata_queue.campaigns(id,synthetic,config)
+          VALUES (:'id',true,'{"max_jobs":1,"concurrency":1,"max_attempts":2,"providers":[]}');
+          SELECT metadata_queue.transition(:'id',0,gen_random_uuid(),'preparing','{"reference":"deployed synthetic verification"}');
+          WITH book AS (
+              INSERT INTO metadata_queue.media(media_type,canonical_key,display_title)
+              VALUES ('synthetic',:'id','Worker smoke fixture') RETURNING id
+          )
+          INSERT INTO metadata_queue.campaign_members SELECT :'id',id FROM book;
+          SELECT metadata_queue.transition(id,1,gen_random_uuid(),'ready',
+              jsonb_build_object('reference','synthetic smoke only',
+              'manifest_hash',metadata_queue.campaign_hash(id),
+              'config_hash',encode(sha256(convert_to(config::text,'UTF8')),'hex'),
+              'checks',(SELECT jsonb_object_agg(k,true) FROM unnest(string_to_array(
+              'migration backup rollback history catalog manifest storage quality leasing fencing user_stop provider_limits readonly_library workload_limits authorization',' ')) AS t(k))))
+          FROM metadata_queue.campaigns WHERE id=:'id';
+          SELECT metadata_queue.transition(id,2,gen_random_uuid(),'approved',
+              jsonb_build_object('reference','synthetic smoke only','manifest_hash',manifest_hash,'config_hash',config_hash))
+          FROM metadata_queue.campaigns WHERE id=:'id';
+          SELECT metadata_queue.transition(:'id',3,gen_random_uuid(),'running','{"reference":"synthetic smoke only"}');
+          COMMIT;
+          SQL
+          for i in $(seq 1 15); do
+            if [ "$(db -c "SELECT state FROM metadata_queue.jobs WHERE campaign_id='$id'")" = passed ]; then
+              db -c "SELECT metadata_queue.transition('$id',4,gen_random_uuid(),'completed','{\"reference\":\"worker smoke passed\"}')"
+              db -c "SELECT 'synthetic_result',state,final_counts FROM metadata_queue.campaigns WHERE id='$id'"
+              exit 0
+            fi
+            sleep 2
+          done
+          db -c "SELECT metadata_queue.transition('$id',4,gen_random_uuid(),'cancelled','{\"reference\":\"synthetic smoke timed out\"}')"
+          exit 1
+          REMOTE
