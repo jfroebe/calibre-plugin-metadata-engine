@@ -1,0 +1,54 @@
+name: Provision restricted dev queue login
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/provision-dev-queue-login.yml]
+permissions:
+  contents: read
+jobs:
+  provision:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 4
+    steps:
+      - name: Create the dev worker role and return encrypted credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          umask 077
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          printf '%s' 'MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAx3uhiC6vT6DNarzS+Pz8zmS+gAWMsJy3pcVPbROh9b8DaibsGmOLfLmqR/CiSZ5YH/tJLWV29vnj34p4qeX/kcRt2Et+DmASFjMKxtb5oJ/Og37sspBMcgvs0tJcWpgo+WhRc0XQ8+Fp4LhXY9sGAp/H5thUcNbROb0vbEWzSSrvfegTiO6WpPUh7Fg5BC+yB2yAJiY/OtqQrt1sTxfH9PIp2Nx6maR8cAbdYzSqux6fh7mCg4AeN6OY2MDT6r/4MZP2h+3RG4aKzogRZWMfG+U1DQJqrSqaKu30Kf0kzTLIjOt0E/CIBDFJJ9q3jxbdp0LBcELvA6q38jbBSU79p90MQy9BdqltWPf2mKJEsYf5mQlodawWSLxo+8F9Vr1IoYPUucaCniaAEkoGJtfgtTjLVlNoJQxb0nFdOWISacNgktRQBIHDhrJDam1ziGOv0TBcSuSLpijicP0Uo0uQ4I0QibuTp2a4q2AtyRSPqT3f1Tz2+TS/JP8gzsB/jb3FAgMBAAE=' | base64 -d > "$work/public.der"
+          password="$(openssl rand -hex 32)"
+          {
+            cat <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qX -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          BEGIN;
+          SELECT pg_advisory_xact_lock(89411834);
+          REMOTE
+            printf "CREATE ROLE metadata_queue_chatgpt_dev LOGIN PASSWORD '%s';\n" "$password"
+            cat <<'REMOTE'
+          GRANT CONNECT ON DATABASE metadata_test TO metadata_queue_chatgpt_dev;
+          GRANT USAGE ON SCHEMA metadata_queue TO metadata_queue_chatgpt_dev;
+          GRANT EXECUTE ON FUNCTION metadata_queue.heartbeat(text), metadata_queue.claim(text), metadata_queue.recover(text), metadata_queue.renew(text,bigint,uuid), metadata_queue.finish(text,bigint,uuid,text,text) TO metadata_queue_chatgpt_dev;
+          INSERT INTO metadata_queue.runners(id,host,desired_state)
+          VALUES ('chatgpt-dev','chatgpt-dev','running') ON CONFLICT DO NOTHING;
+          INSERT INTO metadata_queue.worker_accounts VALUES ('chatgpt-dev','metadata_queue_chatgpt_dev');
+          COMMIT;
+          SQL
+          REMOTE
+          } | ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'script=$(mktemp); trap "rm -f -- $script" EXIT; cat > "$script"; bash "$script" </dev/null' > "$work/provision.log" 2>&1 || { printf 'Dev database role provisioning failed.\n'; exit 1; }
+          printf 'HANDOFF_CIPHER '
+          printf '%s' "$password" | openssl pkeyutl -encrypt -pubin -inkey "$work/public.der" -keyform DER -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 | base64 -w0
+          printf '\n'
+          unset password
