@@ -357,6 +357,44 @@ def main():
         },
         {
             "title": (
+                "Plug and Claim: An addictive enemies-to-lovers Steamy Dark "
+                "Paranormal Romance (Plug and Claim Duology Book 1)"
+            ),
+            "authors": ["Darcy Fayton"],
+            "identifiers": {"mobi-asin": "B0BZT83XHG"},
+            "expected_asin": "B0BZT83XHG",
+            "expected_goodreads": "221934725",
+            "expected_title": "Plug and Claim",
+            "series": ("Kira & Nathaniel's Duet", 1.0),
+            "one_result": True,
+            "merge_identify": True,
+            "minimum_description": 350,
+            "topic": "kira",
+            "expected_subjects": {"vampires", "dark romance"},
+            "required_subjects": {"vampires"},
+            "timeout": 30,
+        },
+        {
+            "title": (
+                "Plug and Tame: A Steamy Dark Paranormal Romance "
+                "(Plug and Claim Duology Book 2)"
+            ),
+            "authors": ["Darcy Fayton"],
+            "identifiers": {"mobi-asin": "B0CG4KBN38"},
+            "expected_asin": "B0CG4KBN38",
+            "expected_goodreads": "217993643",
+            "expected_title": "Plug and Tame",
+            "series": ("Kira & Nathaniel's Duet", 2.0),
+            "one_result": True,
+            "merge_identify": True,
+            "minimum_description": 350,
+            "topic": "kira",
+            "expected_subjects": {"vampires", "dark romance"},
+            "required_subjects": {"vampires"},
+            "timeout": 30,
+        },
+        {
+            "title": (
                 "Plug and Drain: An addictive Teacher-Student Steamy Dark Paranormal Romance"
             ),
             "authors": ["Darcy Fayton"],

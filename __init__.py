@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 67)
+    version = (1, 1, 68)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -456,6 +456,8 @@ class MetadataEngineSource(Source):
                     recovered = self._goodreads_work_fallback(
                         title, authors, abort, timeout, identifiers
                     )
+                    if recovered and recovered[0].get("verified_original_title"):
+                        title = requested["title"] = recovered[0]["title"]
                     rows = recovered or rows
                 except (OSError, RuntimeError, ValueError) as exc:
                     _log(
@@ -1784,6 +1786,38 @@ class MetadataEngineSource(Source):
         saved_id = self._identifier(
             identifiers or {}, "goodreads", "metadata_engine_goodreads"
         )
+        alias = self._verified_kindle_title_alias(title, authors, asin)
+        if alias:
+            original, catalog, position = alias
+            deadline = started + min(timeout, 12)
+            ids = (
+                [saved_id]
+                if re.fullmatch(r"[0-9]{1,16}", saved_id or "")
+                else (self._goodreads_suggestions(asin, min(timeout, 5)))
+            )
+            for book_id in list(ids)[:3]:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or abort.is_set():
+                    break
+                row = self._goodreads_book(book_id, remaining)
+                if (
+                    row
+                    and self._work_title(row["title"])[0]
+                    in {catalog, original.casefold()}
+                    and self._series_identity(row)
+                    == ("kira & nathaniel's duet", position)
+                ):
+                    target = {
+                        "title": original,
+                        "authors": authors,
+                        "series": row["series"],
+                    }
+                    verified = self._verify_goodreads_edition(
+                        dict(row, title=original), target, identifiers
+                    )
+                    if verified:
+                        return [dict(verified, verified_original_title=True)]
+            return []
         if re.fullmatch(r"[0-9]{1,16}", saved_id or "") and re.fullmatch(
             r"B[A-Z0-9]{9}", asin
         ):
@@ -1880,6 +1914,32 @@ class MetadataEngineSource(Source):
                     }
                 ]
         return []
+
+    @classmethod
+    def _verified_kindle_title_alias(cls, title, authors, asin):
+        """Recognize documented title changes for the original Kindle editions."""
+        # NetGalley 308725 and 459589 document the original title and reissue.
+        # StoryGraph series 2457600 corroborates both original Kindle ASINs.
+        # Goodreads edition 197349413 documents the second title change.
+        aliases = {
+            "B0BZT83XHG": ("Plug and Claim", "collared by the vampire prince", 1),
+            "B0CG4KBN38": ("Plug and Tame", "groomed by the vampire prince", 2),
+        }
+        alias = aliases.get(asin)
+        if not alias or [cls._author_words(name) for name in authors] != [
+            ("darcy", "fayton")
+        ]:
+            return None
+        original, _, position = alias
+        name, series, number = cls._work_title(title)
+        if name.partition(": ")[0] != original.casefold():
+            return None
+        if series and (
+            series not in {"plug and claim duology", "kira & nathaniel's duet"}
+            or number != position
+        ):
+            return None
+        return alias
 
     def _goodreads_saved_kindle_fallback(
         self, book_id, title, authors, identifiers, abort, deadline
@@ -3826,7 +3886,7 @@ class MetadataEngineSource(Source):
         """Return the body and final URL after following redirects."""
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.67",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.68",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()

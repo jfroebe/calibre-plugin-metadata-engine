@@ -114,6 +114,11 @@ verified work fallback in the live check. Curated fields for the retired
 Kindle listing require the confirmed bibliography entry and series position.
 A sequel, rewrite, or conflicting series position cannot supply those fields.
 
+Check Plug and Claim and Plug and Tame under their original titles. Require
+the documented title alias, exact Kindle ASIN, author, and duet position.
+Check the original title, synopsis, and subjects in Calibre. A different
+ASIN, author, position, or omnibus cannot supply the edition's metadata.
+
 Keep the original Kindle-only query for Plug and Drain. Its Goodreads title
 carries the Plug Collection number while the structured series identifies
 Susie & Arken's Duet. Require the exact Kindle ASIN and Goodreads edition,

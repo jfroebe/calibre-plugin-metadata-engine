@@ -882,6 +882,69 @@ class InstalledPluginTests(unittest.TestCase):
                     self.assertIn("Volmasque Academy", book.comments)
                     self.assertEqual(book.tags, ["Paranormal Romance"])
 
+    def test_verified_kindle_title_aliases_preserve_original_editions(self):
+        """Match the original title only to its corroborated Kindle edition."""
+        self.plugin.prefs["plugin_ids"] = "goodreads"
+        for original, catalog, asin, position in (
+            ("Plug and Claim", "Collared by the Vampire Prince", "B0BZT83XHG", 1),
+            ("Plug and Tame", "Groomed by the Vampire Prince", "B0CG4KBN38", 2),
+        ):
+            title = (
+                f"{original}: A Dark Romance (Plug and Claim Duology Book {position})"
+            )
+            row = {
+                "title": f"{catalog} (Kira & Nathaniel's Duet, #{position})",
+                "authors": ["Darcy Fayton"],
+                "source": "goodreads",
+                "source_id": "123",
+                "asin": asin,
+                "description": "Kira returns to Volmasque Academy.",
+                "genres": ["Vampires"],
+                "series": [{"name": "Kira & Nathaniel's Duet", "position": position}],
+            }
+            for request, donor, expected in (
+                (title, row, True),
+                (title, dict(row, asin="B0DPNHH8MD"), False),
+                (title, dict(row, authors=["Another Author"]), False),
+                (
+                    title,
+                    dict(row, title="Collared and Groomed by the Vampire Prince"),
+                    False,
+                ),
+                (
+                    title,
+                    dict(
+                        row, series=[{"name": "Kira & Nathaniel's Duet", "position": 3}]
+                    ),
+                    False,
+                ),
+                (title.replace(f"Book {position}", "Book 3"), row, False),
+            ):
+                with (
+                    self.subTest(title=request, donor=donor),
+                    patch.object(self.plugin, "_search", return_value=[]),
+                    patch.object(
+                        self.plugin, "_goodreads_suggestions", return_value=["123"]
+                    ),
+                    patch.object(self.plugin, "_goodreads_book", return_value=donor),
+                ):
+                    results = self.identify(
+                        title=request,
+                        authors=["Darcy Fayton"],
+                        identifiers={"mobi-asin": asin},
+                    )
+                self.assertEqual(len(results), int(expected))
+                if expected:
+                    (book,) = results
+                    self.assertEqual(book.title, original)
+                    self.assertEqual(book.get_identifiers()["asin"], asin)
+                    self.assertEqual(
+                        (book.series, book.series_index),
+                        ("Kira & Nathaniel's Duet", position),
+                    )
+                    self.assertEqual(book.tags, ["Vampires"])
+                    self.assertIn("Volmasque Academy", book.comments)
+
     def test_goodreads_fallback_verifies_anthology_asin_and_credits(self):
         """Recover a verified box set with alternate credits and an included series."""
         title = "Spice Box: Sixteen Steamy Stories"
