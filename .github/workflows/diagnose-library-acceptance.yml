@@ -1,0 +1,33 @@
+name: Diagnose saved Calibre pilot on the worker
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/diagnose-library-acceptance.yml, ci/library_acceptance_sources.py]
+permissions:
+  contents: read
+concurrency:
+  group: diagnose-calibre-library-acceptance
+  cancel-in-progress: false
+env:
+  http_proxy: http://192.168.0.59:8118
+  https_proxy: http://192.168.0.59:8118
+  no_proxy: localhost,127.0.0.1,::1,.localhost,192.168.0.59
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Regrade saved results and check alternate catalogs
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(hostname -s)" = chatgpt-build-02
+          test "$(id -un)" = agent
+          state="$HOME/.local/state/calibre-library-acceptance/pilot-1"
+          calibre="$HOME/.local/share/calibre-library-acceptance/calibre-9.15.0"
+          python3 ci/library_acceptance.py --calibre-bin "$calibre" --state "$state" diagnose \
+            --name pilot --zip "$state/candidate.zip" --engine http://192.168.0.59:14000

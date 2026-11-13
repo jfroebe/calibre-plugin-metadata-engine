@@ -61,7 +61,7 @@ jobs:
           release="$root/releases/$GITHUB_SHA"
           stage="$(mktemp -d "$root/.install.XXXXXX")"
           trap 'rm -rf "$stage"' EXIT
-          install -m 600 ci/library_acceptance{,_runtime}.py "$stage/"
+          install -m 600 ci/library_acceptance{,_runtime,_sources}.py "$stage/"
           install -m 600 docs/library-acceptance.md "$stage/"
           ln -s "$runtime" "$stage/calibre"
           if [ ! -d "$release" ]; then

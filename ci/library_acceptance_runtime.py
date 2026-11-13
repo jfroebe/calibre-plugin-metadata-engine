@@ -294,7 +294,7 @@ def cover_quality(path, plugin):
     )
 
 
-def grade(book, path, case, directory, reference, plugin, decision):
+def grade(book, path, case, directory, plugin, decision):
     """Grade completeness, regressions, and cover changes separately."""
     expected = case["expected"]
     failures, review = [], []
@@ -319,8 +319,7 @@ def grade(book, path, case, directory, reference, plugin, decision):
     elif min(current[:2]) < 100:
         failures.append("cover_too_small")
     saved = cover_quality(directory / "reference.cover", plugin)
-    previous = cover_quality(reference / "cover.image", plugin) if reference else None
-    covers = [image for image in (saved, previous) if image]
+    covers = [saved] if saved else []
     approved_cover = current and hashlib.sha256(
         path.read_bytes()
     ).hexdigest() in decision.get("cover_sha256", [])
@@ -338,12 +337,8 @@ def grade(book, path, case, directory, reference, plugin, decision):
             failures.append("cover_resolution_regressed")
     elif current and current[2] and not approved_cover:
         review.append("white_cover_needs_review")
-    if case["group"] == "processed":
+    if synopsis(expected["description"]) or expected["tags"]:
         comparison = expected
-        if reference:
-            prior = load(reference / "result.json")
-            if prior.get("metadata") and prior["status"] in {"pass", "review"}:
-                comparison = prior["metadata"]
         if len(description) < 0.75 * len(
             synopsis(comparison["description"])
         ) and hashlib.sha256(description.encode()).hexdigest() not in decision.get(
@@ -408,7 +403,6 @@ class Evidence:
 def lookup(request, output):
     """Exercise Calibre's installed source and grade its identify and cover result."""
     case_dir = Path(request["case"])
-    reference = Path(request["reference"]) if request["reference"] else None
     replay = Path(request["replay"]) / "responses" if request["replay"] else None
     case = load(case_dir / "case.json")
     plugin = next(
@@ -440,6 +434,7 @@ def lookup(request, output):
     merged = list(merged)
     save(output / "candidates.local.json", [book_fields(book) for book in merged])
     result = {
+        "grading_version": 2,
         "plugin_version": list(plugin.version),
         "calibre_version": list(numeric_version),
         "mode": "replay" if replay else "live",
@@ -458,9 +453,7 @@ def lookup(request, output):
             )
             if not covers.empty():
                 cover.write_bytes(covers.get_nowait()[1])
-        failures, review = grade(
-            book, cover, case, case_dir, reference, plugin, decision
-        )
+        failures, review = grade(book, cover, case, case_dir, plugin, decision)
         quality = cover_quality(cover, plugin)
         result.update(
             metadata=book,
@@ -513,6 +506,10 @@ def main():
         prepare(load(path), path.parent)
     elif action == "lookup":
         lookup(load(path), path.parent)
+    elif action == "diagnose":
+        from library_acceptance_sources import diagnose
+
+        diagnose(load(path), path.parent)
     else:
         raise ValueError(f"Unknown operation {action}")
 

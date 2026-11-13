@@ -327,7 +327,64 @@ def run_suite(args, state):
                 (entry for entry in manifest["cases"] if entry["id"] in ids),
             )
         )
-    return report(state, run)
+    status = report(state, run)
+    if status and not args.replay_from and not args.skip_diagnostics:
+        args.zip = args.candidate_zip
+        args.engine = args.candidate_engine
+        args.timeout = 5
+        diagnose(args, state)
+    return status
+
+
+def diagnose(args, state):
+    """Run alternate-catalog diagnostics against an existing local report."""
+    run = state / "runs" / args.name
+    if not (run / "report.local.json").is_file():
+        raise SystemExit("Completed local report required.")
+    output = run / "diagnostics"
+    output.mkdir(exist_ok=True)
+    env = profile_env(output / "profile")
+    env["CALIBRE_ACCEPTANCE_TOKEN"] = os.getenv(
+        "CALIBRE_ACCEPTANCE_CANDIDATE_TOKEN", ""
+    )
+    request = output / "request.json"
+    write(request, {"run": str(run), "engine": args.engine, "timeout": args.timeout})
+    if command(
+        [calibre(args, "calibre-customize"), "-a", args.zip.resolve()],
+        output,
+        "install",
+        90,
+        env,
+    ):
+        raise SystemExit("Unable to install diagnostic plugin. See local log.")
+    argv = [calibre(args, "calibre-debug"), "-e", RUNTIME, "--", "diagnose", request]
+    log = output / "diagnose.log"
+    with log.open("wb") as saved:
+        status = subprocess.run(
+            [str(value) for value in argv],
+            cwd=output,
+            env=env,
+            stdout=saved,
+            stderr=subprocess.STDOUT,
+            timeout=3300,
+            check=False,
+        ).returncode
+    if status:
+        # Logs can contain private book names and source responses.
+        kinds = (
+            "ImportError",
+            "ModuleNotFoundError",
+            "KeyError",
+            "TypeError",
+            "AttributeError",
+            "ValueError",
+        )
+        found = [name for name in kinds if name in log.read_text(errors="replace")]
+        raise SystemExit(
+            "Diagnostics failed. Local log retained. Error classes: " + ", ".join(found)
+        )
+    print((output / "summary.json").read_text(encoding="utf-8"))
+    return 0
 
 
 def label(value):
@@ -366,10 +423,18 @@ def main():
     run.add_argument("--workers", type=int, default=2, choices=(1, 2))
     run.add_argument("--retries", type=int, default=2, choices=range(5), metavar="0-4")
     run.add_argument("--retry-failed", action="store_true")
+    run.add_argument("--skip-diagnostics", action="store_true")
     run.add_argument("--failed-from", type=label)
     run.add_argument("--reuse-baseline", type=label)
     run.add_argument("--replay", type=label)
     run.add_argument("--review", type=Path)
+    diagnostic = commands.add_parser("diagnose")
+    diagnostic.add_argument("--name", required=True, type=label)
+    diagnostic.add_argument("--zip", required=True, type=Path)
+    diagnostic.add_argument("--engine", required=True)
+    diagnostic.add_argument(
+        "--timeout", type=int, default=5, choices=range(3, 31), metavar="3-30"
+    )
     commands.add_parser("report").add_argument("--name", required=True, type=label)
     args = parser.parse_args()
     os.umask(0o077)
@@ -385,6 +450,8 @@ def main():
             args.books = args.books.resolve()
             freeze(args, state)
             return 0
+        if args.action == "diagnose":
+            return diagnose(args, state)
         if args.action == "report":
             return report(state, state / "runs" / args.name)
         args.baseline_zip = args.baseline_zip.resolve()

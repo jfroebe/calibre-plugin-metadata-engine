@@ -83,3 +83,14 @@ approved tag removals. The file maps a case ID to optional arrays `titles`,
 `cover_sha256`, `synopsis_sha256`, and `dropped_tags`. Decisions are pinned
 with each run. Keep the state directory for as long as you need its baseline
 and replay evidence.
+
+## Diagnose a saved run locally
+
+Run `diagnose --name pilot --zip "$CANDIDATE_ZIP" --engine "$CANDIDATE_URL"`
+with the same `--state` option. This reads the saved attempts and grades both
+builds against the same frozen catalog and cover. For unresolved fields it
+checks enabled catalog providers and direct Open Library and Google Books
+lookups. It records source attribution and distinguishes work matches from
+exact edition matches. It checks cover artwork only for edition-verified
+results. It leaves the original report intact and checkpoints findings under
+`runs/pilot/diagnostics` so an interrupted analysis can resume locally.
