@@ -35,6 +35,14 @@ jobs:
           printf '%s' 'W1VuaXRdCkRlc2NyaXB0aW9uPU1ldGFkYXRhIEVuZ2luZSBzeW50aGV0aWMgUG9zdGdyZVNRTCBhY2NlcHRhbmNlIHdvcmtlcgpBZnRlcj1uZXR3b3JrLW9ubGluZS50YXJnZXQKV2FudHM9bmV0d29yay1vbmxpbmUudGFyZ2V0CgpbU2VydmljZV0KVHlwZT1zaW1wbGUKRW52aXJvbm1lbnRGaWxlPSVoLy5jb25maWcvbWV0YWRhdGEtcXVldWUvd29ya2VyLmVudgpFeGVjU3RhcnQ9JWgvLmxvY2FsL3NoYXJlL21ldGFkYXRhLXF1ZXVlL3B5dGhvbi9iaW4vcHl0aG9uICVoLy5sb2NhbC9zaGFyZS9tZXRhZGF0YS1xdWV1ZS9tZXRhZGF0YV9xdWV1ZV93b3JrZXIucHkgLS1ydW5uZXIgJUgKUmVzdGFydD1vbi1mYWlsdXJlClJlc3RhcnRTZWM9MTUKVU1hc2s9MDA3NwpOb05ld1ByaXZpbGVnZXM9dHJ1ZQoKW0luc3RhbGxdCldhbnRlZEJ5PWRlZmF1bHQudGFyZ2V0Cg==' | base64 -d > "$HOME/.config/systemd/user/metadata-queue-worker.service"
           role="metadata_queue_${EXPECTED_HOST//-/_}"
           password="$("$base/python/bin/python" -c 'from secrets import token_hex; print(token_hex(32))')"
+          admin_ssh() {
+            remote='work=$(mktemp); trap "rm -f -- $work" EXIT; cat > "$work"; bash "$work" </dev/null'
+            if [ "$EXPECTED_HOST" = chatgpt-dev ]; then
+              ssh -o BatchMode=yes -o ConnectTimeout=5 -J agent@192.168.0.25 root@192.168.0.59 "$remote"
+            else
+              ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 "$remote"
+            fi
+          }
           admin() {
             {
               cat <<'REMOTE'
@@ -52,7 +60,7 @@ jobs:
           REMOTE
               cat
               printf '\nSQL\n'
-            } | ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'work=$(mktemp); trap "rm -f -- $work" EXIT; cat > "$work"; bash "$work" </dev/null'
+            } | admin_ssh
           }
           if [ ! -f "$config/pgpass" ]; then
             {
@@ -77,4 +85,5 @@ jobs:
             systemctl --user enable --now metadata-queue-worker.service
           fi
           systemctl --user is-active metadata-queue-worker.service
+          sleep 4
           printf "SELECT id,desired_state,observed_state,heartbeat_at IS NOT NULL FROM metadata_queue.runners WHERE id='%s';\n" "$EXPECTED_HOST" | admin
