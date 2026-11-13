@@ -10,26 +10,38 @@ from psycopg.conninfo import conninfo_to_dict
 
 def password(text):
     """Read a bare password, a connection string, or a labeled password."""
-    text = text.rstrip("\r\n")
-    if text.startswith(("postgresql://", "postgres://")):
-        return conninfo_to_dict(text).get("password")
-    for line in text.splitlines():
+    lines = [
+        line.strip()
+        for line in text.lstrip("\ufeff").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    for index, line in enumerate(lines):
+        line = line.strip("`")
+        if line.startswith(("postgresql://", "postgres://")):
+            return conninfo_to_dict(line).get("password")
         if line.startswith("192.168.0.59:5432:metadata_test:metadata_test:"):
             return re.sub(r"\\(.)", r"\1", line.split(":", 4)[4])
         match = re.match(
-            r"\s*(?:export\s+)?(?:PGPASSWORD|password|pass)\s*[:=]\s*(.+)", line, re.I
+            r"(?:export\s+)?[\s*\-\"']*"
+            r"(?:PGPASSWORD|[\w-]*PASSWORD|pass|pwd)[\s*\"']*[:=]\s*"
+            r"[\s*]*(.*)",
+            line,
+            re.I,
         )
         if match:
             value = match[1].strip()
-            return (
-                value[1:-1]
-                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'"
-                else value
-            )
-    if "\n" not in text and text:
-        if re.match(r"(?:host|port|dbname|database|user)\s*=", text, re.I):
-            return conninfo_to_dict(text).get("password")
-        return text
+            if not value and index + 1 < len(lines):
+                value = lines[index + 1]
+            if value.endswith(","):
+                value = value[:-1].rstrip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'`":
+                return value[1:-1]
+            return value
+    if len(lines) == 1:
+        line = lines[0]
+        if re.match(r"(?:host|port|dbname|database|user)\s*=", line, re.I):
+            return conninfo_to_dict(line).get("password")
+        return line
     return None
 
 
