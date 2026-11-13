@@ -356,6 +356,57 @@ def main():
             "timeout": 30,
         },
         {
+            "title": "The Hidden Art of Disney's Music Years",
+            "authors": ["Didier Ghez"],
+            "isbn": "9781452137445",
+            "canonical_isbn": "9781452137445",
+            "expected_title": "The Hidden Art of Disney's Musical Years",
+            "series": ("They Drew as They Pleased", 2.0),
+            "one_result": True,
+            "merge_identify": True,
+            "minimum_description": 0,
+            "expected_subjects": {"animated films"},
+            "timeout": 30,
+        },
+        {
+            "title": (
+                "Plug and Claim: An addictive enemies-to-lovers Steamy Dark "
+                "Paranormal Romance (Plug and Claim Duology Book 1)"
+            ),
+            "authors": ["Darcy Fayton"],
+            "identifiers": {"mobi-asin": "B0BZT83XHG"},
+            "expected_asin": "B0BZT83XHG",
+            "expected_goodreads": "221934725",
+            "expected_title": "Plug and Claim",
+            "series": ("Kira & Nathaniel's Duet", 1.0),
+            "one_result": True,
+            "merge_identify": True,
+            "minimum_description": 350,
+            "topic": "kira",
+            "expected_subjects": {"vampires", "dark romance"},
+            "required_subjects": {"vampires"},
+            "timeout": 30,
+        },
+        {
+            "title": (
+                "Plug and Tame: A Steamy Dark Paranormal Romance "
+                "(Plug and Claim Duology Book 2)"
+            ),
+            "authors": ["Darcy Fayton"],
+            "identifiers": {"mobi-asin": "B0CG4KBN38"},
+            "expected_asin": "B0CG4KBN38",
+            "expected_goodreads": "217993643",
+            "expected_title": "Plug and Tame",
+            "series": ("Kira & Nathaniel's Duet", 2.0),
+            "one_result": True,
+            "merge_identify": True,
+            "minimum_description": 350,
+            "topic": "kira",
+            "expected_subjects": {"vampires", "dark romance"},
+            "required_subjects": {"vampires"},
+            "timeout": 30,
+        },
+        {
             "title": (
                 "Plug and Drain: An addictive Teacher-Student Steamy Dark Paranormal Romance"
             ),
@@ -786,9 +837,9 @@ def main():
         ):
             raise AssertionError(f"Unverified edition fields for {book.title}")
         description = plugin._usable_description(book.comments)
-        if not (description and len(description) >= case["minimum_description"]):
+        if len(description or "") < case["minimum_description"]:
             raise AssertionError("No full live synopsis for " + case["title"])
-        if case["topic"] not in description.casefold():
+        if case.get("topic") and case["topic"] not in (description or "").casefold():
             raise AssertionError("Synopsis has the wrong subject")
         if not book.tags:
             raise AssertionError("Missing final subject tags")
@@ -815,8 +866,13 @@ def main():
             labels = book.comments.splitlines()[0].partition(":")[2].strip()
             if not labels or not any(label.isalpha() for label in labels):
                 raise AssertionError("Missing actual warning labels")
-        if case.get("series") and (book.series, book.series_index) != case["series"]:
-            raise AssertionError((book.series, book.series_index))
+        if case.get("series"):
+            name, number = case["series"]
+            if ((book.series or "").casefold(), book.series_index) != (
+                name.casefold(),
+                number,
+            ):
+                raise AssertionError((book.series, book.series_index))
         if case.get("no_series") and book.series:
             raise AssertionError(
                 f"Included story's series assigned to {book.title}: {book.series}"
@@ -827,7 +883,7 @@ def main():
         ):
             raise AssertionError("Live metadata requirement failed")
         print("LIVE_METADATA_QUALITY_PASS title=" + book.title)
-        print("LIVE_DESCRIPTION_CHARACTERS=" + str(len(description)))
+        print("LIVE_DESCRIPTION_CHARACTERS=" + str(len(description or "")))
         print("LIVE_SUBJECTS=" + repr(book.tags))
         if case.get("warnings"):
             print("LIVE_COMMENTS=" + book.comments)

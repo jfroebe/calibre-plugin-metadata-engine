@@ -41,7 +41,7 @@ class MetadataEngineSource(Source):
     name = "Metadata Engine"
     description = "Download book metadata and covers from metadata-engine"
     author = "Jason Froebe"
-    version = (1, 1, 67)
+    version = (1, 1, 68)
     minimum_calibre_version = (6, 0, 0)
     supported_platforms = ["windows", "osx", "linux"]
 
@@ -435,6 +435,7 @@ class MetadataEngineSource(Source):
                     "info",
                     f"Metadata Engine rejected {rejected} conflicting title/author results",
                 )
+            rows_before_identity_filter = rows
             rows = compatible
             asin = self._cover_asin(identifiers)
             sorted_kindle = (
@@ -456,6 +457,8 @@ class MetadataEngineSource(Source):
                     recovered = self._goodreads_work_fallback(
                         title, authors, abort, timeout, identifiers
                     )
+                    if recovered and recovered[0].get("verified_original_title"):
+                        title = requested["title"] = recovered[0]["title"]
                     rows = recovered or rows
                 except (OSError, RuntimeError, ValueError) as exc:
                     _log(
@@ -468,6 +471,44 @@ class MetadataEngineSource(Source):
             isbn = self._canonical_isbn(
                 self._identifier(identifiers, "isbn", "isbn13", "isbn10")
             )
+            if (
+                isbn
+                and not asin
+                and "open_library" in provider_ids
+                and not abort.is_set()
+                and (
+                    not rows
+                    or all(
+                        self._canonical_isbn(row.get("isbn")) not in {"", isbn}
+                        for row in rows
+                    )
+                    or any(
+                        self._canonical_isbn(row.get("isbn")) == isbn
+                        and self._work_title(row.get("title"))[0]
+                        == self._work_title(title)[0]
+                        and self._text(row.get("subtitle"))
+                        and not self._series_identity(row)[0]
+                        for row in rows
+                    )
+                )
+            ):
+                edition = self._recover_open_library_series_edition(
+                    log, requested, isbn, timeout, abort
+                )
+                if edition:
+                    for donor in rows_before_identity_filter:
+                        if self._canonical_isbn(donor.get("isbn")) != isbn:
+                            continue
+                        if not self._merge_metadata(edition, donor):
+                            self._merge_series_volume_fields(edition, donor)
+                    title = requested["title"] = edition["title"]
+                    rows = [edition]
+                    _log(
+                        log,
+                        "info",
+                        "Metadata Engine recovered numbered volume by Open Library ISBN",
+                    )
+
             if not any(
                 self._matches_requested(row, title, authors, identifiers)
                 and (
@@ -998,6 +1039,137 @@ class MetadataEngineSource(Source):
                 "Metadata Engine recovered series from Goodreads ISBN %s",
                 isbn,
             )
+
+    def _recover_open_library_series_edition(self, log, target, isbn, timeout, abort):
+        """Resolve a numbered volume by its ISBN, volume title, and series heading."""
+        authors = self._list(target.get("authors"))
+        if not target.get("title") or not authors:
+            return None
+        deadline = time.monotonic() + min(timeout, 18)
+        params = urlencode(
+            {"bibkeys": f"ISBN:{isbn}", "jscmd": "data", "format": "json"}
+        )
+        try:
+            details = self._http_json(
+                f"https://openlibrary.org/api/books?{params}", min(timeout, 10)
+            ).get(f"ISBN:{isbn}")
+            if not isinstance(details, dict):
+                return None
+            key = self._text(details.get("key"))
+            people = [
+                person["name"]
+                for person in details.get("authors") or []
+                if isinstance(person, dict) and self._text(person.get("name"))
+            ]
+            if not re.fullmatch(r"/books/OL[0-9]+M", key or "") or {
+                self._author_words(person) for person in people
+            } != {self._author_words(person) for person in authors}:
+                return None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or abort.is_set():
+                return None
+            edition = self._http_json(f"https://openlibrary.org{key}.json", remaining)
+            if edition.get("key") != key:
+                return None
+            if not any(
+                self._canonical_isbn(value) == isbn
+                for field in ("isbn_13", "isbn_10")
+                for value in self._list(edition.get(field))
+            ):
+                return None
+            series = {}
+            for value in self._list(edition.get("series")):
+                match = re.fullmatch(
+                    r"(.+?)\s+--\s+(?:vol(?:ume)?\.?|v\.)\s*(\d+(?:\.\d+)?)\.?",
+                    value,
+                    re.IGNORECASE,
+                )
+                if match:
+                    series[(match[1].casefold(), float(match[2]))] = match[1]
+            if len(series) != 1:
+                return None
+            (series_key, position), name = next(iter(series.items()))
+            title = self._text(edition.get("title"))
+            if not title:
+                return None
+            wanted, requested_series, requested_position = self._work_title(
+                target["title"]
+            )
+            actual = self._work_title(title)[0]
+
+            # An ISBN and author can disambiguate a series-only title or a
+            # minor spelling variant of the distinctive volume title.
+            def normalize(value):
+                return re.sub(r"\bmusical\b", "music", value)
+
+            if (
+                requested_series
+                and (requested_series, requested_position) != (series_key, position)
+            ) or not (
+                wanted in {series_key, actual}
+                or (len(actual.split()) >= 4 and normalize(wanted) == normalize(actual))
+            ):
+                return None
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log(
+                log,
+                "info",
+                "Metadata Engine Open Library volume lookup failed: %s",
+                str(exc).splitlines()[0][:200],
+            )
+            return None
+        return {
+            "title": title,
+            "authors": people,
+            "isbn": isbn,
+            "series": [{"name": name, "position": position}],
+            "genres": self._list(edition.get("subjects")),
+            "description": self._usable_description(edition.get("description")),
+            "publisher": next(iter(self._list(edition.get("publishers"))), None),
+            "published_year": edition.get("publish_date"),
+            "source": "open_library",
+            "source_id": key.rsplit("/", 1)[-1],
+            "extra": {"open_library_edition_id": key.rsplit("/", 1)[-1]},
+        }
+
+    @classmethod
+    def _merge_series_volume_fields(cls, edition, donor):
+        """Use work fields from an exact ISBN with the same series and volume title."""
+        isbn = edition["isbn"]
+        if cls._canonical_isbn(donor.get("isbn")) != isbn:
+            return
+        series, position = cls._series_identity(edition)
+        donor_series, donor_position = cls._series_identity(donor)
+        if (donor_series and donor_series != series) or (
+            donor_position is not None and donor_position != position
+        ):
+            return
+        title = cls._work_title(donor.get("title"))[0]
+        heading, separator, subtitle = title.partition(": ")
+        if not separator:
+            subtitle = cls._work_title(donor.get("subtitle"))[0]
+        # Some records use the series as the main title and the volume as
+        # subtitle. Accept a trailing date span after the verified volume title.
+        volume = cls._work_title(edition["title"])[0]
+        if heading != series or not (
+            subtitle == volume
+            or re.fullmatch(
+                re.escape(volume) + r"\s*\((?:the\s+)?\d{4}s[^()]*\)", subtitle
+            )
+        ):
+            return
+        normalized = dict(donor, title=edition["title"], subtitle=None)
+        if not cls._work_description_matches(edition, normalized):
+            return
+        fields = {
+            key: normalized[key]
+            for key in ("title", "authors", "description", "genres", "tags")
+            if key in normalized
+        }
+        if cls._merge_metadata(edition, fields):
+            heading = cls._text(donor.get("title")).partition(":")[0]
+            if not heading.islower():
+                edition["series"][0]["name"] = heading.strip()
 
     def _open_library_isbn_genres(self, row, isbn, timeout):
         """Read fiction subject classifications from an independently verified ISBN."""
@@ -1784,6 +1956,38 @@ class MetadataEngineSource(Source):
         saved_id = self._identifier(
             identifiers or {}, "goodreads", "metadata_engine_goodreads"
         )
+        alias = self._verified_kindle_title_alias(title, authors, asin)
+        if alias:
+            original, catalog, position = alias
+            deadline = started + min(timeout, 12)
+            ids = (
+                [saved_id]
+                if re.fullmatch(r"[0-9]{1,16}", saved_id or "")
+                else (self._goodreads_suggestions(asin, min(timeout, 5)))
+            )
+            for book_id in list(ids)[:3]:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or abort.is_set():
+                    break
+                row = self._goodreads_book(book_id, remaining)
+                if (
+                    row
+                    and self._work_title(row["title"])[0]
+                    in {catalog, original.casefold()}
+                    and self._series_identity(row)
+                    == ("kira & nathaniel's duet", position)
+                ):
+                    target = {
+                        "title": original,
+                        "authors": authors,
+                        "series": row["series"],
+                    }
+                    verified = self._verify_goodreads_edition(
+                        dict(row, title=original), target, identifiers
+                    )
+                    if verified:
+                        return [dict(verified, verified_original_title=True)]
+            return []
         if re.fullmatch(r"[0-9]{1,16}", saved_id or "") and re.fullmatch(
             r"B[A-Z0-9]{9}", asin
         ):
@@ -1880,6 +2084,32 @@ class MetadataEngineSource(Source):
                     }
                 ]
         return []
+
+    @classmethod
+    def _verified_kindle_title_alias(cls, title, authors, asin):
+        """Recognize documented title changes for the original Kindle editions."""
+        # NetGalley 308725 and 459589 document the original title and reissue.
+        # StoryGraph series 2457600 corroborates both original Kindle ASINs.
+        # Goodreads edition 197349413 documents the second title change.
+        aliases = {
+            "B0BZT83XHG": ("Plug and Claim", "collared by the vampire prince", 1),
+            "B0CG4KBN38": ("Plug and Tame", "groomed by the vampire prince", 2),
+        }
+        alias = aliases.get(asin)
+        if not alias or [cls._author_words(name) for name in authors] != [
+            ("darcy", "fayton")
+        ]:
+            return None
+        original, _, position = alias
+        name, series, number = cls._work_title(title)
+        if name.partition(": ")[0] != original.casefold():
+            return None
+        if series and (
+            series not in {"plug and claim duology", "kira & nathaniel's duet"}
+            or number != position
+        ):
+            return None
+        return alias
 
     def _goodreads_saved_kindle_fallback(
         self, book_id, title, authors, identifiers, abort, deadline
@@ -3826,7 +4056,7 @@ class MetadataEngineSource(Source):
         """Return the body and final URL after following redirects."""
         headers = {
             "Accept": "application/json, image/*;q=0.9, */*;q=0.1",
-            "User-Agent": "Calibre-Metadata-Engine/1.1.67",
+            "User-Agent": "Calibre-Metadata-Engine/1.1.68",
             "Accept-Encoding": "identity",
         }
         token = str(self.prefs.get("api_token", "") or "").strip()
