@@ -62,6 +62,12 @@ jobs:
           db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
           live() { docker exec -i "$source" psql -X -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test "$@"; }
           test "$(live -Atc 'SELECT count(*) FROM calibre_acceptance.attempts')" = "$before"
+          if [ "$(live -Atc "SELECT to_regnamespace('metadata_queue') IS NOT NULL")" = t ]; then
+            test "$(live -Atc 'SELECT max(revision) FROM metadata_queue.migrations')" = 2
+            test "$(live -Atc 'SELECT count(*) FROM metadata_queue.historical_lookups')" = "$before"
+            printf 'Previously installed revision 2 verified with %s historical attempts.\n' "$before"
+            exit 0
+          fi
           digest="$(cut -d ' ' -f1 "$backup/metadata_test.dump.sha256")"
           {
             cat <<'SQL'
@@ -90,4 +96,4 @@ jobs:
           live -Atc "SELECT 'Indexed attempts',count(*) FROM metadata_queue.historical_lookups"
           live -Atc "SELECT 'Real campaigns',count(*) FROM metadata_queue.campaigns WHERE NOT synthetic"
           REMOTE
-          } | ssh -o BatchMode=yes root@192.168.0.59 'bash -s'
+          } | ssh -o BatchMode=yes root@192.168.0.59 'work=$(mktemp); trap "rm -f -- $work" EXIT; cat > "$work"; bash "$work" </dev/null'
