@@ -29,7 +29,7 @@ jobs:
           - host: chatgpt-build-02
             role: docker-build
     runs-on: [self-hosted, linux, x64, '${{ matrix.role }}', '${{ matrix.host }}']
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Require the dedicated Meta runner
         env:
@@ -46,19 +46,28 @@ jobs:
           umask 077
           root="$HOME/.local/share/calibre-library-acceptance"
           install -d -m 700 "$root" "$root/releases"
+          version="$(python3 -c 'import json; print(json.load(open("ci/compatibility.json"))["calibre"]["version"])')"
+          runtime="$root/calibre-$version"
+          if [ ! -x "$runtime/calibre-debug" ]; then
+            download="$(mktemp -d "$root/.runtime.XXXXXX")"
+            trap 'rm -rf "$download"' EXIT
+            python3 ci/install_calibre.py "$download/calibre"
+            mv -T "$download/calibre" "$runtime"
+            rm -rf "$download"
+            trap - EXIT
+          fi
+          test -x "$runtime/calibre-debug"
+          test -x "$runtime/calibre-customize"
           release="$root/releases/$GITHUB_SHA"
           stage="$(mktemp -d "$root/.install.XXXXXX")"
           trap 'rm -rf "$stage"' EXIT
           install -m 600 ci/library_acceptance{,_runtime}.py "$stage/"
           install -m 600 docs/library-acceptance.md "$stage/"
+          ln -s "$runtime" "$stage/calibre"
           if [ ! -d "$release" ]; then
             mv "$stage" "$release"
           fi
           ln -s "$release" "$root/.current-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           mv -Tf "$root/.current-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$root/current"
           printf 'Installed %s on %s. No acceptance command was invoked.\n' "$GITHUB_SHA" "$(hostname -s)"
-          if [ -x /opt/calibre/calibre-debug ]; then
-            printf 'Calibre executable is present in /opt/calibre.\n'
-          else
-            printf 'Specify an installed Calibre directory with --calibre-bin before starting a run.\n'
-          fi
+          printf 'Pinned Calibre %s installed.\n' "$version"

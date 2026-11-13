@@ -2,8 +2,10 @@
 
 The installer places the runner under
 `~/.local/share/calibre-library-acceptance/current` on both Meta VMs. It starts
-no service or scheduled job. Use the local agent account and an installed
-official Calibre on the worker that can read both the snapshot and ebook share.
+no service or scheduled job. Use the local agent account on the worker that can
+read both the snapshot and ebook share. The default Calibre binary comes from
+the repository pin. Use `--calibre-bin` to choose another installed version, such
+as the exact version running in production.
 The controller can invoke that worker over the existing SSH connection.
 The worker owns the queue, checks, retry timing, and checkpoints.
 
@@ -16,7 +18,7 @@ The CLI opens SQLite in read-only mode and opens ebook files for reading.
 ```bash
 runner="$HOME/.local/share/calibre-library-acceptance/current/library_acceptance.py"
 state="$HOME/.local/state/calibre-library-acceptance/pilot-1"
-python3 "$runner" --state "$state" --calibre-bin /opt/calibre prepare \
+python3 "$runner" --state "$state" prepare \
   --database "$SNAPSHOT_DB" --books "$READ_ONLY_BOOK_ROOT"
 ```
 
@@ -40,7 +42,7 @@ revision for each endpoint. If comparing plugin-only changes, both endpoints
 may be the same. Use separate test deployments when changing the engine.
 
 ```bash
-python3 "$runner" --state "$state" --calibre-bin /opt/calibre run \
+python3 "$runner" --state "$state" run \
   --name pilot \
   --baseline-zip "$BASELINE_ZIP" --candidate-zip "$CANDIDATE_ZIP" \
   --baseline-engine "$BASELINE_URL" --candidate-engine "$CANDIDATE_URL" \

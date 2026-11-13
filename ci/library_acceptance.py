@@ -345,7 +345,7 @@ def main():
     """Parse commands without reading a library or contacting providers by default."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state", required=True, type=Path)
-    parser.add_argument("--calibre-bin", type=Path, default=Path("/opt/calibre"))
+    parser.add_argument("--calibre-bin", type=Path, default=RUNTIME.parent / "calibre")
     commands = parser.add_subparsers(dest="action", required=True)
     prepare = commands.add_parser("prepare")
     prepare.add_argument("--database", required=True, type=Path)
