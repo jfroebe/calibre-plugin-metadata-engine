@@ -1,0 +1,64 @@
+name: Install local Calibre acceptance runner
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/install-library-acceptance.yml, 'ci/library_acceptance*.py']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-calibre-library-acceptance
+  cancel-in-progress: false
+
+env:
+  http_proxy: http://192.168.0.59:8118
+  https_proxy: http://192.168.0.59:8118
+  no_proxy: localhost,127.0.0.1,::1,.localhost
+
+jobs:
+  install:
+    name: Install on ${{ matrix.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: chatgpt-dev
+            role: calibre-controller
+          - host: chatgpt-build-02
+            role: docker-build
+    runs-on: [self-hosted, linux, x64, '${{ matrix.role }}', '${{ matrix.host }}']
+    timeout-minutes: 10
+    steps:
+      - name: Require the dedicated Meta runner
+        env:
+          EXPECTED_HOST: ${{ matrix.host }}
+        run: |
+          test "$(hostname -s)" = "$EXPECTED_HOST"
+          test "$(id -un)" = agent
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install an idle runner for the local agent account
+        run: |
+          set -euo pipefail
+          umask 077
+          root="$HOME/.local/share/calibre-library-acceptance"
+          install -d -m 700 "$root" "$root/releases"
+          release="$root/releases/$GITHUB_SHA"
+          stage="$(mktemp -d "$root/.install.XXXXXX")"
+          trap 'rm -rf "$stage"' EXIT
+          install -m 600 ci/library_acceptance{,_runtime}.py "$stage/"
+          install -m 600 docs/library-acceptance.md "$stage/"
+          if [ ! -d "$release" ]; then
+            mv "$stage" "$release"
+          fi
+          ln -s "$release" "$root/.current-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mv -Tf "$root/.current-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$root/current"
+          printf 'Installed %s on %s. No acceptance command was invoked.\n' "$GITHUB_SHA" "$(hostname -s)"
+          if [ -x /opt/calibre/calibre-debug ]; then
+            printf 'Calibre executable is present in /opt/calibre.\n'
+          else
+            printf 'Specify an installed Calibre directory with --calibre-bin before starting a run.\n'
+          fi
