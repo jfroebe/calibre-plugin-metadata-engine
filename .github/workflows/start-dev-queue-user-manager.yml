@@ -1,0 +1,47 @@
+name: Start the dev worker user manager
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/start-dev-queue-user-manager.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
+    timeout-minutes: 5
+    steps:
+      - name: Wait for lingering user manager and verify PostgreSQL access
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-dev
+          test -s "$HOME/.config/metadata-queue/pgpass"
+          uid="$(id -u)"
+          export XDG_RUNTIME_DIR="/run/user/$uid"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          loginctl enable-linger "$(id -un)" || sudo -n loginctl enable-linger "$(id -un)"
+          for attempt in $(seq 1 20); do
+            if [ -S "$XDG_RUNTIME_DIR/bus" ]; then break; fi
+            sleep 1
+          done
+          if [ ! -S "$XDG_RUNTIME_DIR/bus" ]; then
+            sudo -n systemctl start "user@$uid.service"
+          fi
+          systemctl --user daemon-reload
+          if ! systemctl --user is-enabled --quiet metadata-queue-worker.service; then
+            systemctl --user enable --now metadata-queue-worker.service
+          fi
+          systemctl --user is-active metadata-queue-worker.service
+          set -a
+          source "$HOME/.config/metadata-queue/worker.env"
+          set +a
+          "$HOME/.local/share/metadata-queue/python/bin/python" - <<'PY'
+          import os
+          import psycopg
+
+          with psycopg.connect(os.environ["METADATA_QUEUE_DSN"], connect_timeout=5) as db:
+              allowed = db.execute("SELECT metadata_queue.heartbeat('chatgpt-dev')").fetchone()[0]
+              if not allowed:
+                  raise SystemExit("Worker is intentionally stopped or its login is unmapped")
+              print("Authenticated heartbeat verified on chatgpt-dev")
+          PY
