@@ -1,0 +1,45 @@
+name: Prepare local Calibre acceptance pilot
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/prepare-library-acceptance.yml, ci/prepare_library_acceptance.py]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-calibre-library-acceptance
+  cancel-in-progress: false
+
+env:
+  http_proxy: http://192.168.0.59:8118
+  https_proxy: http://192.168.0.59:8118
+  no_proxy: localhost,127.0.0.1,::1,.localhost,192.168.0.59
+  NO_PROXY: localhost,127.0.0.1,::1,.localhost,192.168.0.59
+
+jobs:
+  prepare:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 25
+    steps:
+      - name: Require approved worker
+        run: |
+          test "$(hostname -s)" = chatgpt-build-02
+          test "$(id -un)" = agent
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: f768ad85040678fde766efbe4f3093be8c4e666d
+          path: candidate
+          persist-credentials: false
+      - name: Verify builds and prepare the private sample
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 candidate/ci/package.py
+          python3 ci/prepare_library_acceptance.py \
+            Calibre-Metadata-Engine.zip candidate/Calibre-Metadata-Engine.zip
