@@ -1,0 +1,39 @@
+name: Activate and verify synthetic queue worker on chatgpt-dev
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/activate-dev-queue-worker.yml]
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
+    timeout-minutes: 5
+    steps:
+      - name: Activate the previously installed synthetic worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(hostname -s)" = chatgpt-dev
+          config="$HOME/.config/metadata-queue"
+          base="$HOME/.local/share/metadata-queue"
+          test -x "$base/python/bin/python"
+          if [ ! -s "$config/pgpass" ]; then
+            password="$(printf '%s' 'G2zm5xEPhEcH36pRb3ezLPK0BkExqNI5tlD3u6cIKxQ1vkW7FdptUmFplMMFzWxGqws7h3RVksItFgS3HAf3bG6r7jbbKHuiO79jiApVT+nwMG6g29bV0+yWODVUfQenyHGGJ3dQ2Wv1ky8lDSK1Tom29t57d5VisyqCY5JwG8czyheDwqSDVva9/0b9VIhhMhKg7mB5FOn+QmUOUH97pQ04U4nfFT/UG2sh4NVPbTn2xI7Uo6OceTsW2CywBHWF0bAI4mkYAutTtH+lU9TQH5ocGjFL5O4Yp5PgD5LHMKAk/cln0ASBTTmI17dbxBiQhHnhjmOWo6ZfR0fWfAljqWLAhrQx0tNvqd7K/NtvODsrMOOGhCILO8afI9XD4xXn8Dmy1rPVL7TwshK3QyKYOiWVsxnuMWQPtOVrUfjU1ZfIgnkht2pOrpB9HPHmu7wXl5C0lGqnhlIKtZ8J+aefN7Hz28aliaTI7eSwQD/8iC5OLJRnnd5ecA9CnB2zHXaQ' | base64 -d | openssl pkeyutl -decrypt -inkey "$config/worker-handoff.pem" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256)"
+            [[ "$password" =~ ^[a-f0-9]{64}$ ]]
+            printf '192.168.0.59:5432:metadata_test:metadata_queue_chatgpt_dev:%s\n' "$password" > "$config/pgpass"
+            unset password
+          fi
+          rm -f -- "$config/worker-handoff.pem"
+          printf 'PGPASSFILE=%s\nMETADATA_QUEUE_DSN="host=192.168.0.59 port=5432 dbname=metadata_test user=metadata_queue_chatgpt_dev"\n' "$config/pgpass" > "$config/worker.env"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          if ! loginctl show-user "$(id -un)" --property=Linger --value | grep -qx yes; then
+            loginctl enable-linger "$(id -un)" || sudo -n loginctl enable-linger "$(id -un)"
+          fi
+          systemctl --user daemon-reload
+          if ! systemctl --user is-enabled --quiet metadata-queue-worker.service; then
+            systemctl --user enable --now metadata-queue-worker.service
+          fi
+          systemctl --user is-active metadata-queue-worker.service
+          systemctl --user show metadata-queue-worker.service -p MainPID -p NRestarts
