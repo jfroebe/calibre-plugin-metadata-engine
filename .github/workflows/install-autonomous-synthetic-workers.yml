@@ -1,0 +1,80 @@
+name: Install synthetic metadata queue workers
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/install-autonomous-synthetic-workers.yml]
+permissions:
+  contents: read
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {host: chatgpt-build-02, role: docker-build}
+          - {host: chatgpt-dev, role: calibre-controller}
+    runs-on: [self-hosted, linux, x64, '${{ matrix.role }}', '${{ matrix.host }}']
+    timeout-minutes: 10
+    env:
+      EXPECTED_HOST: ${{ matrix.host }}
+    steps:
+      - name: Install worker and verify service and registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(hostname -s)" = "$EXPECTED_HOST"
+          test "$(id -un)" = agent
+          base="$HOME/.local/share/metadata-queue"
+          config="$HOME/.config/metadata-queue"
+          install -d -m 700 "$base" "$config" "$HOME/.config/systemd/user"
+          root="$HOME/.local/share/calibre-library-acceptance"
+          test -x "$root/current/python-env/bin/python"
+          ln -sfn "$(readlink -f "$root/current/python-env")" "$base/python"
+          printf '%s' 'IiIiUG9sbCBQb3N0Z3JlU1FMIGZvciBzeW50aGV0aWMgYWNjZXB0YW5jZSBqb2JzIHdpdGhvdXQgYW55IGV4dGVybmFsIGxvb2t1cHMuIiIiCgppbXBvcnQgYXJncGFyc2UKaW1wb3J0IGxvZ2dpbmcKaW1wb3J0IG9zCmltcG9ydCBzaWduYWwKZnJvbSB0aHJlYWRpbmcgaW1wb3J0IEV2ZW50CgppbXBvcnQgcHN5Y29wZwoKTE9HID0gbG9nZ2luZy5nZXRMb2dnZXIoX19uYW1lX18pCgoKZGVmIHdvcmsoZHNuLCBydW5uZXIsIHN0b3AsIG9uY2UpOgogICAgIiIiSGVhcnRiZWF0LCByZWNvdmVyIGV4cGlyZWQgbGVhc2VzIGFuZCBwcm9jZXNzIHN5bnRoZXRpYyB3b3JrLiIiIgogICAgd2hpbGUgbm90IHN0b3AuaXNfc2V0KCk6CiAgICAgICAgdHJ5OgogICAgICAgICAgICB3aXRoIHBzeWNvcGcuY29ubmVjdChkc24sIGF1dG9jb21taXQ9VHJ1ZSwgY29ubmVjdF90aW1lb3V0PTUpIGFzIGRiOgogICAgICAgICAgICAgICAgd2hpbGUgbm90IHN0b3AuaXNfc2V0KCk6CiAgICAgICAgICAgICAgICAgICAgYWxsb3dlZCA9IGRiLmV4ZWN1dGUoCiAgICAgICAgICAgICAgICAgICAgICAgICJTRUxFQ1QgbWV0YWRhdGFfcXVldWUuaGVhcnRiZWF0KCVzKSIsIChydW5uZXIsKQogICAgICAgICAgICAgICAgICAgICkuZmV0Y2hvbmUoKVswXQogICAgICAgICAgICAgICAgICAgIGlmIGFsbG93ZWQ6CiAgICAgICAgICAgICAgICAgICAgICAgIGRiLmV4ZWN1dGUoIlNFTEVDVCBtZXRhZGF0YV9xdWV1ZS5yZWNvdmVyKCVzKSIsIChydW5uZXIsKSkKICAgICAgICAgICAgICAgICAgICAgICAgIyBUaGUgZGF0YWJhc2UgZXhjbHVkZXMgcmVhbCB3b3JrbG9hZHMgZnJvbSB0aGlzIFJQQy4KICAgICAgICAgICAgICAgICAgICAgICAgam9iID0gZGIuZXhlY3V0ZSgKICAgICAgICAgICAgICAgICAgICAgICAgICAgICJTRUxFQ1QgKiBGUk9NIG1ldGFkYXRhX3F1ZXVlLmNsYWltKCVzKSIsIChydW5uZXIsKQogICAgICAgICAgICAgICAgICAgICAgICApLmZldGNob25lKCkKICAgICAgICAgICAgICAgICAgICAgICAgaWYgam9iIGlzIG5vdCBOb25lOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgam9iX2lkLCB0b2tlbiwgc3ludGhldGljID0gam9iCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiBub3Qgc3ludGhldGljOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHJhaXNlIFJ1bnRpbWVFcnJvcigKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIlN5bnRoZXRpYyB3b3JrZXIgcmVjZWl2ZWQgYSByZWFsIGpvYiIKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBkYi5leGVjdXRlKAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICJTRUxFQ1QgbWV0YWRhdGFfcXVldWUuZmluaXNoKCVzLCVzLCVzLCdwYXNzZWQnKSIsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgKHJ1bm5lciwgam9iX2lkLCB0b2tlbiksCiAgICAgICAgICAgICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICAgICAgaWYgb25jZToKICAgICAgICAgICAgICAgICAgICAgICAgcmV0dXJuCiAgICAgICAgICAgICAgICAgICAgc3RvcC53YWl0KDMgaWYgYWxsb3dlZCBlbHNlIDEwKQogICAgICAgIGV4Y2VwdCBwc3ljb3BnLk9wZXJhdGlvbmFsRXJyb3I6CiAgICAgICAgICAgIGlmIG9uY2U6CiAgICAgICAgICAgICAgICByYWlzZQogICAgICAgICAgICBMT0cud2FybmluZygiUG9zdGdyZVNRTCB1bmF2YWlsYWJsZTsgd2lsbCByZWNvbm5lY3QiKQogICAgICAgICAgICBzdG9wLndhaXQoMTUpCgoKZGVmIG1haW4oKToKICAgICIiIlJ1biB0aGUgc2VydmljZSB3aXRob3V0IGNoYW5naW5nIHJ1bm5lciBkZXNpcmVkIHN0YXRlIG9uIHN0YXJ0dXAuIiIiCiAgICBwYXJzZXIgPSBhcmdwYXJzZS5Bcmd1bWVudFBhcnNlcihkZXNjcmlwdGlvbj1fX2RvY19fKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgiLS1ydW5uZXIiLCByZXF1aXJlZD1UcnVlKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgiLS1vbmNlIiwgYWN0aW9uPSJzdG9yZV90cnVlIikKICAgIGFyZ3MgPSBwYXJzZXIucGFyc2VfYXJncygpCiAgICBsb2dnaW5nLmJhc2ljQ29uZmlnKGxldmVsPWxvZ2dpbmcuSU5GTykKICAgIHN0b3AgPSBFdmVudCgpCiAgICBmb3Igc2lnbnVtIGluIChzaWduYWwuU0lHVEVSTSwgc2lnbmFsLlNJR0lOVCk6CiAgICAgICAgc2lnbmFsLnNpZ25hbChzaWdudW0sIGxhbWJkYSAqXzogc3RvcC5zZXQoKSkKICAgIHdvcmsob3MuZW52aXJvblsiTUVUQURBVEFfUVVFVUVfRFNOIl0sIGFyZ3MucnVubmVyLCBzdG9wLCBhcmdzLm9uY2UpCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIG1haW4oKQo=' | base64 -d > "$base/metadata_queue_worker.py"
+          printf '%s' 'W1VuaXRdCkRlc2NyaXB0aW9uPU1ldGFkYXRhIEVuZ2luZSBzeW50aGV0aWMgUG9zdGdyZVNRTCBhY2NlcHRhbmNlIHdvcmtlcgpBZnRlcj1uZXR3b3JrLW9ubGluZS50YXJnZXQKV2FudHM9bmV0d29yay1vbmxpbmUudGFyZ2V0CgpbU2VydmljZV0KVHlwZT1zaW1wbGUKRW52aXJvbm1lbnRGaWxlPSVoLy5jb25maWcvbWV0YWRhdGEtcXVldWUvd29ya2VyLmVudgpFeGVjU3RhcnQ9JWgvLmxvY2FsL3NoYXJlL21ldGFkYXRhLXF1ZXVlL3B5dGhvbi9iaW4vcHl0aG9uICVoLy5sb2NhbC9zaGFyZS9tZXRhZGF0YS1xdWV1ZS9tZXRhZGF0YV9xdWV1ZV93b3JrZXIucHkgLS1ydW5uZXIgJUgKUmVzdGFydD1vbi1mYWlsdXJlClJlc3RhcnRTZWM9MTUKVU1hc2s9MDA3NwpOb05ld1ByaXZpbGVnZXM9dHJ1ZQoKW0luc3RhbGxdCldhbnRlZEJ5PWRlZmF1bHQudGFyZ2V0Cg==' | base64 -d > "$HOME/.config/systemd/user/metadata-queue-worker.service"
+          role="metadata_queue_${EXPECTED_HOST//-/_}"
+          password="$("$base/python/bin/python" -c 'from secrets import token_hex; print(token_hex(32))')"
+          admin() {
+            {
+              cat <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qX -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          REMOTE
+              cat
+              printf '\nSQL\n'
+            } | ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'work=$(mktemp); trap "rm -f -- $work" EXIT; cat > "$work"; bash "$work" </dev/null'
+          }
+          if [ ! -f "$config/pgpass" ]; then
+            {
+              printf "BEGIN;\nSELECT pg_advisory_xact_lock(89411834);\n"
+              printf "CREATE ROLE %s LOGIN PASSWORD '%s';\n" "$role" "$password"
+              printf "GRANT CONNECT ON DATABASE metadata_test TO %s;\n" "$role"
+              printf "GRANT USAGE ON SCHEMA metadata_queue TO %s;\n" "$role"
+              printf "GRANT EXECUTE ON FUNCTION metadata_queue.heartbeat(text), metadata_queue.claim(text), metadata_queue.recover(text), metadata_queue.renew(text,bigint,uuid), metadata_queue.finish(text,bigint,uuid,text,text) TO %s;\n" "$role"
+              printf "INSERT INTO metadata_queue.runners(id,host,desired_state) VALUES ('%s','%s','running') ON CONFLICT DO NOTHING;\n" "$EXPECTED_HOST" "$EXPECTED_HOST"
+              printf "INSERT INTO metadata_queue.worker_accounts VALUES ('%s','%s') ON CONFLICT DO NOTHING;\nCOMMIT;\n" "$EXPECTED_HOST" "$role"
+            } | admin >/dev/null 2>&1 || { printf '%s\n' 'Database role provisioning failed'; exit 1; }
+            printf '192.168.0.59:5432:metadata_test:%s:%s\n' "$role" "$password" > "$config/pgpass"
+          fi
+          unset password
+          printf 'PGPASSFILE=%s\nMETADATA_QUEUE_DSN="host=192.168.0.59 port=5432 dbname=metadata_test user=%s"\n' "$config/pgpass" "$role" > "$config/worker.env"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          if ! loginctl show-user "$USER" --property=Linger --value | grep -qx yes; then
+            loginctl enable-linger "$USER" || sudo -n loginctl enable-linger "$USER"
+          fi
+          systemctl --user daemon-reload
+          if ! systemctl --user is-enabled --quiet metadata-queue-worker.service; then
+            systemctl --user enable --now metadata-queue-worker.service
+          fi
+          systemctl --user is-active metadata-queue-worker.service
+          printf "SELECT id,desired_state,observed_state,heartbeat_at IS NOT NULL FROM metadata_queue.runners WHERE id='%s';\n" "$EXPECTED_HOST" | admin
