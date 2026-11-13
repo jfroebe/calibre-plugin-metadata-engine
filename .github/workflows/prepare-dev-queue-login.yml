@@ -1,0 +1,25 @@
+name: Prepare encrypted dev worker credential handoff
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/prepare-dev-queue-login.yml]
+permissions:
+  contents: read
+jobs:
+  key:
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
+    timeout-minutes: 3
+    steps:
+      - name: Generate a one-use encryption key and emit only its public part
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-dev
+          umask 077
+          dir="$HOME/.config/metadata-queue"
+          install -d -m 700 "$dir"
+          test ! -e "$dir/worker-handoff.pem"
+          openssl genpkey -quiet -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$dir/worker-handoff.pem"
+          printf 'HANDOFF_PUBLIC '
+          openssl pkey -in "$dir/worker-handoff.pem" -pubout -outform DER | base64 -w0
+          printf '\n'
