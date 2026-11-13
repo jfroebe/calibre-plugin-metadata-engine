@@ -1,0 +1,62 @@
+name: Freeze offline campaign evidence
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/freeze-autonomous-pilot-evidence.yml]
+permissions:
+  contents: read
+jobs:
+  freeze:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 5
+    steps:
+      - name: Store the prepared manifest and historical failure evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(hostname -s)" = chatgpt-build-02
+          work="$(mktemp -d)"
+          trap 'rm -rf -- "$work"' EXIT
+          printf '%s' 'LS0gUmVjb3JkIGZyb3plbiB3b3JrbG9hZCBzbmFwc2hvdHMgYW5kIHNhdmVkIGRpYWdub3N0aWNzIHdpdGhvdXQgZW5hYmxpbmcgY2xhaW1zLgpTRVQgTE9DQUwgc2VhcmNoX3BhdGggPSBtZXRhZGF0YV9xdWV1ZSwgcGdfY2F0YWxvZywgcGdfdGVtcDsKCkNSRUFURSBUQUJMRSBtYW5pZmVzdF9yZXZpc2lvbnMgKAogICAgY2FtcGFpZ25faWQgdXVpZCBOT1QgTlVMTCBSRUZFUkVOQ0VTIGNhbXBhaWducywKICAgIGNhbXBhaWduX3ZlcnNpb24gYmlnaW50IE5PVCBOVUxMLAogICAgbWFuaWZlc3RfaGFzaCB0ZXh0IE5PVCBOVUxMLAogICAgY29uZmlnX2hhc2ggdGV4dCBOT1QgTlVMTCwKICAgIG1lbWJlcnMganNvbmIgTk9UIE5VTEwgQ0hFQ0sgKGpzb25iX3R5cGVvZihtZW1iZXJzKSA9ICdhcnJheScpLAogICAgY29uZmlnIGpzb25iIE5PVCBOVUxMIENIRUNLIChqc29uYl90eXBlb2YoY29uZmlnKSA9ICdvYmplY3QnKSwKICAgIHJlY29yZGVkX2F0IHRpbWVzdGFtcHR6IE5PVCBOVUxMIERFRkFVTFQgY2xvY2tfdGltZXN0YW1wKCksCiAgICBQUklNQVJZIEtFWSAoY2FtcGFpZ25faWQsIGNhbXBhaWduX3ZlcnNpb24pCik7CgpDUkVBVEUgRlVOQ1RJT04gZnJlZXplX21hbmlmZXN0KHBfaWQgdXVpZCwgcF92ZXJzaW9uIGJpZ2ludCkKUkVUVVJOUyB0ZXh0IExBTkdVQUdFIHBscGdzcWwKU0VUIHNlYXJjaF9wYXRoID0gcGdfY2F0YWxvZywgbWV0YWRhdGFfcXVldWUsIHBnX3RlbXAgQVMgJCQKREVDTEFSRQogICAgYyBjYW1wYWlnbnM7CiAgICBmcm96ZW4ganNvbmI7CiAgICBtZW1iZXJfaGFzaCB0ZXh0OwogICAgc2V0dGluZ3NfaGFzaCB0ZXh0OwpCRUdJTgogICAgU0VMRUNUICogSU5UTyBTVFJJQ1QgYyBGUk9NIGNhbXBhaWducyBXSEVSRSBpZD1wX2lkIEZPUiBVUERBVEU7CiAgICBJRiBjLnN0YXRlIDw+ICdwcmVwYXJpbmcnIE9SIGMudmVyc2lvbiA8PiBwX3ZlcnNpb24gVEhFTgogICAgICAgIFJBSVNFIEVYQ0VQVElPTiAnbWFuaWZlc3QgY2FwdHVyZSByZXF1aXJlcyB0aGUgY3VycmVudCBwcmVwYXJpbmcgY2FtcGFpZ24nOwogICAgRU5EIElGOwogICAgU0VMRUNUIGpzb25iX2FnZyhtZWRpYV9pZCBPUkRFUiBCWSBtZWRpYV9pZCkgSU5UTyBmcm96ZW4KICAgICAgICBGUk9NIGNhbXBhaWduX21lbWJlcnMgV0hFUkUgY2FtcGFpZ25faWQ9cF9pZDsKICAgIElGIGZyb3plbiBJUyBOVUxMIFRIRU4gUkFJU0UgRVhDRVBUSU9OICdjYW5ub3QgY2FwdHVyZSBhbiBlbXB0eSBtYW5pZmVzdCc7IEVORCBJRjsKICAgIG1lbWJlcl9oYXNoIDo9IGNhbXBhaWduX2hhc2gocF9pZCk7CiAgICBzZXR0aW5nc19oYXNoIDo9IGVuY29kZShzaGEyNTYoY29udmVydF90byhjLmNvbmZpZzo6dGV4dCwnVVRGOCcpKSwnaGV4Jyk7CiAgICBJTlNFUlQgSU5UTyBtYW5pZmVzdF9yZXZpc2lvbnMoY2FtcGFpZ25faWQsY2FtcGFpZ25fdmVyc2lvbixtYW5pZmVzdF9oYXNoLGNvbmZpZ19oYXNoLG1lbWJlcnMsY29uZmlnKQogICAgICAgIFZBTFVFUyAocF9pZCxwX3ZlcnNpb24sbWVtYmVyX2hhc2gsc2V0dGluZ3NfaGFzaCxmcm96ZW4sYy5jb25maWcpCiAgICAgICAgT04gQ09ORkxJQ1QgRE8gTk9USElORzsKICAgIElGIE5PVCBFWElTVFMgKAogICAgICAgIFNFTEVDVCBGUk9NIG1hbmlmZXN0X3JldmlzaW9ucwogICAgICAgIFdIRVJFIGNhbXBhaWduX2lkPXBfaWQgQU5EIGNhbXBhaWduX3ZlcnNpb249cF92ZXJzaW9uCiAgICAgICAgICBBTkQgbWFuaWZlc3RfaGFzaD1tZW1iZXJfaGFzaCBBTkQgY29uZmlnX2hhc2g9c2V0dGluZ3NfaGFzaAogICAgKSBUSEVOCiAgICAgICAgUkFJU0UgRVhDRVBUSU9OICdyZXZpc2lvbiBhbHJlYWR5IGNvbnRhaW5zIGRpZmZlcmVudCBtZW1iZXJzaGlwIG9yIGNvbmZpZ3VyYXRpb24nOwogICAgRU5EIElGOwogICAgUkVUVVJOIG1lbWJlcl9oYXNoOwpFTkQKJCQ7CgpDUkVBVEUgVEFCTEUgaGlzdG9yaWNhbF9kaWFnbm9zdGljcyAoCiAgICBjYW1wYWlnbl9pZCB1dWlkIE5PVCBOVUxMIFJFRkVSRU5DRVMgY2FtcGFpZ25zLAogICAgY2FzZV9pZCB0ZXh0IE5PVCBOVUxMLAogICAgZXZpZGVuY2UganNvbmIgTk9UIE5VTEwgQ0hFQ0sgKGpzb25iX3R5cGVvZihldmlkZW5jZSkgPSAnb2JqZWN0JyksCiAgICByZWNvcmRlZF9hdCB0aW1lc3RhbXB0eiBOT1QgTlVMTCBERUZBVUxUIGNsb2NrX3RpbWVzdGFtcCgpLAogICAgUFJJTUFSWSBLRVkgKGNhbXBhaWduX2lkLGNhc2VfaWQpCik7ClJFVk9LRSBBTEwgT04gbWFuaWZlc3RfcmV2aXNpb25zLCBoaXN0b3JpY2FsX2RpYWdub3N0aWNzIEZST00gUFVCTElDOwpSRVZPS0UgRVhFQ1VURSBPTiBGVU5DVElPTiBmcmVlemVfbWFuaWZlc3QodXVpZCxiaWdpbnQpIEZST00gUFVCTElDOwpJTlNFUlQgSU5UTyBtaWdyYXRpb25zIChyZXZpc2lvbikgVkFMVUVTICgzKTsK' | base64 -d > "$work/up.sql"
+          printf '%s' 'LS0gUnVuIHRyYW5zYWN0aW9uYWxseSBhZnRlciBzYXZpbmcgdGhlIHJldmlzaW9uIGV2aWRlbmNlIGluIGFuIGlzb2xhdGVkIGJhY2t1cC4KRFJPUCBGVU5DVElPTiBtZXRhZGF0YV9xdWV1ZS5mcmVlemVfbWFuaWZlc3QodXVpZCxiaWdpbnQpOwpEUk9QIFRBQkxFIG1ldGFkYXRhX3F1ZXVlLmhpc3RvcmljYWxfZGlhZ25vc3RpY3MsIG1ldGFkYXRhX3F1ZXVlLm1hbmlmZXN0X3JldmlzaW9uczsKREVMRVRFIEZST00gbWV0YWRhdGFfcXVldWUubWlncmF0aW9ucyBXSEVSRSByZXZpc2lvbj0zOwo=' | base64 -d > "$work/down.sql"
+          printf '%s' 'IiIiU3RyZWFtIHNhdmVkIGZhaWx1cmUgZXZpZGVuY2UgYXMgSlNPTiBmb3IgdGhlIHRlc3QgZGF0YWJhc2UgaW1wb3J0ZXIuIiIiCgppbXBvcnQgYXJncGFyc2UKaW1wb3J0IGpzb24KaW1wb3J0IHJlCmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aAoKCmRlZiBtYWluKCk6CiAgICAiIiJSZWFkIG9ubHkgYW5vbnltb3VzIGNhc2UgSURzIGFuZCBzb3VyY2UtYXR0cmlidXRlZCBkaWFnbm9zdGljIHN1bW1hcmllcy4iIiIKICAgIHBhcnNlciA9IGFyZ3BhcnNlLkFyZ3VtZW50UGFyc2VyKGRlc2NyaXB0aW9uPV9fZG9jX18pCiAgICBwYXJzZXIuYWRkX2FyZ3VtZW50KCItLWRpcmVjdG9yeSIsIHR5cGU9UGF0aCwgcmVxdWlyZWQ9VHJ1ZSkKICAgIGFyZ3MgPSBwYXJzZXIucGFyc2VfYXJncygpCiAgICByZWNvcmRzID0gW10KICAgIGZvciBmaWxlIGluIHNvcnRlZChhcmdzLmRpcmVjdG9yeS5nbG9iKCIqLmpzb24iKSk6CiAgICAgICAgaWYgbm90IHJlLmZ1bGxtYXRjaChyIig/OnByb2Nlc3NlZHxub19zYXZlZF9tYXJrZXIpLVthLXowLTlfLV0rIiwgZmlsZS5zdGVtKToKICAgICAgICAgICAgY29udGludWUKICAgICAgICBkYXRhID0ganNvbi5sb2FkcyhmaWxlLnJlYWRfdGV4dChlbmNvZGluZz0idXRmLTgiKSkKICAgICAgICByZWNvcmRzLmFwcGVuZCgKICAgICAgICAgICAgewogICAgICAgICAgICAgICAgImNhc2VfaWQiOiBmaWxlLnN0ZW0sCiAgICAgICAgICAgICAgICAiZXZpZGVuY2UiOiB7CiAgICAgICAgICAgICAgICAgICAga2V5OiBkYXRhW2tleV0KICAgICAgICAgICAgICAgICAgICBmb3Iga2V5IGluICgKICAgICAgICAgICAgICAgICAgICAgICAgInN1cHBvcnRlZCIsCiAgICAgICAgICAgICAgICAgICAgICAgICJ1bnJlc29sdmVkIiwKICAgICAgICAgICAgICAgICAgICAgICAgInByb3ZpZGVyX3RyYW5zaWVudCIsCiAgICAgICAgICAgICAgICAgICAgICAgICJyZWplY3RlZCIsCiAgICAgICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgICAgIGlmIGtleSBpbiBkYXRhCiAgICAgICAgICAgICAgICB9LAogICAgICAgICAgICB9CiAgICAgICAgKQogICAgaWYgbm90IHJlY29yZHM6CiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdCgiTm8gc2F2ZWQgcGlsb3QgZGlhZ25vc3RpY3MgZm91bmQiKQogICAgcHJpbnQoanNvbi5kdW1wcyhyZWNvcmRzLCBzZXBhcmF0b3JzPSgiLCIsICI6IikpKQoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBtYWluKCkK' | base64 -d > "$work/collect.py"
+          python3 "$work/collect.py" --directory "$HOME/.local/state/calibre-library-acceptance/pilot-1/runs/pilot/diagnostics" > "$work/evidence.json"
+          {
+            cat <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt --single-transaction -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          SELECT pg_advisory_xact_lock(89411833);
+          SELECT NOT EXISTS (SELECT FROM metadata_queue.migrations WHERE revision=3) AS needs_migration \gset
+          \if :needs_migration
+          REMOTE
+            cat "$work/up.sql"
+            printf '\n\\endif\n'
+            cat <<'SQL'
+          SELECT metadata_queue.freeze_manifest('72b07fe2-86a0-4a69-aa2d-3cc22362f923',1);
+          CREATE TEMP TABLE prior_evidence (value text);
+          COPY prior_evidence FROM STDIN;
+          SQL
+            sed 's/\\/\\\\/g' "$work/evidence.json"
+            printf '\\.\n'
+            cat <<'SQL'
+          INSERT INTO metadata_queue.historical_diagnostics (campaign_id,case_id,evidence)
+          SELECT '72b07fe2-86a0-4a69-aa2d-3cc22362f923', entry->>'case_id',entry->'evidence'
+          FROM prior_evidence e CROSS JOIN LATERAL jsonb_array_elements(e.value::jsonb) entry
+          ON CONFLICT DO NOTHING;
+          SELECT 'manifest',campaign_id,campaign_version,jsonb_array_length(members),manifest_hash,config_hash
+          FROM metadata_queue.manifest_revisions;
+          SELECT 'diagnostics',count(*) FROM metadata_queue.historical_diagnostics;
+          SELECT 'real_campaign',state FROM metadata_queue.campaigns WHERE id='72b07fe2-86a0-4a69-aa2d-3cc22362f923';
+          SQL
+            printf '\nSQL\n'
+          } | ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'script=$(mktemp); trap "rm -f -- $script" EXIT; cat > "$script"; bash "$script" </dev/null'
