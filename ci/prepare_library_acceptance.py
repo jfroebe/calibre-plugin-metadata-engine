@@ -11,7 +11,7 @@ import sys
 import time
 import zipfile
 from contextlib import closing
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -37,25 +37,36 @@ def library_mount():
         check=False,
     )
     mounts = json.loads(result.stdout)["filesystems"] if result.stdout else []
+    library = PurePosixPath("safe/Main Library")
     matches = set()
     for mount in mounts:
-        source = mount["source"].casefold()
-        if source != SOURCE and not source.startswith((SOURCE + "/", SOURCE + "[")):
+        source = mount["source"]
+        share, separator, subpath = source.partition("[")
+        if share.casefold() == SOURCE and separator:
+            relative = subpath.removesuffix("]").lstrip("/")
+        elif source.casefold() == SOURCE or source.casefold().startswith(SOURCE + "/"):
+            relative = source[len(SOURCE) :].lstrip("/")
+        else:
             continue
         if "ro" not in mount["options"].split(","):
             continue
-        target = Path(mount["target"])
-        for suffix in ("safe/Main Library", "Main Library", ""):
-            root = target / suffix
-            database = root / "metadata.db"
-            if database.is_file() and os.access(database, os.R_OK):
-                matches.add(root.resolve())
-    if len(matches) != 1:
+        prefix = PurePosixPath(relative)
+        if not library.is_relative_to(prefix):
+            continue
+        root = Path(mount["target"]) / library.relative_to(prefix)
+        database = root / "metadata.db"
+        if database.is_file() and os.access(database, os.R_OK):
+            matches.add(root.resolve())
+    if not matches:
         raise RuntimeError(
-            f"Expected one readable production library on the read-only eBooks "
-            f"SMB mount. Found {len(matches)} among {len(mounts)} visible SMB mounts."
+            "No readable metadata.db at the exact safe/Main Library path on the "
+            f"read-only eBooks share among {len(mounts)} visible SMB mounts."
         )
-    return matches.pop()
+    print(
+        f"Verified {len(matches)} local path(s) to the exact library export.",
+        flush=True,
+    )
+    return min(matches)
 
 
 def snapshot(source, destination):
