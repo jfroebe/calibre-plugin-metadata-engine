@@ -1,0 +1,78 @@
+name: Compare saved Calibre pilot results
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/compare-library-acceptance-pilot.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 5
+    steps:
+      - name: Compare the saved results without any lookups
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          test "$(id -un)" = agent
+          python3 - "$HOME/.local/state/calibre-library-acceptance/pilot-1" <<'PY'
+          import json
+          import re
+          import sys
+          import unicodedata
+          from collections import Counter
+          from html import unescape
+          from pathlib import Path
+
+          state = Path(sys.argv[1])
+          report = json.loads((state / "runs/pilot/report.local.json").read_text())
+          rows = report["cases"]
+          if len(rows) != 54:
+              raise SystemExit("Expected the completed 54-case pilot")
+
+          def normalized(value):
+              return " ".join(re.findall(r"[^\W_]+", unicodedata.normalize("NFKC", value or "").casefold()))
+
+          def tags(metadata):
+              return {normalized(tag) for tag in metadata.get("tags", [])} - {""}
+
+          def synopsis(metadata):
+              return normalized(unescape(re.sub(r"<[^>]*>", " ", metadata.get("description") or "")))
+
+          def size(result):
+              return (result.get("cover") or [])[:2]
+
+          transitions = Counter()
+          details = []
+          for row in rows:
+              baseline, candidate = row["baseline"], row["candidate"]
+              left = baseline.get("metadata") or {}
+              right = candidate.get("metadata") or {}
+              key = baseline["status"] + " -> " + candidate["status"]
+              transitions[key] += 1
+              item = {
+                  "case": row["id"], "transition": key,
+                  "baseline_reasons": baseline.get("failures", []),
+                  "candidate_reasons": candidate.get("failures", []),
+              }
+              if baseline["status"] == "review":
+                  expected = json.loads((state / "cases" / row["id"] / "case.json").read_text())["expected"]
+                  item.update(
+                      metadata_equal=left == right,
+                      tags_added=len(tags(right) - tags(left)),
+                      tags_removed=len(tags(left) - tags(right)),
+                      baseline_catalog_tags_missing=len(tags(expected) - tags(left)),
+                      candidate_catalog_tags_missing=len(tags(expected) - tags(right)),
+                      synopsis_equal=synopsis(left) == synopsis(right),
+                      synopsis_lengths=[len(synopsis(entry)) for entry in (expected, left, right)],
+                      cover_equal=bool(baseline.get("cover_sha256")) and baseline.get("cover_sha256") == candidate.get("cover_sha256"),
+                      cover_sizes=[size(baseline), size(candidate)],
+                  )
+              details.append(item)
+          print("TRANSITIONS " + json.dumps(dict(sorted(transitions.items()))))
+          for item in details:
+              print("CASE " + json.dumps(item, separators=(",", ":")))
+          PY
