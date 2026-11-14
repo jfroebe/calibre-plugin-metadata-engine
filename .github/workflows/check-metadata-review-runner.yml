@@ -58,3 +58,12 @@ jobs:
           for entry in "$directory"/_work/metadata-engine/metadata-engine/review/deploy-test.sh "$HOME"/.local/share/metadata-review/releases/.install.*/python/bin/python; do
             if [ -f "$entry" ]; then stat -c 'deployment_file_modified=%y' "$entry"; fi
           done
+          ps -u "$(id -un)" -o pid,ppid,etime,comm | awk '$NF ~ /^(Runner.Worker|pip|pip3|python|python3|ssh|curl|uvicorn)$/'
+          for dir in "$HOME"/.local/share/metadata-review/releases/.install.*; do
+            [ -d "$dir" ] || continue
+            "$dir/python/bin/python" -c 'import importlib.util as u; print({x:bool(u.find_spec(x)) for x in ("pip","fastapi","uvicorn","psycopg","PIL")})' || true
+          done
+          for endpoint in https://pypi.org/simple/fastapi/ https://files.pythonhosted.org/; do
+            curl -s -o /dev/null --max-time 5 --write-out 'direct status=%{http_code} total=%{time_total}\n' "$endpoint" || true
+            curl -s -o /dev/null --max-time 5 -x http://192.168.0.59:8118 --write-out 'proxy status=%{http_code} total=%{time_total}\n' "$endpoint" || true
+          done
