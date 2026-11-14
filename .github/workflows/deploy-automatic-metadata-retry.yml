@@ -1,0 +1,439 @@
+name: Deploy automatic artwork retry
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/deploy-automatic-metadata-retry.yml]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 15
+    steps:
+      - name: Verify campaign drained and report remaining failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          db() { docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test "$@"; }
+          actual="$(db -c "SELECT state FROM metadata_queue.campaigns WHERE id='fa59f794-1cec-46fc-97ef-8a641b262b86'")"
+          test "$actual" = completed
+          db <<'SQL'
+          BEGIN READ ONLY;
+          SELECT 'comparison',j.campaign_id,j.state,coalesce(j.failure_class,''),count(*)
+          FROM metadata_queue.jobs j WHERE j.campaign_id IN ('fa59f794-1cec-46fc-97ef-8a641b262b86','72b07fe2-86a0-4a69-aa2d-3cc22362f923')
+          GROUP BY 2,3,4 ORDER BY 2,3,4;
+          SELECT 'provider',p.key,p.value,count(*) FROM metadata_queue.job_attempts a
+          JOIN metadata_queue.jobs j ON j.id=a.job_id CROSS JOIN LATERAL jsonb_each_text(a.provider_results) p
+          WHERE j.campaign_id='fa59f794-1cec-46fc-97ef-8a641b262b86' GROUP BY 2,3 ORDER BY 2,3;
+          COMMIT;
+          SQL
+          REMOTE
+  workers:
+    needs: status
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {host: chatgpt-build-02, role: docker-build}
+          - {host: chatgpt-dev, role: calibre-controller}
+    runs-on: [self-hosted, linux, x64, '${{ matrix.role }}', '${{ matrix.host }}']
+    timeout-minutes: 5
+    env:
+      EXPECTED_HOST: ${{ matrix.host }}
+    steps:
+      - name: Update running test workers and verify service state
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(hostname -s)" = "$EXPECTED_HOST"
+          base="$HOME/.local/share/metadata-queue"
+          config="$HOME/.config/metadata-queue"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          if ! systemctl --user is-active --quiet metadata-queue-worker.service; then
+            printf '%s\n' 'Existing worker is stopped. Leaving its service state in place.'
+            exit 1
+          fi
+          if ! (
+            set -a
+            source "$config/worker.env"
+            set +a
+            "$base/python/bin/python" - "$EXPECTED_HOST" <<'PY'
+          import os
+          import sys
+          import psycopg
+          with psycopg.connect(os.environ["METADATA_QUEUE_DSN"], connect_timeout=5) as db:
+              allowed = db.execute("SELECT metadata_queue.heartbeat(%s)", (sys.argv[1],)).fetchone()[0]
+              raise SystemExit(0 if allowed else 1)
+          PY
+          ); then
+            printf '%s\n' 'Database does not permit this worker to run.'
+            exit 1
+          fi
+          stage="$(mktemp -d "$base/lookup-fix.XXXXXX")"
+          trap 'rm -rf "$stage"' EXIT
+          cat > "$stage/metadata_queue_cover.py" <<'PYTHON'
+          """Download and inspect edition-linked cover candidates from known image hosts."""
+          
+          import hashlib
+          import io
+          import warnings
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import urlsplit
+          from urllib.request import HTTPRedirectHandler, build_opener
+          
+          from PIL import Image
+          
+          if __package__:
+              from .metadata_queue_provider import TEMPORARY
+          else:
+              from metadata_queue_provider import TEMPORARY
+          
+          IMAGE_DOMAINS = (
+              "google.com",
+              "googleusercontent.com",
+              "openlibrary.org",
+              "gr-assets.com",
+              "media-amazon.com",
+              "images-amazon.com",
+              "mzstatic.com",
+              "hardcover.app",
+          )
+          MAX_BYTES = 8_000_000
+          
+          
+          class TemporaryCoverError(Exception):
+              """An artwork request failed and can be retried by the queue."""
+          
+          
+          def allowed_cover(url):
+              """Accept HTTPS artwork URLs within the permitted provider domains."""
+              if not isinstance(url, str):
+                  return False
+              try:
+                  parts = urlsplit(url)
+                  host = parts.hostname or ""
+                  return (
+                      parts.scheme == "https"
+                      and parts.username is None
+                      and parts.port in (None, 443)
+                      and any(
+                          host == domain or host.endswith("." + domain)
+                          for domain in IMAGE_DOMAINS
+                      )
+                  )
+              except ValueError:
+                  return False
+          
+          
+          class ArtworkRedirects(HTTPRedirectHandler):
+              """Keep image redirects inside the same HTTPS domain allowlist."""
+          
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  """Reject redirects to other destinations before making a request."""
+                  if not allowed_cover(newurl):
+                      return None
+                  return super().redirect_request(req, fp, code, msg, headers, newurl)
+          
+          
+          def fetch_cover(url, timeout, *, opener=None):
+              """Return validated artwork or signal a retryable download failure."""
+              if not allowed_cover(url):
+                  return None
+              open_image = opener or build_opener(ArtworkRedirects()).open
+              try:
+                  with open_image(url, timeout=timeout) as response:
+                      data = response.read(MAX_BYTES + 1)
+              except HTTPError as exc:
+                  if exc.code in TEMPORARY:
+                      raise TemporaryCoverError from exc
+                  return None
+              except (URLError, TimeoutError, ConnectionError) as exc:
+                  raise TemporaryCoverError from exc
+              try:
+                  if not data or len(data) > MAX_BYTES:
+                      return None
+                  with warnings.catch_warnings():
+                      warnings.simplefilter("error", Image.DecompressionBombWarning)
+                      with Image.open(io.BytesIO(data)) as image:
+                          width, height = image.size
+                          mime = image.get_format_mimetype()
+                          if (
+                              min(width, height) < 100
+                              or width * height > 25_000_000
+                              or mime
+                              not in {"image/jpeg", "image/png", "image/webp", "image/gif"}
+                          ):
+                              return None
+                          image.verify()
+              except (
+                  OSError,
+                  ValueError,
+                  Image.DecompressionBombError,
+                  Image.DecompressionBombWarning,
+              ):
+                  return None
+              return {
+                  "bytes": data,
+                  "mime": mime,
+                  "width": width,
+                  "height": height,
+                  "sha256": hashlib.sha256(data).hexdigest(),
+                  "url": url,
+              }
+          PYTHON
+          cat > "$stage/metadata_queue_worker.py" <<'PYTHON'
+          """Poll PostgreSQL for authorized acceptance jobs."""
+          
+          import argparse
+          import base64
+          import logging
+          import os
+          import signal
+          from threading import Event
+          
+          import psycopg
+          
+          LOG = logging.getLogger(__name__)
+          
+          
+          def run_lookup(db, runner, job_id, token, endpoint, *, opener=None, cover_opener=None):
+              """Gather and store verified provider evidence under the current job lease."""
+              from metadata_queue_cover import TemporaryCoverError, allowed_cover, fetch_cover
+              from metadata_queue_provider import LeaseProviders, lookup
+              from metadata_queue_quality import assess, replacement
+              from psycopg.types.json import Jsonb
+          
+              lease = (runner, job_id, token)
+              if not endpoint:
+                  raise RuntimeError("No test engine configured for provider lookups")
+              inputs = db.execute(
+                  "SELECT metadata_queue.lookup_input(%s,%s,%s)", lease
+              ).fetchone()[0]
+              if inputs is None:
+                  # A pause can block provider access while still permitting a fenced finish.
+                  db.execute(
+                      "SELECT metadata_queue.finish(%s,%s,%s,'retry','input_unavailable')", lease
+                  )
+                  return
+              access = LeaseProviders(db, *lease)
+              options = {"opener": opener} if opener is not None else {}
+              evidence = lookup(
+                  endpoint,
+                  inputs["original"],
+                  inputs["providers"],
+                  5,
+                  access,
+                  access.reserve,
+                  **options,
+              )
+              candidates = []
+              for result in evidence["candidates"]:
+                  payload = dict(result["payload"])
+                  if payload.get("source_id"):
+                      identifiers = payload.get("identifiers")
+                      payload["identifiers"] = {
+                          **(identifiers if isinstance(identifiers, dict) else {}),
+                          f"metadata_engine_{result['provider']}": str(payload["source_id"]),
+                      }
+                  try:
+                      scores = assess(payload)
+                  except (AttributeError, TypeError, ValueError):
+                      continue
+                  candidates.append(dict(result, payload=payload, field_scores=scores))
+              candidates.sort(key=lambda row: sum(row["field_scores"].values()), reverse=True)
+              best = candidates[0] if candidates else None
+              if best:
+                  original = inputs["original"]
+                  original_artwork = inputs["original_cover"]
+                  processed = any(
+                      name.startswith("metadata_engine_") and value
+                      for name, value in original.get("identifiers", {}).items()
+                  )
+                  artwork = None
+                  artwork_retry = False
+                  attempted = set()
+                  for candidate in candidates:
+                      provider = candidate["provider"]
+                      url = candidate["payload"].get("cover_url")
+                      if provider in attempted or not allowed_cover(url):
+                          continue
+                      attempted.add(provider)
+                      if not db.execute(
+                          "SELECT metadata_queue.reserve_artwork(%s,%s,%s,%s)",
+                          (*lease, provider),
+                      ).fetchone()[0]:
+                          artwork_retry = True
+                          continue
+                      try:
+                          downloaded = fetch_cover(url, 5, opener=cover_opener)
+                      except TemporaryCoverError:
+                          artwork_retry = True
+                          continue
+                      if not downloaded:
+                          continue
+                      if not artwork:
+                          best, artwork = candidate, downloaded
+                      if (
+                          not processed
+                          or not original_artwork
+                          or (downloaded["sha256"] == original_artwork["sha256"])
+                      ):
+                          best, artwork = candidate, downloaded
+                          break
+                  candidate_record = dict(
+                      source=best["provider"],
+                      payload=best["payload"],
+                      field_scores=best["field_scores"],
+                  )
+                  if artwork:
+                      candidate_record["field_scores"] = assess(
+                          best["payload"], (artwork["width"], artwork["height"])
+                      )
+                      candidate_record["cover"] = dict(
+                          artwork, bytes=base64.b64encode(artwork["bytes"]).decode("ascii")
+                      )
+                  original_size = (
+                      (original_artwork["width"], original_artwork["height"])
+                      if original_artwork
+                      else None
+                  )
+                  safe_artwork = artwork and (
+                      not original_artwork or artwork["sha256"] == original_artwork["sha256"]
+                  )
+                  if safe_artwork:
+                      original_scores = assess(original, original_size)
+                      recommend, reason = replacement(
+                          original,
+                          best["payload"],
+                          original_scores,
+                          candidate_record["field_scores"],
+                          edition_verified=True,
+                      )
+                      comparable, _ = replacement(
+                          original,
+                          best["payload"],
+                          original_scores,
+                          candidate_record["field_scores"],
+                          edition_verified=True,
+                          allow_equal=True,
+                      )
+                  else:
+                      recommend, reason = False, "cover_and_replacement_unverified"
+                      comparable = False
+                  candidate_record["replacement_assessment"] = {
+                      "recommended": recommend,
+                      "reason": reason,
+                  }
+                  candidate = Jsonb(candidate_record)
+                  # A previously unmarked book can pass lookup acceptance with verified
+                  # metadata and artwork. A replacement remains a separate decision.
+                  if artwork and (not processed or comparable):
+                      outcome, reason = "passed", None
+                  elif artwork_retry:
+                      outcome, reason = "retry", "artwork_unavailable"
+                  elif not artwork and {"transient", "rate_limited"}.intersection(
+                      evidence["attempts"].values()
+                  ):
+                      outcome, reason = "retry", "provider_unavailable"
+                  else:
+                      outcome = "needs_review"
+              else:
+                  candidate = None
+                  temporary = {"transient", "rate_limited"}
+                  if temporary.intersection(evidence["attempts"].values()):
+                      outcome, reason = "retry", "provider_unavailable"
+                  elif evidence["work_sources"]:
+                      outcome, reason = "needs_review", "work_found_edition_unverified"
+                  else:
+                      outcome, reason = "needs_review", "no_verified_edition"
+              db.execute(
+                  "SELECT metadata_queue.finish_lookup(%s,%s,%s,%s,%s,%s,%s)",
+                  (*lease, outcome, reason, Jsonb(evidence["attempts"]), candidate),
+              )
+          
+          
+          def work(dsn, runner, stop, once):
+              """Heartbeat, recover expired leases and process synthetic work."""
+              while not stop.is_set():
+                  try:
+                      with psycopg.connect(dsn, autocommit=True, connect_timeout=5) as db:
+                          while not stop.is_set():
+                              allowed = db.execute(
+                                  "SELECT metadata_queue.heartbeat(%s)", (runner,)
+                              ).fetchone()[0]
+                              if allowed:
+                                  db.execute("SELECT metadata_queue.recover(%s)", (runner,))
+                                  # PostgreSQL decides which campaigns this worker may claim.
+                                  job = db.execute(
+                                      "SELECT * FROM metadata_queue.claim(%s)", (runner,)
+                                  ).fetchone()
+                                  if job is not None:
+                                      job_id, token, synthetic = job
+                                      if synthetic:
+                                          db.execute(
+                                              "SELECT metadata_queue.finish(%s,%s,%s,'passed')",
+                                              (runner, job_id, token),
+                                          )
+                                      else:
+                                          run_lookup(
+                                              db,
+                                              runner,
+                                              job_id,
+                                              token,
+                                              os.getenv("METADATA_QUEUE_TEST_ENGINE"),
+                                          )
+                              if once:
+                                  return
+                              stop.wait(3 if allowed else 10)
+                  except psycopg.OperationalError:
+                      if once:
+                          raise
+                      LOG.warning("PostgreSQL unavailable; will reconnect")
+                      stop.wait(15)
+          
+          
+          def main():
+              """Run the service without changing runner desired state on startup."""
+              parser = argparse.ArgumentParser(description=__doc__)
+              parser.add_argument("--runner", required=True)
+              parser.add_argument("--once", action="store_true")
+              args = parser.parse_args()
+              logging.basicConfig(level=logging.INFO)
+              stop = Event()
+              for signum in (signal.SIGTERM, signal.SIGINT):
+                  signal.signal(signum, lambda *_: stop.set())
+              work(os.environ["METADATA_QUEUE_DSN"], args.runner, stop, args.once)
+          
+          
+          if __name__ == "__main__":
+              main()
+          PYTHON
+          "$base/python/bin/python" -m compileall -q "$stage"
+          mkdir "$stage/previous"
+          for file in metadata_queue_cover.py metadata_queue_worker.py; do
+            cp -- "$base/$file" "$stage/previous/$file"
+            mv -f -- "$stage/$file" "$base/$file"
+          done
+          if ! systemctl --user try-restart metadata-queue-worker.service ||
+             ! systemctl --user is-active --quiet metadata-queue-worker.service; then
+            for file in metadata_queue_cover.py metadata_queue_worker.py; do
+              mv -f -- "$stage/previous/$file" "$base/$file"
+            done
+            systemctl --user try-restart metadata-queue-worker.service
+            exit 1
+          fi
+          printf '%s\n' "Automatic artwork retry deployed to $EXPECTED_HOST"
