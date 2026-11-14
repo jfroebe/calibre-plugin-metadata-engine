@@ -1,0 +1,46 @@
+name: Read reviewed book campaign status
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/read-reviewed-book-campaign-status.yml]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 3
+    steps:
+      - name: Read campaign, job and runner counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+          SELECT 'campaign',state,version,clock_timestamp() FROM metadata_queue.campaigns
+          WHERE id='72b07fe2-86a0-4a69-aa2d-3cc22362f923';
+          SELECT 'jobs',state,coalesce(failure_class,''),count(*) FROM metadata_queue.jobs
+          WHERE campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923' GROUP BY state,failure_class ORDER BY state,failure_class;
+          SELECT 'attempts',coalesce(a.outcome,'in_progress'),count(*) FROM metadata_queue.job_attempts a
+          JOIN metadata_queue.jobs j ON j.id=a.job_id
+          WHERE j.campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923' GROUP BY a.outcome ORDER BY a.outcome;
+          SELECT 'evidence',count(DISTINCT v.id),count(DISTINCT v.id) FILTER (WHERE v.provenance->>'cover_sha256' IS NOT NULL),
+            count(DISTINCT v.id) FILTER (WHERE v.provenance->'replacement_assessment'->>'recommended'='true')
+          FROM metadata_queue.metadata_versions v JOIN metadata_queue.job_attempts a ON a.id=v.job_attempt_id
+          JOIN metadata_queue.jobs j ON j.id=a.job_id WHERE j.campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923';
+          SELECT 'runner',id,desired_state,observed_state,coalesce(heartbeat_at>clock_timestamp()-interval '30 seconds',false)
+          FROM metadata_queue.runners WHERE id IN ('chatgpt-dev','chatgpt-build-02') ORDER BY id;
+          COMMIT;
+          SQL
+          REMOTE
