@@ -1,0 +1,39 @@
+name: Check metadata review runner listener
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/check-metadata-review-runner.yml]
+permissions:
+  contents: read
+jobs:
+  listener:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 2
+    steps:
+      - name: Check runner listener and summarize connection state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          unit=actions.runner.jfroebe-metadata-engine.metadata-engine-build-02.service
+          systemctl show "$unit" -p ActiveState -p SubState -p NRestarts
+          directory="$HOME/actions-runner-metadata-engine"
+          if [ -r "$directory/.runner" ]; then
+            python3 - "$directory/.runner" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1]) as file:
+              data = json.load(file)
+          for key in ("agentName", "gitHubUrl", "poolName", "workFolder"):
+              print(key, data.get(key))
+          PY
+          fi
+          journalctl -u "$unit" --since '20 minutes ago' -o cat --no-pager 2>/dev/null |
+            awk '
+              /Connected to GitHub/ {connected++}
+              /Listening for Jobs/ {listening++}
+              /Running job:/ {assigned++}
+              /session already exists/ {duplicate++}
+              /connect error|Connection refused|Unauthorized|Forbidden/ {failed++}
+              END {printf "connected=%d listening=%d assigned=%d duplicate=%d errors=%d\n",connected,listening,assigned,duplicate,failed}
+            ' || true
