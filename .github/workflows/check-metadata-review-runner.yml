@@ -15,6 +15,31 @@ jobs:
         run: |
           set -euo pipefail
           test "$(hostname -s)" = chatgpt-build-02
+          config="$HOME/.config/metadata-review"
+          if [ -r "$config/db-password" ]; then
+            if grep -Eq '^[a-f0-9]{64} -o ConnectTimeout=5 root@192.168.0.59 'bash -s' <<'REMOTE'
+          set -eu
+          for dir in /mnt/user/database-backup/metadata_test/*-metadata-review-v1; do
+            [ -d "$dir" ] || continue
+            printf '%s\n' "${dir##*/}"
+            for file in metadata_test.dump.partial metadata_test.dump metadata_test.dump.sha256 restore-verified.txt; do
+              if [ -f "$dir/$file" ]; then stat -c "$file bytes=%s modified=%y" "$dir/$file"; fi
+            done
+          done
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              db_user="$(docker exec "$container" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+              docker exec "$container" psql -qXAt -U "$db_user" -d metadata_test -c "SELECT 'review_schema',to_regnamespace('metadata_review') IS NOT NULL; SELECT datname,state,coalesce(wait_event_type,'running'),count(*) FROM pg_stat_activity WHERE datname LIKE 'metadata_review_restore_%' OR application_name='pg_dump' GROUP BY 1,2,3;"
+              docker exec "$container" psql -qXAt -U "$db_user" -d metadata_test -c "SELECT 'restore_progress',p.command,p.type,p.bytes_processed,p.tuples_processed FROM pg_stat_progress_copy p JOIN pg_database d ON d.oid=p.datid WHERE d.datname LIKE 'metadata_review_restore_%';"
+              docker exec "$container" psql -qXAt -U "$db_user" -d metadata_test -c "SELECT 'review_role',EXISTS (SELECT 1 FROM pg_roles WHERE rolname='metadata_review_web'); SELECT 'admin_account',count(*) FROM metadata_review.accounts WHERE username='review-admin';"
+              df -h /mnt/user/database-backup/metadata_test | awk 'NR==2 {print "backup_free=" $4}'
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          REMOTE
+ "$config/db-password"; then echo db_secret_format=valid; else echo db_secret_format=invalid; fi
+          fi
+          printf 'linger=%s\n' "$(loginctl show-user "$(id -un)" -p Linger --value)"
+          for file in service.env service.env.new tls.crt; do if [ -s "$config/$file" ]; then printf 'configured=%s\n' "$file"; fi; done
           ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'bash -s' <<'REMOTE'
           set -eu
           for dir in /mnt/user/database-backup/metadata_test/*-metadata-review-v1; do
