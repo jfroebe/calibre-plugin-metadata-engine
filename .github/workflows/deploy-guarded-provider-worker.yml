@@ -8,7 +8,7 @@ permissions:
 jobs:
   migrate:
     runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
-    timeout-minutes: 10
+    timeout-minutes: 90
     steps:
       - name: Back up current schema and apply guarded additive revisions
         shell: bash
@@ -31,11 +31,29 @@ jobs:
           test "$(db -c 'SELECT max(revision) FROM metadata_queue.migrations')" = 3
           backup="/mnt/user/database-backup/metadata_test/$(date -u +%Y%m%dT%H%M%SZ)-queue-v5"
           install -d -m 700 "$backup"
-          docker exec "$source" pg_dump -w -U "$db_user" -d metadata_test -Fc > "$backup/metadata_test.dump"
+          printf 'Starting full test database backup at %s\n' "$backup"
+          docker exec "$source" pg_dump -w -U "$db_user" -d metadata_test -Fc -Z 1 > "$backup/metadata_test.dump"
           docker exec "$source" pg_dump -w -U "$db_user" -d metadata_test --schema-only > "$backup/metadata_test.schema.sql"
           (cd "$backup" && sha256sum metadata_test.dump metadata_test.schema.sql > SHA256SUMS && sha256sum -c SHA256SUMS)
           docker exec -i "$source" pg_restore -l < "$backup/metadata_test.dump" > "$backup/archive-contents.txt"
-          printf 'Backup verified at %s\n' "$backup"
+          printf 'Backup checksum verified at %s\n' "$backup"
+          image="$(docker inspect --format '{{.Image}}' "$source")"
+          restored="$(docker run -d --network none -e PGDATA=/tmp/metadata-restore -e POSTGRES_HOST_AUTH_METHOD=trust "$image")"
+          trap 'docker rm -f -v "$restored" >/dev/null; rm -f -- "$0"' EXIT
+          for attempt in $(seq 1 60); do
+            if docker exec "$restored" pg_isready -q -h 127.0.0.1 -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec "$restored" createdb -U postgres metadata_queue_restore_rehearsal
+          restore() { docker exec -i "$restored" psql -qXAt -v ON_ERROR_STOP=1 -U postgres -d metadata_queue_restore_rehearsal "$@"; }
+          printf 'Restoring the backup into an isolated PostgreSQL container.\n'
+          docker exec -i "$restored" pg_restore --exit-on-error --no-owner --no-privileges -U postgres -d metadata_queue_restore_rehearsal < "$backup/metadata_test.dump"
+          for table in calibre_acceptance.attempts metadata_queue.artifacts metadata_queue.manifest_revisions; do
+            query="SELECT count(*) FROM $table"
+            test "$(restore -c "$query")" = "$(db -c "$query")"
+            printf '%s restore verified\n' "$table" >> "$backup/restore-verified.txt"
+          done
+          printf 'Restore verified at %s\n' "$backup"
           {
             printf '%s\n' 'SELECT pg_advisory_xact_lock(89411833);'
             printf '%s' 'LS0gU2hhcmUgcHJvdmlkZXIgcXVvdGFzIGFuZCBjYWNoZWQgcmVzcG9uc2VzIGFjcm9zcyBhdXRob3JpemVkIHdvcmtlcnMuClNFVCBMT0NBTCBzZWFyY2hfcGF0aCA9IG1ldGFkYXRhX3F1ZXVlLCBwZ19jYXRhbG9nLCBwZ190ZW1wOwoKQ1JFQVRFIFRBQkxFIHByb3ZpZGVyX3Nsb3RzICgKICAgIHByb3ZpZGVyIHRleHQgUFJJTUFSWSBLRVksCiAgICBuZXh0X3JlcXVlc3RfYXQgdGltZXN0YW1wdHogTk9UIE5VTEwKKTsKQ1JFQVRFIFRBQkxFIHByb3ZpZGVyX2NhY2hlICgKICAgIHByb3ZpZGVyIHRleHQgTk9UIE5VTEwsCiAgICBmaW5nZXJwcmludCB0ZXh0IE5PVCBOVUxMIENIRUNLIChmaW5nZXJwcmludCB+ICdeWzAtOWEtZl17NjR9JCcpLAogICAgcGF5bG9hZCBqc29uYiBOT1QgTlVMTCBDSEVDSyAoanNvbmJfdHlwZW9mKHBheWxvYWQpID0gJ2FycmF5JyksCiAgICBleHBpcmVzX2F0IHRpbWVzdGFtcHR6IE5PVCBOVUxMLAogICAgUFJJTUFSWSBLRVkgKHByb3ZpZGVyLCBmaW5nZXJwcmludCkKKTsKCkNSRUFURSBGVU5DVElPTiBwcm92aWRlcl9sZWFzZShwX3J1bm5lciB0ZXh0LCBwX2pvYiBiaWdpbnQsIHBfdG9rZW4gdXVpZCwgcF9wcm92aWRlciB0ZXh0KQpSRVRVUk5TIGludGVnZXIgTEFOR1VBR0UgcGxwZ3NxbApTRVQgc2VhcmNoX3BhdGg9cGdfY2F0YWxvZyxtZXRhZGF0YV9xdWV1ZSxwZ190ZW1wIEFTICQkCkRFQ0xBUkUgYyBjYW1wYWlnbnM7IGRlbGF5X21zIGludGVnZXI7CkJFR0lOCiAgICBTRUxFQ1QgKiBJTlRPIGMgRlJPTSBjYW1wYWlnbnMKICAgICAgV0hFUkUgaWQ9KFNFTEVDVCBjYW1wYWlnbl9pZCBGUk9NIGpvYnMgV0hFUkUgaWQ9cF9qb2IpIEZPUiBVUERBVEU7CiAgICBJRiBOT1QgRk9VTkQgT1IgYy5zdGF0ZTw+J3J1bm5pbmcnIE9SIE5PVCBhcHByb3ZhbF92YWxpZChjKQogICAgICAgT1IgTk9UIENPQUxFU0NFKGMuY29uZmlnLT4ncHJvdmlkZXJzJyA/IHBfcHJvdmlkZXIsZmFsc2UpIFRIRU4KICAgICAgICBSRVRVUk4gTlVMTDsKICAgIEVORCBJRjsKICAgIFNFTEVDVCAoYy5jb25maWctPidwcm92aWRlcl9pbnRlcnZhbF9tcyctPj5wX3Byb3ZpZGVyKTo6aW50ZWdlciBJTlRPIGRlbGF5X21zOwogICAgSUYgZGVsYXlfbXMgSVMgTlVMTCBPUiBkZWxheV9tcyBOT1QgQkVUV0VFTiAxMDAgQU5EIDYwMDAwMCBUSEVOCiAgICAgICAgUkVUVVJOIE5VTEw7CiAgICBFTkQgSUY7CiAgICBQRVJGT1JNIDEgRlJPTSBydW5uZXJzIHIgSk9JTiB3b3JrZXJfYWNjb3VudHMgdyBPTiB3LnJ1bm5lcl9pZD1yLmlkCiAgICAgIFdIRVJFIHIuaWQ9cF9ydW5uZXIgQU5EIHcubG9naW49c2Vzc2lvbl91c2VyIEFORCByLmRlc2lyZWRfc3RhdGU9J3J1bm5pbmcnCiAgICAgIEZPUiBTSEFSRSBPRiByOwogICAgSUYgTk9UIEZPVU5EIFRIRU4gUkVUVVJOIE5VTEw7IEVORCBJRjsKICAgIFBFUkZPUk0gMSBGUk9NIGpvYnMgV0hFUkUgaWQ9cF9qb2IgQU5EIHN0YXRlPSdsZWFzZWQnCiAgICAgIEFORCBsZWFzZWRfYnk9cF9ydW5uZXIgQU5EIGxlYXNlX3Rva2VuPXBfdG9rZW4gQU5EIGxlYXNlX3VudGlsPmNsb2NrX3RpbWVzdGFtcCgpCiAgICAgIEZPUiBVUERBVEU7CiAgICBJRiBOT1QgRk9VTkQgVEhFTiBSRVRVUk4gTlVMTDsgRU5EIElGOwogICAgUkVUVVJOIGRlbGF5X21zOwpFTkQKJCQ7CgpDUkVBVEUgRlVOQ1RJT04gcmVzZXJ2ZV9wcm92aWRlcihwX3J1bm5lciB0ZXh0LCBwX2pvYiBiaWdpbnQsIHBfdG9rZW4gdXVpZCwgcF9wcm92aWRlciB0ZXh0KQpSRVRVUk5TIGJvb2xlYW4gTEFOR1VBR0UgcGxwZ3NxbCBTRUNVUklUWSBERUZJTkVSClNFVCBzZWFyY2hfcGF0aD1wZ19jYXRhbG9nLG1ldGFkYXRhX3F1ZXVlLHBnX3RlbXAgQVMgJCQKREVDTEFSRSBkZWxheV9tcyBpbnRlZ2VyOwpCRUdJTgogICAgZGVsYXlfbXMgOj0gcHJvdmlkZXJfbGVhc2UocF9ydW5uZXIscF9qb2IscF90b2tlbixwX3Byb3ZpZGVyKTsKICAgIElGIGRlbGF5X21zIElTIE5VTEwgVEhFTiBSRVRVUk4gZmFsc2U7IEVORCBJRjsKICAgIElOU0VSVCBJTlRPIHByb3ZpZGVyX3Nsb3RzIEFTIHNsb3QocHJvdmlkZXIsbmV4dF9yZXF1ZXN0X2F0KQogICAgICBWQUxVRVMocF9wcm92aWRlcixjbG9ja190aW1lc3RhbXAoKSttYWtlX2ludGVydmFsKHNlY3M9PmRlbGF5X21zLzEwMDAuMCkpCiAgICAgIE9OIENPTkZMSUNUKHByb3ZpZGVyKSBETyBVUERBVEUgU0VUIG5leHRfcmVxdWVzdF9hdD1FWENMVURFRC5uZXh0X3JlcXVlc3RfYXQKICAgICAgV0hFUkUgc2xvdC5uZXh0X3JlcXVlc3RfYXQ8PWNsb2NrX3RpbWVzdGFtcCgpOwogICAgUkVUVVJOIEZPVU5EOwpFTkQKJCQ7CgpDUkVBVEUgRlVOQ1RJT04gcmVhZF9wcm92aWRlcl9jYWNoZSgKICAgIHBfcnVubmVyIHRleHQscF9qb2IgYmlnaW50LHBfdG9rZW4gdXVpZCxwX3Byb3ZpZGVyIHRleHQscF9maW5nZXJwcmludCB0ZXh0CikgUkVUVVJOUyBqc29uYiBMQU5HVUFHRSBwbHBnc3FsIFNFQ1VSSVRZIERFRklORVIKU0VUIHNlYXJjaF9wYXRoPXBnX2NhdGFsb2csbWV0YWRhdGFfcXVldWUscGdfdGVtcCBBUyAkJApCRUdJTgogICAgSUYgcHJvdmlkZXJfbGVhc2UocF9ydW5uZXIscF9qb2IscF90b2tlbixwX3Byb3ZpZGVyKSBJUyBOVUxMIFRIRU4gUkVUVVJOIE5VTEw7IEVORCBJRjsKICAgIFJFVFVSTiAoU0VMRUNUIHBheWxvYWQgRlJPTSBwcm92aWRlcl9jYWNoZSBXSEVSRSBwcm92aWRlcj1wX3Byb3ZpZGVyCiAgICAgICAgICAgIEFORCBmaW5nZXJwcmludD1wX2ZpbmdlcnByaW50IEFORCBleHBpcmVzX2F0PmNsb2NrX3RpbWVzdGFtcCgpKTsKRU5ECiQkOwoKQ1JFQVRFIEZVTkNUSU9OIHdyaXRlX3Byb3ZpZGVyX2NhY2hlKAogICAgcF9ydW5uZXIgdGV4dCxwX2pvYiBiaWdpbnQscF90b2tlbiB1dWlkLHBfcHJvdmlkZXIgdGV4dCxwX2ZpbmdlcnByaW50IHRleHQscF9wYXlsb2FkIGpzb25iCikgUkVUVVJOUyBib29sZWFuIExBTkdVQUdFIHBscGdzcWwgU0VDVVJJVFkgREVGSU5FUgpTRVQgc2VhcmNoX3BhdGg9cGdfY2F0YWxvZyxtZXRhZGF0YV9xdWV1ZSxwZ190ZW1wIEFTICQkCkJFR0lOCiAgICBJRiBwcm92aWRlcl9sZWFzZShwX3J1bm5lcixwX2pvYixwX3Rva2VuLHBfcHJvdmlkZXIpIElTIE5VTEwgVEhFTiBSRVRVUk4gZmFsc2U7IEVORCBJRjsKICAgIElGIGpzb25iX3R5cGVvZihwX3BheWxvYWQpIElTIERJU1RJTkNUIEZST00gJ2FycmF5JwogICAgICAgT1IgcGdfY29sdW1uX3NpemUocF9wYXlsb2FkKT4yMDAwMDAwIFRIRU4gUkVUVVJOIGZhbHNlOyBFTkQgSUY7CiAgICBJTlNFUlQgSU5UTyBwcm92aWRlcl9jYWNoZShwcm92aWRlcixmaW5nZXJwcmludCxwYXlsb2FkLGV4cGlyZXNfYXQpCiAgICAgIFZBTFVFUyhwX3Byb3ZpZGVyLHBfZmluZ2VycHJpbnQscF9wYXlsb2FkLGNsb2NrX3RpbWVzdGFtcCgpK2ludGVydmFsICcxIGRheScpCiAgICAgIE9OIENPTkZMSUNUKHByb3ZpZGVyLGZpbmdlcnByaW50KSBETyBVUERBVEUKICAgICAgU0VUIHBheWxvYWQ9RVhDTFVERUQucGF5bG9hZCxleHBpcmVzX2F0PUVYQ0xVREVELmV4cGlyZXNfYXQ7CiAgICBSRVRVUk4gdHJ1ZTsKRU5ECiQkOwoKUkVWT0tFIEFMTCBPTiBwcm92aWRlcl9zbG90cyxwcm92aWRlcl9jYWNoZSBGUk9NIFBVQkxJQzsKUkVWT0tFIEVYRUNVVEUgT04gRlVOQ1RJT04gcHJvdmlkZXJfbGVhc2UodGV4dCxiaWdpbnQsdXVpZCx0ZXh0KSwKICAgIHJlc2VydmVfcHJvdmlkZXIodGV4dCxiaWdpbnQsdXVpZCx0ZXh0KSwKICAgIHJlYWRfcHJvdmlkZXJfY2FjaGUodGV4dCxiaWdpbnQsdXVpZCx0ZXh0LHRleHQpLAogICAgd3JpdGVfcHJvdmlkZXJfY2FjaGUodGV4dCxiaWdpbnQsdXVpZCx0ZXh0LHRleHQsanNvbmIpIEZST00gUFVCTElDOwpJTlNFUlQgSU5UTyBtaWdyYXRpb25zKHJldmlzaW9uKSBWQUxVRVMgKDQpOwo=' | base64 -d
