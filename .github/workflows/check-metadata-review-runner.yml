@@ -63,7 +63,18 @@ jobs:
             [ -d "$dir" ] || continue
             "$dir/python/bin/python" -c 'import importlib.util as u; print({x:bool(u.find_spec(x)) for x in ("pip","fastapi","uvicorn","psycopg","PIL")})' || true
           done
-          for endpoint in https://pypi.org/simple/fastapi/ https://files.pythonhosted.org/; do
-            curl -s -o /dev/null --max-time 5 --write-out 'direct status=%{http_code} total=%{time_total}\n' "$endpoint" || true
-            curl -s -o /dev/null --max-time 5 -x http://192.168.0.59:8118 --write-out 'proxy status=%{http_code} total=%{time_total}\n' "$endpoint" || true
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'bash -s' <<'REMOTE'
+          set -eu
+          for dir in /mnt/user/database-backup/metadata_test/*-metadata-review-v1; do
+            [ -d "$dir" ] || continue
+            printf '%s\n' "${dir##*/}"
+            for file in metadata_test.dump metadata_test.dump.sha256 restore-verified.txt; do
+              if [ -f "$dir/$file" ]; then stat -c "$file bytes=%s modified=%y" "$dir/$file"; fi
+            done
           done
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              docker top "$container" -eo etime,comm | awk '$NF ~ /^(pg_dump|pg_restore|createdb|psql)$/'
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          REMOTE
