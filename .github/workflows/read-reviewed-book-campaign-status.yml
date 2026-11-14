@@ -1,4 +1,4 @@
-name: Read reviewed book campaign status
+name: Diagnose reviewed book lookup failures
 on:
   push:
     branches: [deploy/calibre-library-acceptance]
@@ -41,6 +41,267 @@ jobs:
           JOIN metadata_queue.jobs j ON j.id=a.job_id WHERE j.campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923';
           SELECT 'runner',id,desired_state,observed_state,coalesce(heartbeat_at>clock_timestamp()-interval '30 seconds',false)
           FROM metadata_queue.runners WHERE id IN ('chatgpt-dev','chatgpt-build-02') ORDER BY id;
+          SELECT 'provider',p.key,p.value,count(*) FROM metadata_queue.job_attempts a
+          JOIN metadata_queue.jobs j ON j.id=a.job_id CROSS JOIN LATERAL jsonb_each_text(a.provider_results) p
+          WHERE j.campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923' GROUP BY 2,3 ORDER BY 2,3;
+          SELECT 'cache',provider,count(*),count(*) FILTER (WHERE payload='[]'),sum(jsonb_array_length(payload))
+          FROM metadata_queue.provider_cache GROUP BY 2 ORDER BY 2;
+          SELECT 'saved',p->>'source',p->>'identity',count(*)
+          FROM metadata_queue.historical_diagnostics d
+          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(evidence->'supported')='array' THEN evidence->'supported' ELSE '[]' END) p
+          WHERE campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923' GROUP BY 2,3 ORDER BY 2,3;
+          COMMIT;
+          SQL
+          REMOTE
+          umask 077
+          replay="$(mktemp)"
+          trap 'rm -f "$replay"' EXIT
+          cat > "$replay" <<'PYTHON'
+          """Query allowed book providers with exact-edition validation and cached evidence."""
+          
+          import hashlib
+          import json
+          import re
+          import unicodedata
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import quote, urlencode
+          from urllib.request import urlopen
+          
+          PROVIDER = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+          TEMPORARY = {408, 425, 429, 500, 502, 503, 504}
+          
+          
+          def normalize(value):
+              """Normalize catalog text for conservative identity comparisons."""
+              return " ".join(
+                  re.findall(r"[^\W_]+", unicodedata.normalize("NFKC", value).casefold())
+              )
+          
+          
+          def edition_ids(row):
+              """Normalize supported ISBN and Kindle identifier schemes."""
+              known = dict(row.get("identifiers") or {})
+              for name in ("isbn", "asin"):
+                  if row.get(name):
+                      known[name] = row[name]
+              result = set()
+              for name, value in known.items():
+                  value = re.sub(r"[\s-]", "", str(value)).upper()
+                  if name in {"isbn", "isbn10", "isbn13"}:
+                      if re.fullmatch(r"\d{9}[\dX]", value):
+                          if (
+                              sum(
+                                  (10 - i) * (10 if digit == "X" else int(digit))
+                                  for i, digit in enumerate(value)
+                              )
+                              % 11
+                          ):
+                              continue
+                          stem = "978" + value[:9]
+                          value = stem + str(
+                              -sum((1 + 2 * (i % 2)) * int(n) for i, n in enumerate(stem)) % 10
+                          )
+                      if (
+                          re.fullmatch(r"\d{13}", value)
+                          and not sum((1 + 2 * (i % 2)) * int(n) for i, n in enumerate(value))
+                          % 10
+                      ):
+                          result.add(("isbn", value))
+                  elif name in {"asin", "mobi-asin", "amazon"} and re.fullmatch(
+                      r"[A-Z0-9]{10}", value
+                  ):
+                      result.add(("asin", value))
+              return result
+          
+          
+          def edition_match(original, row):
+              """Require corroborating edition identifiers and reject explicit conflicts."""
+              target, found = edition_ids(original), edition_ids(row)
+              for kind in {name for name, _ in target} & {name for name, _ in found}:
+                  if not {value for name, value in target if name == kind} & {
+                      value for name, value in found if name == kind
+                  }:
+                      return False
+              return bool(target & found)
+          
+          
+          def identity(original, row):
+              """Require edition evidence, work-title agreement, and matching authors."""
+              if not edition_match(original, row):
+                  return False
+              titles = {
+                  normalize(original["title"]),
+                  *(normalize(t) for t in original.get("alternate_titles", [])),
+              }
+              title = row.get("title")
+              if not isinstance(title, str) or normalize(title) not in titles:
+                  return False
+              authors = row.get("authors")
+              if not isinstance(authors, list) or not all(
+                  isinstance(name, str) for name in authors
+              ):
+                  return False
+              original_authors = {
+                  tuple(sorted(normalize(a).split())) for a in original.get("authors", [])
+              }
+              return bool(original_authors) and original_authors == {
+                  tuple(sorted(normalize(a).split())) for a in authors
+              }
+          
+          
+          def fetch(endpoint, provider, original, timeout, *, opener=urlopen):
+              """Fetch one bounded response and classify provider failures."""
+              if not PROVIDER.fullmatch(provider):
+                  raise ValueError("Invalid provider identifier")
+              params = {"query": original["title"], "limit": 10, "metadata_type": "books"}
+              if original.get("authors"):
+                  params["author"] = ", ".join(original["authors"])
+              for kind, value in sorted(edition_ids(original)):
+                  params.setdefault(kind, value)
+              url = f"{endpoint.rstrip('/')}/plugins/{quote(provider)}/search?{urlencode(params)}"
+              try:
+                  with opener(url, timeout=timeout) as response:
+                      data = response.read(2_000_001)
+                  if len(data) > 2_000_000:
+                      return "invalid_response", []
+                  payload = json.loads(data)
+                  if not isinstance(payload, dict) or not isinstance(
+                      payload.get("results"), list
+                  ):
+                      return "invalid_response", []
+                  return "ok", [row for row in payload["results"] if isinstance(row, dict)]
+              except HTTPError as exc:
+                  return ("transient" if exc.code in TEMPORARY else "provider_rejected"), []
+              except (URLError, TimeoutError, ConnectionError):
+                  return "transient", []
+              except (ValueError, UnicodeError):
+                  return "invalid_response", []
+          
+          
+          def lookup(endpoint, original, providers, timeout, cache, reserve, *, opener=urlopen):
+              """Collect source-attributed alternatives without merging ambiguous records."""
+              attempts, candidates = {}, []
+              for provider in providers:
+                  fingerprint = hashlib.sha256(
+                      json.dumps([endpoint, provider, original], sort_keys=True).encode()
+                  ).hexdigest()
+                  cached = cache.get(provider, fingerprint)
+                  if cached is not None:
+                      rows = cached
+                      status = "cached"
+                  elif reserve(provider):
+                      status, rows = fetch(endpoint, provider, original, timeout, opener=opener)
+                      if status == "ok":
+                          cache.put(provider, fingerprint, rows)
+                  else:
+                      status, rows = "rate_limited", []
+                  attempts[provider] = status
+                  candidates.extend(
+                      {"provider": provider, "payload": row}
+                      for row in rows
+                      if identity(original, row)
+                  )
+              return {"attempts": attempts, "candidates": candidates}
+          
+          
+          class LeaseProviders:
+              """Use a worker's PostgreSQL lease for shared provider access and caching."""
+          
+              def __init__(self, connection, runner, job_id, token):
+                  """Bind every provider operation to one current lease."""
+                  self.connection = connection
+                  self.lease = (runner, job_id, token)
+          
+              def reserve(self, provider):
+                  """Reserve a provider slot after checking campaign and lease authorization."""
+                  return self.connection.execute(
+                      "SELECT metadata_queue.reserve_provider(%s,%s,%s,%s)",
+                      (*self.lease, provider),
+                  ).fetchone()[0]
+          
+              def get(self, provider, fingerprint):
+                  """Read a cache entry within the same lease authorization."""
+                  return self.connection.execute(
+                      "SELECT metadata_queue.read_provider_cache(%s,%s,%s,%s,%s)",
+                      (*self.lease, provider, fingerprint),
+                  ).fetchone()[0]
+          
+              def put(self, provider, fingerprint, rows):
+                  """Persist a successful provider response while the lease is valid."""
+                  from psycopg.types.json import Jsonb
+          
+                  self.connection.execute(
+                      "SELECT metadata_queue.write_provider_cache(%s,%s,%s,%s,%s,%s)",
+                      (*self.lease, provider, fingerprint, Jsonb(rows)),
+                  )
+          
+          from collections import Counter
+          import sys
+          
+          cases = {}
+          cache = {}
+          for line in sys.stdin:
+              row = json.loads(line)
+              if row[0] == 'original':
+                  cases[row[1]] = (row[2], row[3])
+              else:
+                  cache[(row[1], row[2])] = row[3]
+          
+          counts = Counter()
+          for original, providers in cases.values():
+              labels = set()
+              for provider in providers:
+                  fingerprint = hashlib.sha256(json.dumps(
+                      ['http://192.168.0.59:14000', provider, original], sort_keys=True
+                  ).encode()).hexdigest()
+                  rows = cache.get((provider, fingerprint))
+                  if rows is None:
+                      counts[provider, 'no_cache'] += 1
+                      continue
+                  if not rows:
+                      counts[provider, 'empty'] += 1
+                  for row in rows:
+                      title = row.get('title')
+                      same_title = isinstance(title, str) and normalize(title) == normalize(original['title'])
+                      authors = row.get('authors')
+                      same_authors = isinstance(authors, list) and all(isinstance(a, str) for a in authors) and {
+                          tuple(sorted(normalize(a).split())) for a in authors
+                      } == {tuple(sorted(normalize(a).split())) for a in original.get('authors', [])}
+                      status = 'verified' if identity(original, row) else (
+                          'edition_id' if same_title and same_authors else
+                          'title' if edition_match(original, row) and same_authors else
+                          'author' if edition_match(original, row) and same_title else 'other'
+                      )
+                      counts[provider, status] += 1
+                      labels.add(status)
+                      if status in ('title', 'edition_id', 'author'):
+                          for key in ('isbn', 'asin', 'identifiers', 'cover_url', 'extra', 'series', 'subtitle'):
+                              if row.get(key):
+                                  counts[provider, status + '_' + key] += 1
+              for label in labels:
+                  counts['books', label] += 1
+          for (provider, status), value in sorted(counts.items()):
+              print(f'replay|{provider}|{status}|{value}')
+          PYTHON
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE' | python3 "$replay"
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+          SELECT jsonb_build_array('original',j.id,v.payload,c.config->'providers')
+          FROM metadata_queue.jobs j JOIN metadata_queue.campaigns c ON c.id=j.campaign_id
+          JOIN LATERAL (SELECT payload FROM metadata_queue.metadata_versions
+              WHERE media_id=j.media_id AND source_name='calibre-original' ORDER BY id DESC LIMIT 1) v ON true
+          WHERE c.id='72b07fe2-86a0-4a69-aa2d-3cc22362f923';
+          SELECT jsonb_build_array('cache',provider,fingerprint,payload) FROM metadata_queue.provider_cache;
           COMMIT;
           SQL
           REMOTE
