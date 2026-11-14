@@ -53,3 +53,8 @@ jobs:
               printf '\nverified_review_url=https://%s:8708/\n' "$ip"
             fi
           fi
+          find "$directory/_diag" -maxdepth 1 -name 'Worker_*.log' -printf 'worker_log_present\n'
+          grep -hE 'Running job: deploy|Job deploy completed' "$directory"/_diag/Runner_*.log | cut -c1-130 || true
+          for entry in "$directory"/_work/metadata-engine/metadata-engine/review/deploy-test.sh "$HOME"/.local/share/metadata-review/releases/.install.*/python/bin/python; do
+            if [ -f "$entry" ]; then stat -c 'deployment_file_modified=%y' "$entry"; fi
+          done
