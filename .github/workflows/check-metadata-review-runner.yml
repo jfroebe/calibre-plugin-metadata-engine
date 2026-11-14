@@ -1,4 +1,4 @@
-name: Check metadata review runner listener
+name: Check live review deployment progress
 on:
   push:
     branches: [deploy/calibre-library-acceptance]
