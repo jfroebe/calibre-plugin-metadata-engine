@@ -1,0 +1,97 @@
+name: Authorize and start the reviewed 40-book campaign
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/start-reviewed-book-campaign.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: start-reviewed-book-campaign
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 5
+    steps:
+      - name: Record explicit approval and start in one transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          test "$(id -un)" = agent
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          db() { docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test "$@"; }
+          db --single-transaction <<'SQL'
+          DO $authorize$
+          DECLARE
+            campaign uuid := '72b07fe2-86a0-4a69-aa2d-3cc22362f923';
+            reviewed_manifest text := '1fea179d2f76e8830a9e1782c93a1369994fd2487a5d164801243f22e4501556';
+            reviewed_config text := 'edbad9aeae2bd1d9525960d088901a78af11d2656f4f6e56c4bf2d7e7e7e195b';
+            approval_request uuid := '4d921f6e-c899-4dde-a140-9f14cc220ec6';
+            start_request uuid := 'b3ea426a-d20a-4dc2-bea4-67ef4897cedf';
+            row metadata_queue.campaigns;
+            next_version bigint;
+            evidence jsonb;
+          BEGIN
+            SELECT * INTO STRICT row FROM metadata_queue.campaigns WHERE id=campaign FOR UPDATE;
+            IF row.synthetic OR row.manifest_hash IS DISTINCT FROM reviewed_manifest
+               OR row.config_hash IS DISTINCT FROM reviewed_config
+               OR metadata_queue.campaign_hash(campaign) IS DISTINCT FROM reviewed_manifest
+               OR encode(sha256(convert_to(row.config::text,'UTF8')),'hex') IS DISTINCT FROM reviewed_config THEN
+              RAISE EXCEPTION 'The campaign differs from the reviewed manifest or configuration';
+            END IF;
+            IF (SELECT count(*) FROM metadata_queue.campaign_events
+                WHERE campaign_id=campaign AND
+                ((request_id=approval_request AND new_state='approved')
+                  OR (request_id=start_request AND new_state='running'))) = 2 THEN
+              RETURN;
+            END IF;
+            IF row.state <> 'ready' OR row.approval_revision IS NOT NULL OR
+               (SELECT count(*) FROM metadata_queue.jobs WHERE campaign_id=campaign) <> 40 OR
+               (SELECT count(*) FROM metadata_queue.jobs
+                WHERE campaign_id=campaign AND state='pending' AND attempt_count=0) <> 40 THEN
+              RAISE EXCEPTION 'The reviewed 40-book queue is no longer awaiting approval';
+            END IF;
+            IF (SELECT count(*) FROM metadata_queue.runners
+                WHERE id IN ('chatgpt-dev','chatgpt-build-02')
+                  AND desired_state='running' AND observed_state='running'
+                  AND heartbeat_at>clock_timestamp()-interval '30 seconds') <> 2 THEN
+              RAISE EXCEPTION 'Both test workers must be healthy before start';
+            END IF;
+            evidence := jsonb_build_object('manifest_hash',reviewed_manifest,
+              'config_hash',reviewed_config,
+              'reference','Explicit user approval and start in the Metadata Engine work session',
+              'user_authorization','Jason Froebe: Approve and start campaign 72b07fe2-86a0-4a69-aa2d-3cc22362f923');
+            next_version := metadata_queue.transition(campaign,row.version,approval_request,'approved',evidence);
+            PERFORM metadata_queue.transition(campaign,next_version,start_request,'running',evidence);
+          END
+          $authorize$;
+          SQL
+          sleep 8
+          db <<'SQL'
+          SELECT 'campaign',id,state,version FROM metadata_queue.campaigns
+          WHERE id='72b07fe2-86a0-4a69-aa2d-3cc22362f923';
+          SELECT 'event',old_state,new_state,occurred_at FROM metadata_queue.campaign_events
+          WHERE campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923'
+            AND request_id IN ('4d921f6e-c899-4dde-a140-9f14cc220ec6','b3ea426a-d20a-4dc2-bea4-67ef4897cedf')
+          ORDER BY version;
+          SELECT 'jobs',state,count(*) FROM metadata_queue.jobs
+          WHERE campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923' GROUP BY state ORDER BY state;
+          SELECT 'attempts_started',count(*) FROM metadata_queue.job_attempts a
+          JOIN metadata_queue.jobs j ON j.id=a.job_id
+          WHERE j.campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923';
+          SQL
+          REMOTE
