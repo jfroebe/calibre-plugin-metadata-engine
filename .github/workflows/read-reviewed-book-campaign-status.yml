@@ -1,4 +1,4 @@
-name: Diagnose reviewed book lookup failures
+name: Verify and install local lookup corrections
 on:
   push:
     branches: [deploy/calibre-library-acceptance]
@@ -46,9 +46,10 @@ jobs:
           WHERE j.campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923' GROUP BY 2,3 ORDER BY 2,3;
           SELECT 'cache',provider,count(*),count(*) FILTER (WHERE payload='[]'),sum(jsonb_array_length(payload))
           FROM metadata_queue.provider_cache GROUP BY 2 ORDER BY 2;
-          SELECT 'saved',p->>'source',p->>'identity',count(*)
-          FROM metadata_queue.historical_diagnostics d
-          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(evidence->'supported')='array' THEN evidence->'supported' ELSE '[]' END) p
+          SELECT 'alternate',f.key,provider.name,count(*) FROM metadata_queue.historical_diagnostics d
+          CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(evidence->'supported')='object' THEN evidence->'supported' ELSE '{}' END) f
+          CROSS JOIN LATERAL jsonb_array_elements_text(f.value) provider(name)
+          WHERE f.key IN ('no_match','edition_unverified','edition_mismatch','cover_missing_or_invalid','cover_resolution_regressed')
           GROUP BY 2,3 ORDER BY 2,3;
           SELECT 'historical',count(*) FROM metadata_queue.historical_diagnostics GROUP BY campaign_id;
           COMMIT;
@@ -70,6 +71,9 @@ jobs:
           
           PROVIDER = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
           TEMPORARY = {408, 425, 429, 500, 502, 503, 504}
+          SERIES_SUFFIX = re.compile(r"\s+\([^()]+\s(?:book\s*|#)\d+(?:\.\d+)?\)$", re.I)
+          EDITION_SOURCES = {"goodreads", "google_books"}
+          CACHE_REVISION = 2
           
           
           def normalize(value):
@@ -81,14 +85,14 @@ jobs:
           
           def edition_ids(row):
               """Normalize supported ISBN and Kindle identifier schemes."""
-              known = dict(row.get("identifiers") or {})
-              for name in ("isbn", "asin"):
-                  if row.get(name):
-                      known[name] = row[name]
+              identifiers = row.get("identifiers")
+              known = list(identifiers.items()) if isinstance(identifiers, dict) else []
+              known.extend((name, row[name]) for name in ("isbn", "asin") if row.get(name))
               result = set()
-              for name, value in known.items():
+              for name, value in known:
+                  name = name.casefold().replace("_", "-")
                   value = re.sub(r"[\s-]", "", str(value)).upper()
-                  if name in {"isbn", "isbn10", "isbn13"}:
+                  if name in {"isbn", "isbn10", "isbn13", "isbn-10", "isbn-13"}:
                       if re.fullmatch(r"\d{9}[\dX]", value):
                           if (
                               sum(
@@ -115,7 +119,7 @@ jobs:
               return result
           
           
-          def edition_match(original, row):
+          def edition_match(original, row, provider=None):
               """Require corroborating edition identifiers and reject explicit conflicts."""
               target, found = edition_ids(original), edition_ids(row)
               for kind in {name for name, _ in target} & {name for name, _ in found}:
@@ -123,19 +127,46 @@ jobs:
                       value for name, value in found if name == kind
                   }:
                       return False
-              return bool(target & found)
-          
-          
-          def identity(original, row):
-              """Require edition evidence, work-title agreement, and matching authors."""
-              if not edition_match(original, row):
+              if target & found:
+                  return True
+              if provider not in EDITION_SOURCES:
                   return False
-              titles = {
-                  normalize(original["title"]),
-                  *(normalize(t) for t in original.get("alternate_titles", [])),
-              }
+              saved = (original.get("identifiers") or {}).get(f"metadata_engine_{provider}")
+              reported = row.get("source_id")
+              return bool(saved and reported and str(saved) == str(reported))
+          
+          
+          def main_title(title):
+              """Read a catalog title without its subtitle or trailing series label."""
+              title = re.sub(r"^(.*),\s*(The|A|An)$", r"\2 \1", title, flags=re.I)
+              return SERIES_SUFFIX.sub("", title).partition(":")[0].strip()
+          
+          
+          def identity(original, row, provider=None):
+              """Require edition evidence, work-title agreement, and matching authors."""
+              return edition_match(original, row, provider) and work_identity(original, row)
+          
+          
+          def work_identity(original, row, *, allow_short_title=True):
+              """Check title and authors separately from edition identity."""
               title = row.get("title")
-              if not isinstance(title, str) or normalize(title) not in titles:
+              if not isinstance(title, str) or not normalize(main_title(title)):
+                  return False
+              for expected in [original["title"], *original.get("alternate_titles", [])]:
+                  if normalize(title) == normalize(expected):
+                      break
+                  # A shared edition ID can corroborate a shortened catalog title. Two
+                  # different subtitles or numbered series labels still require review.
+                  if (
+                      allow_short_title
+                      and normalize(main_title(title)) == normalize(main_title(expected))
+                      and (
+                          normalize(title) == normalize(main_title(title))
+                          or normalize(expected) == normalize(main_title(expected))
+                      )
+                  ):
+                      break
+              else:
                   return False
               authors = row.get("authors")
               if not isinstance(authors, list) or not all(
@@ -144,7 +175,7 @@ jobs:
                   return False
               original_authors = {
                   tuple(sorted(normalize(a).split())) for a in original.get("authors", [])
-              }
+              } - {(), ("unknown",)}
               return bool(original_authors) and original_authors == {
                   tuple(sorted(normalize(a).split())) for a in authors
               }
@@ -154,10 +185,17 @@ jobs:
               """Fetch one bounded response and classify provider failures."""
               if not PROVIDER.fullmatch(provider):
                   raise ValueError("Invalid provider identifier")
-              params = {"query": original["title"], "limit": 10, "metadata_type": "books"}
+              title = original["title"]
+              params = {
+                  "query": main_title(title) or title,
+                  "limit": 10,
+                  "metadata_type": "books",
+              }
               if original.get("authors"):
                   params["author"] = ", ".join(original["authors"])
               for kind, value in sorted(edition_ids(original)):
+                  if kind == "asin" and provider == "goodreads":
+                      continue
                   params.setdefault(kind, value)
               url = f"{endpoint.rstrip('/')}/plugins/{quote(provider)}/search?{urlencode(params)}"
               try:
@@ -181,10 +219,12 @@ jobs:
           
           def lookup(endpoint, original, providers, timeout, cache, reserve, *, opener=urlopen):
               """Collect source-attributed alternatives without merging ambiguous records."""
-              attempts, candidates = {}, []
+              attempts, candidates, work_sources = {}, [], set()
               for provider in providers:
                   fingerprint = hashlib.sha256(
-                      json.dumps([endpoint, provider, original], sort_keys=True).encode()
+                      json.dumps(
+                          [CACHE_REVISION, endpoint, provider, original], sort_keys=True
+                      ).encode()
                   ).hexdigest()
                   cached = cache.get(provider, fingerprint)
                   if cached is not None:
@@ -197,12 +237,16 @@ jobs:
                   else:
                       status, rows = "rate_limited", []
                   attempts[provider] = status
-                  candidates.extend(
-                      {"provider": provider, "payload": row}
-                      for row in rows
-                      if identity(original, row)
-                  )
-              return {"attempts": attempts, "candidates": candidates}
+                  for row in rows:
+                      if identity(original, row, provider):
+                          candidates.append({"provider": provider, "payload": row})
+                      elif work_identity(original, row, allow_short_title=False):
+                          work_sources.add(provider)
+              return {
+                  "attempts": attempts,
+                  "candidates": candidates,
+                  "work_sources": work_sources,
+              }
           
           
           class LeaseProviders:
@@ -235,7 +279,6 @@ jobs:
                       "SELECT metadata_queue.write_provider_cache(%s,%s,%s,%s,%s,%s)",
                       (*self.lease, provider, fingerprint, Jsonb(rows)),
                   )
-          
           from collections import Counter
           import sys
           
@@ -277,6 +320,12 @@ jobs:
                           kind = 'exact' if edition_match(original,row) else 'conflict' if {k for k,_ in target}&{k for k,_ in found} else 'missing'
                           labels.add('trial_' + kind + ('_cover' if row.get('cover_url') else ''))
                           labels.add('trial_' + kind)
+                      if identity(original, row, provider):
+                          labels.add('corrected_edition')
+                          if row.get('cover_url'):
+                              labels.add('corrected_cover_url')
+                      elif work_identity(original, row, allow_short_title=False):
+                          labels.add('corrected_work_only')
                       status = 'verified' if identity(original, row) else (
                           'edition_id' if same_title and same_authors else
                           'title' if edition_match(original, row) and same_authors else
@@ -315,3 +364,595 @@ jobs:
           COMMIT;
           SQL
           REMOTE
+  workers:
+    needs: status
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {host: chatgpt-build-02, role: docker-build}
+          - {host: chatgpt-dev, role: calibre-controller}
+    runs-on: [self-hosted, linux, x64, '${{ matrix.role }}', '${{ matrix.host }}']
+    timeout-minutes: 5
+    env:
+      EXPECTED_HOST: ${{ matrix.host }}
+    steps:
+      - name: Update running test workers and verify service state
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(hostname -s)" = "$EXPECTED_HOST"
+          base="$HOME/.local/share/metadata-queue"
+          config="$HOME/.config/metadata-queue"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          if ! systemctl --user is-active --quiet metadata-queue-worker.service; then
+            printf '%s\n' 'Existing worker is stopped. Leaving its service state in place.'
+            exit 1
+          fi
+          if ! (
+            set -a
+            source "$config/worker.env"
+            set +a
+            "$base/python/bin/python" - "$EXPECTED_HOST" <<'PY'
+          import os
+          import sys
+          import psycopg
+          with psycopg.connect(os.environ["METADATA_QUEUE_DSN"], connect_timeout=5) as db:
+              allowed = db.execute("SELECT metadata_queue.heartbeat(%s)", (sys.argv[1],)).fetchone()[0]
+              raise SystemExit(0 if allowed else 1)
+          PY
+          ); then
+            printf '%s\n' 'Database does not permit this worker to run.'
+            exit 1
+          fi
+          stage="$(mktemp -d "$base/lookup-fix.XXXXXX")"
+          trap 'rm -rf "$stage"' EXIT
+          cat > "$stage/metadata_queue_provider.py" <<'PYTHON'
+          """Query allowed book providers with exact-edition validation and cached evidence."""
+          
+          import hashlib
+          import json
+          import re
+          import unicodedata
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import quote, urlencode
+          from urllib.request import urlopen
+          
+          PROVIDER = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+          TEMPORARY = {408, 425, 429, 500, 502, 503, 504}
+          SERIES_SUFFIX = re.compile(r"\s+\([^()]+\s(?:book\s*|#)\d+(?:\.\d+)?\)$", re.I)
+          EDITION_SOURCES = {"goodreads", "google_books"}
+          CACHE_REVISION = 2
+          
+          
+          def normalize(value):
+              """Normalize catalog text for conservative identity comparisons."""
+              return " ".join(
+                  re.findall(r"[^\W_]+", unicodedata.normalize("NFKC", value).casefold())
+              )
+          
+          
+          def edition_ids(row):
+              """Normalize supported ISBN and Kindle identifier schemes."""
+              identifiers = row.get("identifiers")
+              known = list(identifiers.items()) if isinstance(identifiers, dict) else []
+              known.extend((name, row[name]) for name in ("isbn", "asin") if row.get(name))
+              result = set()
+              for name, value in known:
+                  name = name.casefold().replace("_", "-")
+                  value = re.sub(r"[\s-]", "", str(value)).upper()
+                  if name in {"isbn", "isbn10", "isbn13", "isbn-10", "isbn-13"}:
+                      if re.fullmatch(r"\d{9}[\dX]", value):
+                          if (
+                              sum(
+                                  (10 - i) * (10 if digit == "X" else int(digit))
+                                  for i, digit in enumerate(value)
+                              )
+                              % 11
+                          ):
+                              continue
+                          stem = "978" + value[:9]
+                          value = stem + str(
+                              -sum((1 + 2 * (i % 2)) * int(n) for i, n in enumerate(stem)) % 10
+                          )
+                      if (
+                          re.fullmatch(r"\d{13}", value)
+                          and not sum((1 + 2 * (i % 2)) * int(n) for i, n in enumerate(value))
+                          % 10
+                      ):
+                          result.add(("isbn", value))
+                  elif name in {"asin", "mobi-asin", "amazon"} and re.fullmatch(
+                      r"[A-Z0-9]{10}", value
+                  ):
+                      result.add(("asin", value))
+              return result
+          
+          
+          def edition_match(original, row, provider=None):
+              """Require corroborating edition identifiers and reject explicit conflicts."""
+              target, found = edition_ids(original), edition_ids(row)
+              for kind in {name for name, _ in target} & {name for name, _ in found}:
+                  if not {value for name, value in target if name == kind} & {
+                      value for name, value in found if name == kind
+                  }:
+                      return False
+              if target & found:
+                  return True
+              if provider not in EDITION_SOURCES:
+                  return False
+              saved = (original.get("identifiers") or {}).get(f"metadata_engine_{provider}")
+              reported = row.get("source_id")
+              return bool(saved and reported and str(saved) == str(reported))
+          
+          
+          def main_title(title):
+              """Read a catalog title without its subtitle or trailing series label."""
+              title = re.sub(r"^(.*),\s*(The|A|An)$", r"\2 \1", title, flags=re.I)
+              return SERIES_SUFFIX.sub("", title).partition(":")[0].strip()
+          
+          
+          def identity(original, row, provider=None):
+              """Require edition evidence, work-title agreement, and matching authors."""
+              return edition_match(original, row, provider) and work_identity(original, row)
+          
+          
+          def work_identity(original, row, *, allow_short_title=True):
+              """Check title and authors separately from edition identity."""
+              title = row.get("title")
+              if not isinstance(title, str) or not normalize(main_title(title)):
+                  return False
+              for expected in [original["title"], *original.get("alternate_titles", [])]:
+                  if normalize(title) == normalize(expected):
+                      break
+                  # A shared edition ID can corroborate a shortened catalog title. Two
+                  # different subtitles or numbered series labels still require review.
+                  if (
+                      allow_short_title
+                      and normalize(main_title(title)) == normalize(main_title(expected))
+                      and (
+                          normalize(title) == normalize(main_title(title))
+                          or normalize(expected) == normalize(main_title(expected))
+                      )
+                  ):
+                      break
+              else:
+                  return False
+              authors = row.get("authors")
+              if not isinstance(authors, list) or not all(
+                  isinstance(name, str) for name in authors
+              ):
+                  return False
+              original_authors = {
+                  tuple(sorted(normalize(a).split())) for a in original.get("authors", [])
+              } - {(), ("unknown",)}
+              return bool(original_authors) and original_authors == {
+                  tuple(sorted(normalize(a).split())) for a in authors
+              }
+          
+          
+          def fetch(endpoint, provider, original, timeout, *, opener=urlopen):
+              """Fetch one bounded response and classify provider failures."""
+              if not PROVIDER.fullmatch(provider):
+                  raise ValueError("Invalid provider identifier")
+              title = original["title"]
+              params = {
+                  "query": main_title(title) or title,
+                  "limit": 10,
+                  "metadata_type": "books",
+              }
+              if original.get("authors"):
+                  params["author"] = ", ".join(original["authors"])
+              for kind, value in sorted(edition_ids(original)):
+                  if kind == "asin" and provider == "goodreads":
+                      continue
+                  params.setdefault(kind, value)
+              url = f"{endpoint.rstrip('/')}/plugins/{quote(provider)}/search?{urlencode(params)}"
+              try:
+                  with opener(url, timeout=timeout) as response:
+                      data = response.read(2_000_001)
+                  if len(data) > 2_000_000:
+                      return "invalid_response", []
+                  payload = json.loads(data)
+                  if not isinstance(payload, dict) or not isinstance(
+                      payload.get("results"), list
+                  ):
+                      return "invalid_response", []
+                  return "ok", [row for row in payload["results"] if isinstance(row, dict)]
+              except HTTPError as exc:
+                  return ("transient" if exc.code in TEMPORARY else "provider_rejected"), []
+              except (URLError, TimeoutError, ConnectionError):
+                  return "transient", []
+              except (ValueError, UnicodeError):
+                  return "invalid_response", []
+          
+          
+          def lookup(endpoint, original, providers, timeout, cache, reserve, *, opener=urlopen):
+              """Collect source-attributed alternatives without merging ambiguous records."""
+              attempts, candidates, work_sources = {}, [], set()
+              for provider in providers:
+                  fingerprint = hashlib.sha256(
+                      json.dumps(
+                          [CACHE_REVISION, endpoint, provider, original], sort_keys=True
+                      ).encode()
+                  ).hexdigest()
+                  cached = cache.get(provider, fingerprint)
+                  if cached is not None:
+                      rows = cached
+                      status = "cached"
+                  elif reserve(provider):
+                      status, rows = fetch(endpoint, provider, original, timeout, opener=opener)
+                      if status == "ok":
+                          cache.put(provider, fingerprint, rows)
+                  else:
+                      status, rows = "rate_limited", []
+                  attempts[provider] = status
+                  for row in rows:
+                      if identity(original, row, provider):
+                          candidates.append({"provider": provider, "payload": row})
+                      elif work_identity(original, row, allow_short_title=False):
+                          work_sources.add(provider)
+              return {
+                  "attempts": attempts,
+                  "candidates": candidates,
+                  "work_sources": work_sources,
+              }
+          
+          
+          class LeaseProviders:
+              """Use a worker's PostgreSQL lease for shared provider access and caching."""
+          
+              def __init__(self, connection, runner, job_id, token):
+                  """Bind every provider operation to one current lease."""
+                  self.connection = connection
+                  self.lease = (runner, job_id, token)
+          
+              def reserve(self, provider):
+                  """Reserve a provider slot after checking campaign and lease authorization."""
+                  return self.connection.execute(
+                      "SELECT metadata_queue.reserve_provider(%s,%s,%s,%s)",
+                      (*self.lease, provider),
+                  ).fetchone()[0]
+          
+              def get(self, provider, fingerprint):
+                  """Read a cache entry within the same lease authorization."""
+                  return self.connection.execute(
+                      "SELECT metadata_queue.read_provider_cache(%s,%s,%s,%s,%s)",
+                      (*self.lease, provider, fingerprint),
+                  ).fetchone()[0]
+          
+              def put(self, provider, fingerprint, rows):
+                  """Persist a successful provider response while the lease is valid."""
+                  from psycopg.types.json import Jsonb
+          
+                  self.connection.execute(
+                      "SELECT metadata_queue.write_provider_cache(%s,%s,%s,%s,%s,%s)",
+                      (*self.lease, provider, fingerprint, Jsonb(rows)),
+                  )
+          PYTHON
+          cat > "$stage/metadata_queue_worker.py" <<'PYTHON'
+          """Poll PostgreSQL for authorized acceptance jobs."""
+          
+          import argparse
+          import base64
+          import logging
+          import os
+          import signal
+          from threading import Event
+          
+          import psycopg
+          
+          LOG = logging.getLogger(__name__)
+          
+          
+          def run_lookup(db, runner, job_id, token, endpoint, *, opener=None, cover_opener=None):
+              """Gather and store verified provider evidence under the current job lease."""
+              from metadata_queue_cover import allowed_cover, fetch_cover
+              from metadata_queue_provider import LeaseProviders, lookup
+              from metadata_queue_quality import assess, replacement
+              from psycopg.types.json import Jsonb
+          
+              lease = (runner, job_id, token)
+              if not endpoint:
+                  raise RuntimeError("No test engine configured for provider lookups")
+              inputs = db.execute(
+                  "SELECT metadata_queue.lookup_input(%s,%s,%s)", lease
+              ).fetchone()[0]
+              if inputs is None:
+                  # A pause can block provider access while still permitting a fenced finish.
+                  db.execute(
+                      "SELECT metadata_queue.finish(%s,%s,%s,'retry','input_unavailable')", lease
+                  )
+                  return
+              access = LeaseProviders(db, *lease)
+              options = {"opener": opener} if opener is not None else {}
+              evidence = lookup(
+                  endpoint,
+                  inputs["original"],
+                  inputs["providers"],
+                  5,
+                  access,
+                  access.reserve,
+                  **options,
+              )
+              candidates = []
+              for result in evidence["candidates"]:
+                  payload = dict(result["payload"])
+                  if payload.get("source_id"):
+                      identifiers = payload.get("identifiers")
+                      payload["identifiers"] = {
+                          **(identifiers if isinstance(identifiers, dict) else {}),
+                          f"metadata_engine_{result['provider']}": str(payload["source_id"]),
+                      }
+                  try:
+                      scores = assess(payload)
+                  except (AttributeError, TypeError, ValueError):
+                      continue
+                  candidates.append(dict(result, payload=payload, field_scores=scores))
+              candidates.sort(key=lambda row: sum(row["field_scores"].values()), reverse=True)
+              best = candidates[0] if candidates else None
+              if best:
+                  original = inputs["original"]
+                  original_artwork = inputs["original_cover"]
+                  processed = any(
+                      name.startswith("metadata_engine_") and value
+                      for name, value in original.get("identifiers", {}).items()
+                  )
+                  artwork = None
+                  attempted = set()
+                  for candidate in candidates:
+                      provider = candidate["provider"]
+                      url = candidate["payload"].get("cover_url")
+                      if provider in attempted or not allowed_cover(url):
+                          continue
+                      attempted.add(provider)
+                      if not db.execute(
+                          "SELECT metadata_queue.reserve_artwork(%s,%s,%s,%s)",
+                          (*lease, provider),
+                      ).fetchone()[0]:
+                          continue
+                      downloaded = fetch_cover(url, 5, opener=cover_opener)
+                      if not downloaded:
+                          continue
+                      if not artwork:
+                          best, artwork = candidate, downloaded
+                      if (
+                          not processed
+                          or not original_artwork
+                          or (downloaded["sha256"] == original_artwork["sha256"])
+                      ):
+                          best, artwork = candidate, downloaded
+                          break
+                  candidate_record = dict(
+                      source=best["provider"],
+                      payload=best["payload"],
+                      field_scores=best["field_scores"],
+                  )
+                  if artwork:
+                      candidate_record["field_scores"] = assess(
+                          best["payload"], (artwork["width"], artwork["height"])
+                      )
+                      candidate_record["cover"] = dict(
+                          artwork, bytes=base64.b64encode(artwork["bytes"]).decode("ascii")
+                      )
+                  original_size = (
+                      (original_artwork["width"], original_artwork["height"])
+                      if original_artwork
+                      else None
+                  )
+                  safe_artwork = artwork and (
+                      not original_artwork or artwork["sha256"] == original_artwork["sha256"]
+                  )
+                  if safe_artwork:
+                      original_scores = assess(original, original_size)
+                      recommend, reason = replacement(
+                          original,
+                          best["payload"],
+                          original_scores,
+                          candidate_record["field_scores"],
+                          edition_verified=True,
+                      )
+                      comparable, _ = replacement(
+                          original,
+                          best["payload"],
+                          original_scores,
+                          candidate_record["field_scores"],
+                          edition_verified=True,
+                          allow_equal=True,
+                      )
+                  else:
+                      recommend, reason = False, "cover_and_replacement_unverified"
+                      comparable = False
+                  candidate_record["replacement_assessment"] = {
+                      "recommended": recommend,
+                      "reason": reason,
+                  }
+                  candidate = Jsonb(candidate_record)
+                  # A previously unmarked book can pass lookup acceptance with verified
+                  # metadata and artwork. A replacement remains a separate decision.
+                  if artwork and (not processed or comparable):
+                      outcome, reason = "passed", None
+                  else:
+                      outcome = "needs_review"
+              else:
+                  candidate = None
+                  temporary = {"transient", "rate_limited"}
+                  if temporary.intersection(evidence["attempts"].values()):
+                      outcome, reason = "retry", "provider_unavailable"
+                  elif evidence["work_sources"]:
+                      outcome, reason = "needs_review", "work_found_edition_unverified"
+                  else:
+                      outcome, reason = "needs_review", "no_verified_edition"
+              db.execute(
+                  "SELECT metadata_queue.finish_lookup(%s,%s,%s,%s,%s,%s,%s)",
+                  (*lease, outcome, reason, Jsonb(evidence["attempts"]), candidate),
+              )
+          
+          
+          def work(dsn, runner, stop, once):
+              """Heartbeat, recover expired leases and process synthetic work."""
+              while not stop.is_set():
+                  try:
+                      with psycopg.connect(dsn, autocommit=True, connect_timeout=5) as db:
+                          while not stop.is_set():
+                              allowed = db.execute(
+                                  "SELECT metadata_queue.heartbeat(%s)", (runner,)
+                              ).fetchone()[0]
+                              if allowed:
+                                  db.execute("SELECT metadata_queue.recover(%s)", (runner,))
+                                  # PostgreSQL decides which campaigns this worker may claim.
+                                  job = db.execute(
+                                      "SELECT * FROM metadata_queue.claim(%s)", (runner,)
+                                  ).fetchone()
+                                  if job is not None:
+                                      job_id, token, synthetic = job
+                                      if synthetic:
+                                          db.execute(
+                                              "SELECT metadata_queue.finish(%s,%s,%s,'passed')",
+                                              (runner, job_id, token),
+                                          )
+                                      else:
+                                          run_lookup(
+                                              db,
+                                              runner,
+                                              job_id,
+                                              token,
+                                              os.getenv("METADATA_QUEUE_TEST_ENGINE"),
+                                          )
+                              if once:
+                                  return
+                              stop.wait(3 if allowed else 10)
+                  except psycopg.OperationalError:
+                      if once:
+                          raise
+                      LOG.warning("PostgreSQL unavailable; will reconnect")
+                      stop.wait(15)
+          
+          
+          def main():
+              """Run the service without changing runner desired state on startup."""
+              parser = argparse.ArgumentParser(description=__doc__)
+              parser.add_argument("--runner", required=True)
+              parser.add_argument("--once", action="store_true")
+              args = parser.parse_args()
+              logging.basicConfig(level=logging.INFO)
+              stop = Event()
+              for signum in (signal.SIGTERM, signal.SIGINT):
+                  signal.signal(signum, lambda *_: stop.set())
+              work(os.environ["METADATA_QUEUE_DSN"], args.runner, stop, args.once)
+          
+          
+          if __name__ == "__main__":
+              main()
+          PYTHON
+          cat > "$stage/metadata_queue_quality.py" <<'PYTHON'
+          """Score stored book evidence and block protected-field regressions."""
+          
+          import re
+          
+          if __package__:
+              from .metadata_queue_provider import edition_ids
+          else:
+              from metadata_queue_provider import edition_ids
+          
+          
+          def assess(payload, cover=None):
+              """Return deterministic completeness scores totaling at most 100."""
+              description = re.sub(r"<[^>]+>", " ", payload.get("description") or "")
+              return {
+                  "title": 8 if payload.get("title") else 0,
+                  "authors": 10 if payload.get("authors") else 0,
+                  "identifiers": 12 if payload.get("identifiers") or edition_ids(payload) else 0,
+                  "series": 10 if payload.get("series") else 0,
+                  "volume": 5 if series(payload)[1] is not None else 0,
+                  "description": min(15, len(description.split()) // 8),
+                  "publication": sum(
+                      3
+                      for left, right in (
+                          ("publishers", "publisher"),
+                          ("pubdate", "published_year"),
+                          ("languages", "language"),
+                      )
+                      if payload.get(left) or payload.get(right)
+                  ),
+                  "tags": min(
+                      10,
+                      2
+                      * len(
+                          {
+                              tag.casefold()
+                              for key in ("tags", "genres")
+                              for tag in payload.get(key) or []
+                              if tag.strip()
+                          }
+                      ),
+                  ),
+                  "warnings": 8 if payload.get("content_warnings") else 0,
+                  "cover": min(10, min(cover) // 100) if cover else 0,
+                  "provenance": 3 if payload.get("field_provenance") else 0,
+              }
+          
+          
+          def series(payload):
+              """Read both the Calibre baseline and provider series representations."""
+              name = payload.get("series")
+              if isinstance(name, list):
+                  name = next(iter(name), None)
+              if isinstance(name, dict):
+                  index = name.get("index", name.get("position", name.get("number")))
+                  return name.get("name") or name.get("title") or name.get("series"), index
+              return name, payload.get("series_index") if name else None
+          
+          
+          def replacement(
+              original,
+              candidate,
+              original_scores,
+              candidate_scores,
+              edition_verified,
+              *,
+              allow_equal=False,
+          ):
+              """Explain whether an edition-verified candidate protects the original."""
+              if not edition_verified:
+                  return False, "edition_unverified"
+              for field in ("authors", "identifiers", "series", "volume", "description", "cover"):
+                  if candidate_scores[field] < original_scores[field]:
+                      return False, f"protected_field_regression:{field}"
+              if original.get("authors") is not None and original["authors"] != candidate.get(
+                  "authors"
+              ):
+                  return False, "protected_field_changed:authors"
+              if series(original)[0] and series(original) != series(candidate):
+                  return False, "protected_field_changed:series"
+              for scheme, value in original.get("identifiers", {}).items():
+                  if (candidate.get("identifiers") or {}).get(scheme) == value:
+                      continue
+                  expected = edition_ids({"identifiers": {scheme: value}})
+                  if not expected or not expected <= edition_ids(candidate):
+                      return False, "protected_identifier_changed"
+              improvement = sum(candidate_scores.values()) - sum(original_scores.values())
+              if allow_equal and improvement == 0:
+                  return True, "equal_score_with_protected_fields_preserved"
+              if improvement <= 0:
+                  return False, "quality_not_higher"
+              return True, "higher_score_with_protected_fields_preserved"
+          PYTHON
+          "$base/python/bin/python" -m compileall -q "$stage"
+          mkdir "$stage/previous"
+          for file in metadata_queue_provider.py metadata_queue_quality.py metadata_queue_worker.py; do
+            cp -- "$base/$file" "$stage/previous/$file"
+          done
+          for file in metadata_queue_provider.py metadata_queue_quality.py metadata_queue_worker.py; do
+            mv -f -- "$stage/$file" "$base/$file"
+          done
+          if ! systemctl --user try-restart metadata-queue-worker.service ||
+             ! systemctl --user is-active --quiet metadata-queue-worker.service; then
+            for file in metadata_queue_provider.py metadata_queue_quality.py metadata_queue_worker.py; do
+              mv -f -- "$stage/previous/$file" "$base/$file"
+            done
+            systemctl --user try-restart metadata-queue-worker.service
+            exit 1
+          fi
+          printf '%s\n' "Updated lookup modules on $EXPECTED_HOST"
