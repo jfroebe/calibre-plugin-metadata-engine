@@ -22,11 +22,15 @@ jobs:
             python3 - "$directory/.runner" <<'PY'
           import json
           import sys
-          with open(sys.argv[1]) as file:
+          with open(sys.argv[1], encoding='utf-8-sig') as file:
               data = json.load(file)
           for key in ("agentName", "gitHubUrl", "poolName", "workFolder"):
               print(key, data.get(key))
           PY
+          fi
+          if [ -d "$directory/_diag" ]; then
+            grep -hiE 'Listening for Jobs|Connected to GitHub|session already exists|Running job:|access denied|Unauthorized|Forbidden|connect error|connection refused' "$directory"/_diag/Runner_*.log 2>/dev/null |
+              awk '{line=tolower($0);if(line ~ /listening for jobs/) listening++;if(line ~ /connected to github/) connected++;if(line ~ /running job:/) assigned++;if(line ~ /already exists|access denied|unauthorized|forbidden|connect error|connection refused/) failed++} END {printf "listener files connected=%d listening=%d assigned=%d errors=%d\n",connected,listening,assigned,failed}' || true
           fi
           journalctl -u "$unit" --since '20 minutes ago' -o cat --no-pager 2>/dev/null |
             awk '
