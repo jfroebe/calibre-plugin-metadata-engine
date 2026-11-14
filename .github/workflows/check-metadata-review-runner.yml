@@ -1,4 +1,4 @@
-name: Check live review deployment progress
+name: Check resumed review deployment
 on:
   push:
     branches: [deploy/calibre-library-acceptance]
@@ -8,7 +8,7 @@ permissions:
 jobs:
   listener:
     runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
-    timeout-minutes: 30
+    timeout-minutes: 2
     steps:
       - name: Check runner listener and summarize connection state
         shell: bash
@@ -65,34 +65,18 @@ jobs:
           done
           ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'bash -s' <<'REMOTE'
           set -eu
-          for check in $(seq 1 26); do
-            printf 'check=%s utc=%s\n' "$check" "$(date -u +%FT%TZ)"
-            for dir in /mnt/user/database-backup/metadata_test/*-metadata-review-v1; do
-              [ -d "$dir" ] || continue
-              printf '%s\n' "${dir##*/}"
-              for file in metadata_test.dump.partial metadata_test.dump metadata_test.dump.sha256 restore-verified.txt; do
-                if [ -f "$dir/$file" ]; then stat -c "$file bytes=%s modified=%y" "$dir/$file"; fi
-              done
+          for dir in /mnt/user/database-backup/metadata_test/*-metadata-review-v1; do
+            [ -d "$dir" ] || continue
+            printf '%s\n' "${dir##*/}"
+            for file in metadata_test.dump metadata_test.dump.sha256 restore-verified.txt; do
+              if [ -f "$dir/$file" ]; then stat -c "$file bytes=%s modified=%y" "$dir/$file"; fi
             done
-            applied=false
-            while read -r container; do
-              if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
-                db_user="$(docker exec "$container" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
-                if [ "$(docker exec "$container" psql -qXAt -U "$db_user" -d metadata_test -c "SELECT to_regnamespace('metadata_review') IS NOT NULL")" = t ]; then applied=true; fi
-              fi
-            done < <(docker ps --format '{{.ID}}')
-            printf 'review_schema=%s\n' "$applied"
-            if "$applied"; then break; fi
-            sleep 60
           done
-          REMOTE
-          for check in $(seq 1 12); do
-            if [[ "$ip" =~ ^192\.168\.0\.[0-9]+$ && -s "$HOME/.config/metadata-review/tls.crt" ]] &&
-              curl --noproxy '*' --silent --fail --max-time 3 --cacert "$HOME/.config/metadata-review/tls.crt" "https://$ip:8708/healthz"; then
-              echo
-              printf 'verified_review_url=https://%s:8708/\n' "$ip"
-              exit 0
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              db_user="$(docker exec "$container" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+              docker exec "$container" psql -qXAt -U "$db_user" -d metadata_test -c "SELECT 'review_schema',to_regnamespace('metadata_review') IS NOT NULL; SELECT datname,state,coalesce(wait_event_type,'running'),count(*) FROM pg_stat_activity WHERE datname LIKE 'metadata_review_restore_%' OR application_name='pg_dump' GROUP BY 1,2,3;"
+              df -h /mnt/user/database-backup/metadata_test | awk 'NR==2 {print "backup_free=" $4}'
             fi
-            sleep 5
-          done
-          exit 1
+          done < <(docker ps --format '{{.ID}}')
+          REMOTE
