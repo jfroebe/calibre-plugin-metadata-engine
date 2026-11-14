@@ -1,0 +1,114 @@
+name: Rerun reviewed book campaign
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/rerun-reviewed-book-campaign.yml]
+permissions:
+  contents: read
+jobs:
+  rerun:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 15
+    steps:
+      - name: Start exact-scope rerun and report PostgreSQL results
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          db() { docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test "$@"; }
+          db <<'SQL'
+          BEGIN;
+          SET LOCAL search_path=metadata_queue,pg_catalog,pg_temp;
+          SELECT pg_advisory_xact_lock(89411835);
+          DO $run$
+          DECLARE
+            previous campaigns;
+            rerun constant uuid := 'fa59f794-1cec-46fc-97ef-8a641b262b86';
+            note constant text := 'User directed: perform the rerun. Exact 40-book scope and policy of 72b07fe2-86a0-4a69-aa2d-3cc22362f923';
+            verification constant text := 'Corrected worker deployment and offline replay: workflow 43549193890';
+            evidence jsonb;
+            v bigint;
+          BEGIN
+            SELECT * INTO STRICT previous FROM campaigns
+            WHERE id='72b07fe2-86a0-4a69-aa2d-3cc22362f923' FOR UPDATE;
+            IF EXISTS (SELECT FROM campaigns WHERE id=rerun) THEN
+              RETURN;
+            END IF;
+            IF previous.synthetic OR previous.state NOT IN ('running','completed')
+                OR NOT approval_valid(previous)
+                OR previous.manifest_hash IS DISTINCT FROM campaign_hash(previous.id)
+                OR previous.config_hash IS DISTINCT FROM encode(sha256(convert_to(previous.config::text,'UTF8')),'hex')
+                OR (SELECT count(*) FROM campaign_members WHERE campaign_id=previous.id)<>40
+                OR (SELECT count(*) FROM jobs WHERE campaign_id=previous.id
+                    AND state IN ('passed','failed','needs_review','blocked','cancelled'))<>40
+                OR (SELECT max(revision) FROM migrations)<>7
+                OR (SELECT count(*) FROM runners WHERE id IN ('chatgpt-dev','chatgpt-build-02')
+                     AND desired_state='running' AND observed_state='running'
+                     AND heartbeat_at>clock_timestamp()-interval '30 seconds')<>2 THEN
+              RAISE EXCEPTION 'Source campaign or runner readiness changed';
+            END IF;
+            IF previous.state='running' THEN
+              PERFORM transition(previous.id,previous.version,gen_random_uuid(),'completed',
+                jsonb_build_object('reference','Initial 40-book execution finished; retain results before rerun'));
+            END IF;
+            INSERT INTO campaigns(id,config) VALUES (rerun,previous.config);
+            v := transition(rerun,0,gen_random_uuid(),'preparing',jsonb_build_object('reference',note));
+            INSERT INTO campaign_members (campaign_id,media_id)
+            SELECT rerun, media_id FROM campaign_members WHERE campaign_id=previous.id;
+            IF freeze_manifest(rerun,v) IS DISTINCT FROM previous.manifest_hash THEN
+              RAISE EXCEPTION 'Rerun membership changed';
+            END IF;
+            evidence := jsonb_build_object('manifest_hash',previous.manifest_hash,
+              'config_hash',previous.config_hash,'reference',note,'user_authorization',note);
+            v := transition(rerun,v,gen_random_uuid(),'ready',
+              previous.readiness || evidence || jsonb_build_object('verification',verification));
+            v := transition(rerun,v,gen_random_uuid(),'approved',evidence);
+            PERFORM transition(rerun,v,gen_random_uuid(),'running',evidence);
+          END
+          $run$;
+          COMMIT;
+          SELECT id,state,version FROM metadata_queue.campaigns WHERE id='fa59f794-1cec-46fc-97ef-8a641b262b86';
+          SQL
+          for attempt in $(seq 1 49); do
+            row="$(db -c "SELECT c.state,count(j.id) FILTER (WHERE j.state IN ('pending','leased','retry_wait')),count(j.id) FROM metadata_queue.campaigns c LEFT JOIN metadata_queue.jobs j ON j.campaign_id=c.id WHERE c.id='fa59f794-1cec-46fc-97ef-8a641b262b86' GROUP BY c.state")"
+            printf 'progress|%s\n' "$row"
+            case "$row" in
+              'running|0|40')
+                db -c "SELECT metadata_queue.transition(id,version,gen_random_uuid(),'completed',jsonb_build_object('reference','All 40 rerun jobs reached a terminal status')) FROM metadata_queue.campaigns WHERE id='fa59f794-1cec-46fc-97ef-8a641b262b86' AND state='running'"
+                break ;;
+              running\|*) sleep 15 ;;
+              *) break ;;
+            esac
+          done
+          db <<'SQL'
+          BEGIN READ ONLY;
+          SELECT 'campaign',state,final_counts FROM metadata_queue.campaigns WHERE id='fa59f794-1cec-46fc-97ef-8a641b262b86';
+          SELECT 'result',j.state,coalesce(j.failure_class,''),count(*)
+            FROM metadata_queue.jobs j WHERE j.campaign_id='fa59f794-1cec-46fc-97ef-8a641b262b86' GROUP BY 2,3 ORDER BY 2,3;
+          SELECT 'cohort',CASE WHEN EXISTS (SELECT FROM jsonb_each_text(v.payload->'identifiers') i
+               WHERE left(i.key,16)='metadata_engine_' AND i.value<>'') THEN 'processed' ELSE 'no_saved_marker' END,
+               j.state,count(*) FROM metadata_queue.jobs j
+            JOIN LATERAL (SELECT payload FROM metadata_queue.metadata_versions WHERE media_id=j.media_id
+              AND source_name='calibre-original' ORDER BY id DESC LIMIT 1) v ON true
+            WHERE j.campaign_id='fa59f794-1cec-46fc-97ef-8a641b262b86' GROUP BY 2,3 ORDER BY 2,3;
+          SELECT 'evidence',count(DISTINCT j.id),
+            count(DISTINCT j.id) FILTER (WHERE v.provenance->>'cover_sha256' IS NOT NULL),
+            count(DISTINCT j.id) FILTER (WHERE v.provenance->'replacement_assessment'->>'recommended'='true')
+            FROM metadata_queue.metadata_versions v JOIN metadata_queue.job_attempts a ON a.id=v.job_attempt_id
+            JOIN metadata_queue.jobs j ON j.id=a.job_id WHERE j.campaign_id='fa59f794-1cec-46fc-97ef-8a641b262b86';
+          SELECT 'attempt',a.outcome,count(*) FROM metadata_queue.job_attempts a
+            JOIN metadata_queue.jobs j ON j.id=a.job_id WHERE j.campaign_id='fa59f794-1cec-46fc-97ef-8a641b262b86' GROUP BY 2 ORDER BY 2;
+          COMMIT;
+          SQL
+          REMOTE
