@@ -41,3 +41,15 @@ jobs:
               /connect error|Connection refused|Unauthorized|Forbidden/ {failed++}
               END {printf "connected=%d listening=%d assigned=%d duplicate=%d errors=%d\n",connected,listening,assigned,duplicate,failed}
             ' || true
+          awk '/Running job: / {if($0 ~ /Running job: deploy([^a-zA-Z]|$)/) deploy++;else other++}
+            /Job deploy completed/ {completed++}
+            END {printf "deployment_assignments=%d other_assignments=%d deployment_completions=%d\n",deploy,other,completed}' "$directory"/_diag/Runner_*.log
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          systemctl --user show metadata-review.service -p ActiveState -p SubState || true
+          ip="$(ip -4 route get 192.168.0.59 | awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}')"
+          if [[ "$ip" =~ ^192\.168\.0\.[0-9]+$ && -s "$HOME/.config/metadata-review/tls.crt" ]]; then
+            if curl --noproxy '*' --silent --fail --max-time 3 --cacert "$HOME/.config/metadata-review/tls.crt" "https://$ip:8708/healthz"; then
+              printf '\nverified_review_url=https://%s:8708/\n' "$ip"
+            fi
+          fi
