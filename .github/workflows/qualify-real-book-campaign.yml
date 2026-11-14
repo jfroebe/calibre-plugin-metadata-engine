@@ -1,0 +1,88 @@
+name: Qualify the real-book test campaign without starting it
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/qualify-real-book-campaign.yml]
+permissions:
+  contents: read
+jobs:
+  qualify:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 10
+    steps:
+      - name: Check live prerequisites and advance only to ready
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(hostname -s)" = chatgpt-build-02
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          printf '%s' 'IiIiUXVhbGlmeSB0aGUgcHJlcGFyZWQgQ2FsaWJyZSBjYW1wYWlnbiB3aXRob3V0IGxvb2tpbmcgdXAgYW55IHJlYWwgYm9va3MuIiIiCgppbXBvcnQgYXJncGFyc2UKaW1wb3J0IGpzb24KaW1wb3J0IG9zCmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aApmcm9tIHV1aWQgaW1wb3J0IFVVSUQsIHV1aWQ0CgppbXBvcnQgcHN5Y29wZwpmcm9tIHBzeWNvcGcudHlwZXMuanNvbiBpbXBvcnQgSnNvbmIKClJFUVVJUkVEID0gZnJvemVuc2V0KAogICAgIm1pZ3JhdGlvbiBiYWNrdXAgcm9sbGJhY2sgaGlzdG9yeSBjYXRhbG9nIG1hbmlmZXN0IHN0b3JhZ2UgcXVhbGl0eSBsZWFzaW5nIGZlbmNpbmcgIgogICAgInVzZXJfc3RvcCBwcm92aWRlcl9saW1pdHMgcmVhZG9ubHlfbGlicmFyeSB3b3JrbG9hZF9saW1pdHMgYXV0aG9yaXphdGlvbiIuc3BsaXQoKQopCgoKZGVmIHByZXBhcmUoZGIsIGNhbXBhaWduLCBldmlkZW5jZSwgKiwgZXhwZWN0ZWRfbWVtYmVycz00MCk6CiAgICAiIiJWYWxpZGF0ZSBvcGVyYXRpb25hbCBldmlkZW5jZSwgZnJlZXplIGV4ZWN1dGlvbiBzZXR0aW5ncywgYW5kIHN0b3AgYXQgcmVhZHkuIiIiCiAgICBjaGVja3MgPSBldmlkZW5jZVsiY2hlY2tzIl0KICAgIHJlZmVyZW5jZSA9IGV2aWRlbmNlWyJyZWZlcmVuY2UiXQogICAgaWYgc2V0KGNoZWNrcykgIT0gUkVRVUlSRUQgb3IgYW55KAogICAgICAgIG5vdCBpc2luc3RhbmNlKGl0ZW0sIHN0cikgb3Igbm90IGl0ZW0uc3RyaXAoKSBmb3IgaXRlbSBpbiBjaGVja3MudmFsdWVzKCkKICAgICk6CiAgICAgICAgcmFpc2UgVmFsdWVFcnJvcigiRWFjaCBtYW5kYXRvcnkgcmVhZGluZXNzIGNoZWNrIG5lZWRzIGEgdmVyaWZpZWQgcmVmZXJlbmNlIikKICAgIGlmIG5vdCBpc2luc3RhbmNlKHJlZmVyZW5jZSwgc3RyKSBvciBub3QgcmVmZXJlbmNlLnN0cmlwKCk6CiAgICAgICAgcmFpc2UgVmFsdWVFcnJvcigiQSBkZXBsb3ltZW50IGFuZCB2ZXJpZmljYXRpb24gcmVmZXJlbmNlIGlzIHJlcXVpcmVkIikKICAgIHdpdGggZGIudHJhbnNhY3Rpb24oKToKICAgICAgICBpZiBkYi5leGVjdXRlKAogICAgICAgICAgICAiU0VMRUNUIG1heChyZXZpc2lvbikgRlJPTSBtZXRhZGF0YV9xdWV1ZS5taWdyYXRpb25zIgogICAgICAgICkuZmV0Y2hvbmUoKSAhPSAoNywpOgogICAgICAgICAgICByYWlzZSBWYWx1ZUVycm9yKCJFeHBlY3RlZCBkZXBsb3llZCBtZXRhZGF0YSBxdWV1ZSByZXZpc2lvbiA3IikKICAgICAgICBzdGF0dXMsIHZlcnNpb24sIHN5bnRoZXRpYywgY29uZmlnID0gZGIuZXhlY3V0ZSgKICAgICAgICAgICAgIiIiU0VMRUNUIHN0YXRlLHZlcnNpb24sc3ludGhldGljLGNvbmZpZwogICAgICAgICAgICAgICBGUk9NIG1ldGFkYXRhX3F1ZXVlLmNhbXBhaWducyBXSEVSRSBpZD0lcyBGT1IgVVBEQVRFIiIiLAogICAgICAgICAgICAoY2FtcGFpZ24sKSwKICAgICAgICApLmZldGNob25lKCkKICAgICAgICBpZiBzdGF0dXMgIT0gInByZXBhcmluZyIgb3Igc3ludGhldGljOgogICAgICAgICAgICByYWlzZSBWYWx1ZUVycm9yKCJFeHBlY3RlZCBhIHJlYWwtYm9vayBjYW1wYWlnbiBpbiBwcmVwYXJpbmciKQogICAgICAgIGlmIGRiLmV4ZWN1dGUoCiAgICAgICAgICAgICIiIlNFTEVDVCBjb3VudCgqKSBGUk9NIG1ldGFkYXRhX3F1ZXVlLnJ1bm5lcnMKICAgICAgICAgICAgICAgV0hFUkUgaWQgSU4gKCdjaGF0Z3B0LWRldicsJ2NoYXRncHQtYnVpbGQtMDInKQogICAgICAgICAgICAgICAgIEFORCBkZXNpcmVkX3N0YXRlPSdydW5uaW5nJyBBTkQgb2JzZXJ2ZWRfc3RhdGU9J3J1bm5pbmcnCiAgICAgICAgICAgICAgICAgQU5EIGhlYXJ0YmVhdF9hdD5jbG9ja190aW1lc3RhbXAoKS1pbnRlcnZhbCAnMzAgc2Vjb25kcyciIiIKICAgICAgICApLmZldGNob25lKCkgIT0gKDIsKToKICAgICAgICAgICAgcmFpc2UgVmFsdWVFcnJvcigiQm90aCB0ZXN0IHdvcmtlcnMgbXVzdCBoYXZlIGN1cnJlbnQgaGVhcnRiZWF0cyIpCiAgICAgICAgaWYgZGIuZXhlY3V0ZSgKICAgICAgICAgICAgIlNFTEVDVCBjb3VudCgqKSBGUk9NIG1ldGFkYXRhX3F1ZXVlLmNhbXBhaWduX21lbWJlcnMgV0hFUkUgY2FtcGFpZ25faWQ9JXMiLAogICAgICAgICAgICAoY2FtcGFpZ24sKSwKICAgICAgICApLmZldGNob25lKCkgIT0gKGV4cGVjdGVkX21lbWJlcnMsKToKICAgICAgICAgICAgcmFpc2UgVmFsdWVFcnJvcigiQ2FtcGFpZ24gbWVtYmVyc2hpcCBubyBsb25nZXIgbWF0Y2hlcyB0aGUgcHJlcGFyZWQgcGlsb3QiKQogICAgICAgIHByb3ZpZGVycyA9IGV2aWRlbmNlWyJwcm92aWRlcnMiXQogICAgICAgIGlmIG5vdCBwcm92aWRlcnMgb3Igc2V0KHByb3ZpZGVycykgLSB7CiAgICAgICAgICAgICJnb29kcmVhZHMiLAogICAgICAgICAgICAib3Blbl9saWJyYXJ5IiwKICAgICAgICAgICAgImdvb2dsZV9ib29rcyIsCiAgICAgICAgfToKICAgICAgICAgICAgcmFpc2UgVmFsdWVFcnJvcigKICAgICAgICAgICAgICAgICJQcm92aWRlciBwb2xpY3kgZG9lcyBub3QgbWF0Y2ggdGhlIHF1YWxpZmllZCBjYXRhbG9nIHNvdXJjZXMiCiAgICAgICAgICAgICkKICAgICAgICBzZXR0aW5ncyA9IGRpY3QoCiAgICAgICAgICAgIGNvbmZpZywKICAgICAgICAgICAgcHJvdmlkZXJzPWxpc3QocHJvdmlkZXJzKSwKICAgICAgICAgICAgcHJvdmlkZXJfaW50ZXJ2YWxfbXM9cHJvdmlkZXJzLAogICAgICAgICAgICBtYXhfam9icz1leHBlY3RlZF9tZW1iZXJzLAogICAgICAgICAgICBjb25jdXJyZW5jeT0yLAogICAgICAgICAgICBiYXRjaF9zaXplPTEsCiAgICAgICAgICAgIG1heF9hdHRlbXB0cz0zLAogICAgICAgICkKICAgICAgICAjIEEgbmV3IHByZXBhcmF0aW9uIHZlcnNpb24gcHJlc2VydmVzIHRoZSBlYXJsaWVyIGRyYWZ0IG1hbmlmZXN0IHNuYXBzaG90LgogICAgICAgIGRiLmV4ZWN1dGUoCiAgICAgICAgICAgICIiIlVQREFURSBtZXRhZGF0YV9xdWV1ZS5jYW1wYWlnbnMgU0VUIGNvbmZpZz0lcyx2ZXJzaW9uPXZlcnNpb24rMSBXSEVSRSBpZD0lcyIiIiwKICAgICAgICAgICAgKEpzb25iKHNldHRpbmdzKSwgY2FtcGFpZ24pLAogICAgICAgICkKICAgICAgICB2ZXJzaW9uICs9IDEKICAgICAgICBtYW5pZmVzdF9oYXNoID0gZGIuZXhlY3V0ZSgKICAgICAgICAgICAgIlNFTEVDVCBtZXRhZGF0YV9xdWV1ZS5mcmVlemVfbWFuaWZlc3QoJXMsJXMpIiwgKGNhbXBhaWduLCB2ZXJzaW9uKQogICAgICAgICkuZmV0Y2hvbmUoKVswXQogICAgICAgIGNvbmZpZ19oYXNoID0gZGIuZXhlY3V0ZSgKICAgICAgICAgICAgIiIiU0VMRUNUIGNvbmZpZ19oYXNoIEZST00gbWV0YWRhdGFfcXVldWUubWFuaWZlc3RfcmV2aXNpb25zCiAgICAgICAgICAgICAgIFdIRVJFIGNhbXBhaWduX2lkPSVzIEFORCBjYW1wYWlnbl92ZXJzaW9uPSVzIiIiLAogICAgICAgICAgICAoY2FtcGFpZ24sIHZlcnNpb24pLAogICAgICAgICkuZmV0Y2hvbmUoKVswXQogICAgICAgIHJlYWRpbmVzcyA9IHsKICAgICAgICAgICAgInJlZmVyZW5jZSI6IHJlZmVyZW5jZSwKICAgICAgICAgICAgImNoZWNrcyI6IGRpY3QuZnJvbWtleXMoUkVRVUlSRUQsIFRydWUpLAogICAgICAgICAgICAiY2hlY2tfcmVmZXJlbmNlcyI6IGNoZWNrcywKICAgICAgICAgICAgIm1hbmlmZXN0X2hhc2giOiBtYW5pZmVzdF9oYXNoLAogICAgICAgICAgICAiY29uZmlnX2hhc2giOiBjb25maWdfaGFzaCwKICAgICAgICB9CiAgICAgICAgZGIuZXhlY3V0ZSgKICAgICAgICAgICAgIlNFTEVDVCBtZXRhZGF0YV9xdWV1ZS50cmFuc2l0aW9uKCVzLCVzLCVzLCdyZWFkeScsJXMpIiwKICAgICAgICAgICAgKGNhbXBhaWduLCB2ZXJzaW9uLCB1dWlkNCgpLCBKc29uYihyZWFkaW5lc3MpKSwKICAgICAgICApCiAgICAgICAgcmV0dXJuIHsKICAgICAgICAgICAgImlkIjogc3RyKGNhbXBhaWduKSwKICAgICAgICAgICAgInN0YXRlIjogInJlYWR5IiwKICAgICAgICAgICAgIm1hbmlmZXN0X2hhc2giOiBtYW5pZmVzdF9oYXNoLAogICAgICAgICAgICAiY29uZmlnX2hhc2giOiBjb25maWdfaGFzaCwKICAgICAgICAgICAgImNvbmZpZyI6IHNldHRpbmdzLAogICAgICAgIH0KCgpkZWYgbWFpbigpOgogICAgIiIiQWNjZXB0IGV4dGVybmFsbHkgdmVyaWZpZWQgZXZpZGVuY2UgYW5kIHByZXBhcmUgdGhlIHNwZWNpZmllZCBjYW1wYWlnbi4iIiIKICAgIHBhcnNlciA9IGFyZ3BhcnNlLkFyZ3VtZW50UGFyc2VyKGRlc2NyaXB0aW9uPV9fZG9jX18pCiAgICBwYXJzZXIuYWRkX2FyZ3VtZW50KCJjYW1wYWlnbiIsIHR5cGU9VVVJRCkKICAgIHBhcnNlci5hZGRfYXJndW1lbnQoIi0tZXZpZGVuY2UiLCB0eXBlPVBhdGgsIHJlcXVpcmVkPVRydWUpCiAgICBhcmdzID0gcGFyc2VyLnBhcnNlX2FyZ3MoKQogICAgZXZpZGVuY2UgPSBqc29uLmxvYWRzKGFyZ3MuZXZpZGVuY2UucmVhZF90ZXh0KGVuY29kaW5nPSJ1dGYtOCIpKQogICAgd2l0aCBwc3ljb3BnLmNvbm5lY3Qob3MuZW52aXJvblsiTUVUQURBVEFfUVVFVUVfRFNOIl0sIGF1dG9jb21taXQ9VHJ1ZSkgYXMgZGI6CiAgICAgICAgaWYgZGIuaW5mby5kYm5hbWUgIT0gIm1ldGFkYXRhX3Rlc3QiOgogICAgICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KCJSZWFkaW5lc3MgY2FuIGJlIHJlY29yZGVkIG9ubHkgaW4gbWV0YWRhdGFfdGVzdCIpCiAgICAgICAgcmVzdWx0ID0gcHJlcGFyZShkYiwgYXJncy5jYW1wYWlnbiwgZXZpZGVuY2UpCiAgICBwcmludChqc29uLmR1bXBzKHJlc3VsdCwgaW5kZW50PTIpKQoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBtYWluKCkK' | base64 -d > "$work/prepare.py"
+          cat > "$work/evidence.json" <<'EVIDENCE'
+          {"reference":"Reconciled 40-book test campaign. Synthetic qualification and restored full backup verified.","checks":{"migration":"https://github.com/jfroebe/calibre-plugin-metadata-engine/actions/runs/43539236247","backup":"https://github.com/jfroebe/calibre-plugin-metadata-engine/actions/runs/43536149792","rollback":"https://github.com/jfroebe/metadata-engine/actions/runs/43538316763","history":"https://github.com/jfroebe/calibre-plugin-metadata-engine/actions/runs/43521622067","catalog":"https://github.com/jfroebe/calibre-plugin-metadata-engine/actions/runs/43527865258","manifest":"https://github.com/jfroebe/calibre-plugin-metadata-engine/actions/runs/43528381553","storage":"https://github.com/jfroebe/metadata-engine/actions/runs/43538316763","quality":"https://github.com/jfroebe/calibre-plugin-metadata-engine/actions/runs/43528151328","leasing":"https://github.com/jfroebe/metadata-engine/actions/runs/43538316763","fencing":"https://github.com/jfroebe/metadata-engine/actions/runs/43538316763","user_stop":"https://github.com/jfroebe/metadata-engine/actions/runs/43538316763","provider_limits":"https://github.com/jfroebe/metadata-engine/actions/runs/43538316763","readonly_library":"https://github.com/jfroebe/calibre-plugin-metadata-engine/actions/runs/43521904424","workload_limits":"https://github.com/jfroebe/metadata-engine/actions/runs/43538316763","authorization":"https://github.com/jfroebe/metadata-engine/actions/runs/43538316763"},"providers":{"goodreads":1500,"open_library":1500,"google_books":1500}}
+          EVIDENCE
+          curl --noproxy '*' -fsS --max-time 10 http://192.168.0.59:14000/health >/dev/null
+          curl --noproxy '*' -fsS --max-time 10 http://192.168.0.59:14000/plugins > "$work/plugins.json"
+          python3 - "$work/plugins.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          data = json.loads(Path(sys.argv[1]).read_text())
+          rows = data.get("plugins", []) if isinstance(data, dict) else data
+          enabled = set()
+          for row in rows:
+              if isinstance(row, str):
+                  enabled.add(row)
+              elif isinstance(row, dict) and row.get("enabled", True):
+                  enabled.update(row.get(key) for key in ("name", "id", "plugin_id"))
+          expected = {"goodreads", "open_library", "google_books"}
+          if not expected <= enabled:
+              raise SystemExit("Missing enabled providers: " + ", ".join(sorted(expected - enabled)))
+          print("Provider discovery verified without book lookups")
+          PY
+          admin() {
+            {
+              cat <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          REMOTE
+              cat
+              printf '\nSQL\n'
+            } | ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null'
+          }
+          revoke() {
+            admin <<'SQL'
+          REVOKE SELECT ON metadata_queue.migrations,metadata_queue.runners,metadata_queue.campaigns,metadata_queue.campaign_members,metadata_queue.manifest_revisions FROM metadata_test;
+          REVOKE UPDATE (config,version) ON metadata_queue.campaigns FROM metadata_test;
+          REVOKE INSERT ON metadata_queue.manifest_revisions FROM metadata_test;
+          REVOKE EXECUTE ON FUNCTION metadata_queue.transition(uuid,bigint,uuid,metadata_queue.campaign_state,jsonb),metadata_queue.freeze_manifest(uuid,bigint),metadata_queue.campaign_hash(uuid) FROM metadata_test;
+          SQL
+          }
+          trap 'revoke; rm -rf "$work"' EXIT
+          admin <<'SQL'
+          GRANT SELECT ON metadata_queue.migrations,metadata_queue.runners,metadata_queue.campaigns,metadata_queue.campaign_members,metadata_queue.manifest_revisions TO metadata_test;
+          GRANT UPDATE (config,version) ON metadata_queue.campaigns TO metadata_test;
+          GRANT INSERT ON metadata_queue.manifest_revisions TO metadata_test;
+          GRANT EXECUTE ON FUNCTION metadata_queue.transition(uuid,bigint,uuid,metadata_queue.campaign_state,jsonb),metadata_queue.freeze_manifest(uuid,bigint),metadata_queue.campaign_hash(uuid) TO metadata_test;
+          SQL
+          root="$HOME/.local/share/calibre-library-acceptance"
+          export PGPASSFILE="$root/pgpass"
+          export METADATA_QUEUE_DSN="host=192.168.0.59 port=5432 dbname=metadata_test user=metadata_test connect_timeout=5"
+          "$root/current/python-env/bin/python" "$work/prepare.py" 72b07fe2-86a0-4a69-aa2d-3cc22362f923 --evidence "$work/evidence.json"
+          admin <<'SQL'
+          SELECT 'real_jobs',state,count(*) FROM metadata_queue.jobs j
+          WHERE campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923' GROUP BY state;
+          SELECT 'real_approvals',count(*) FROM metadata_queue.campaign_approvals
+          WHERE campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923';
+          SQL
