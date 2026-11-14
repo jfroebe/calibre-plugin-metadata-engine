@@ -1,4 +1,4 @@
-name: Check live review deployment progress
+name: Inspect restore progress
 on:
   push:
     branches: [deploy/calibre-library-acceptance]
@@ -7,134 +7,29 @@ permissions:
   contents: read
 jobs:
   listener:
-    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
-    timeout-minutes: 65
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
+    timeout-minutes: 2
     steps:
       - name: Check runner listener and summarize connection state
         shell: bash
         run: |
           set -euo pipefail
-          test "$(hostname -s)" = chatgpt-build-02
-          unit=actions.runner.jfroebe-metadata-engine.metadata-engine-build-02.service
-          systemctl show "$unit" -p ActiveState -p SubState -p NRestarts
-          directory="$HOME/actions-runner-metadata-engine"
-          if [ -r "$directory/.runner" ]; then
-            python3 - "$directory/.runner" <<'PY'
-          import json
-          import sys
-          with open(sys.argv[1], encoding='utf-8-sig') as file:
-              data = json.load(file)
-          for key in ("agentName", "gitHubUrl", "poolName", "workFolder"):
-              print(key, data.get(key))
-          PY
-          fi
-          if [ -d "$directory/_diag" ]; then
-            grep -hiE 'Listening for Jobs|Connected to GitHub|session already exists|Running job:|access denied|Unauthorized|Forbidden|connect error|connection refused' "$directory"/_diag/Runner_*.log 2>/dev/null |
-              awk '{line=tolower($0);if(line ~ /listening for jobs/) listening++;if(line ~ /connected to github/) connected++;if(line ~ /running job:/) assigned++;if(line ~ /already exists|access denied|unauthorized|forbidden|connect error|connection refused/) failed++} END {printf "listener files connected=%d listening=%d assigned=%d errors=%d\n",connected,listening,assigned,failed}' || true
-          fi
-          journalctl -u "$unit" --since '20 minutes ago' -o cat --no-pager 2>/dev/null |
-            awk '
-              /Connected to GitHub/ {connected++}
-              /Listening for Jobs/ {listening++}
-              /Running job:/ {assigned++}
-              /session already exists/ {duplicate++}
-              /connect error|Connection refused|Unauthorized|Forbidden/ {failed++}
-              END {printf "connected=%d listening=%d assigned=%d duplicate=%d errors=%d\n",connected,listening,assigned,duplicate,failed}
-            ' || true
-          awk '/Running job: / {if($0 ~ /Running job: deploy([^a-zA-Z]|$)/) deploy++;else other++}
-            /Job deploy completed/ {completed++}
-            END {printf "deployment_assignments=%d other_assignments=%d deployment_completions=%d\n",deploy,other,completed}' "$directory"/_diag/Runner_*.log
-          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-          systemctl --user show metadata-review.service -p ActiveState -p SubState || true
-          ip="$(ip -4 route get 192.168.0.59 | awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}')"
-          if [[ "$ip" =~ ^192\.168\.0\.[0-9]+$ && -s "$HOME/.config/metadata-review/tls.crt" ]]; then
-            if curl --noproxy '*' --silent --fail --max-time 3 --cacert "$HOME/.config/metadata-review/tls.crt" "https://$ip:8708/healthz"; then
-              printf '\nverified_review_url=https://%s:8708/\n' "$ip"
-            fi
-          fi
-          find "$directory/_diag" -maxdepth 1 -name 'Worker_*.log' -printf 'worker_log_present\n'
-          grep -hE 'Running job: deploy|Job deploy completed' "$directory"/_diag/Runner_*.log | cut -c1-130 || true
-          for entry in "$directory"/_work/metadata-engine/metadata-engine/review/deploy-test.sh "$HOME"/.local/share/metadata-review/releases/.install.*/python/bin/python; do
-            if [ -f "$entry" ]; then stat -c 'deployment_file_modified=%y' "$entry"; fi
-          done
-          ps -u "$(id -un)" -o pid,ppid,etime,comm | awk '$NF ~ /^(Runner.Worker|pip|pip3|python|python3|ssh|curl|uvicorn)$/'
-          for dir in "$HOME"/.local/share/metadata-review/releases/.install.*; do
-            [ -d "$dir" ] || continue
-            "$dir/python/bin/python" -c 'import importlib.util as u; print({x:bool(u.find_spec(x)) for x in ("pip","fastapi","uvicorn","psycopg","PIL")})' || true
-          done
+          test "$(hostname -s)" = chatgpt-dev
           ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'bash -s' <<'REMOTE'
           set -eu
-          for check in $(seq 1 61); do
-            printf 'check=%s utc=%s\n' "$check" "$(date -u +%FT%TZ)"
-            for dir in /mnt/user/database-backup/metadata_test/*-metadata-review-v1; do
-              [ -d "$dir" ] || continue
-              printf '%s\n' "${dir##*/}"
-              for file in metadata_test.dump.partial metadata_test.dump metadata_test.dump.sha256 restore-verified.txt; do
-                if [ -f "$dir/$file" ]; then stat -c "$file bytes=%s modified=%y" "$dir/$file"; fi
-              done
+          for dir in /mnt/user/database-backup/metadata_test/*-metadata-review-v1; do
+            [ -d "$dir" ] || continue
+            printf '%s\n' "${dir##*/}"
+            for file in metadata_test.dump.partial metadata_test.dump metadata_test.dump.sha256 restore-verified.txt; do
+              if [ -f "$dir/$file" ]; then stat -c "$file bytes=%s modified=%y" "$dir/$file"; fi
             done
-            applied=false
-            while read -r container; do
-              if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
-                db_user="$(docker exec "$container" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
-                if [ "$(docker exec "$container" psql -qXAt -U "$db_user" -d metadata_test -c "SELECT to_regnamespace('metadata_review') IS NOT NULL")" = t ]; then applied=true; fi
-              fi
-            done < <(docker ps --format '{{.ID}}')
-            printf 'review_schema=%s\n' "$applied"
-            if "$applied"; then break; fi
-            sleep 60
           done
-          REMOTE
-          for check in $(seq 1 12); do
-            if [[ "$ip" =~ ^192\.168\.0\.[0-9]+$ && -s "$HOME/.config/metadata-review/tls.crt" ]] &&
-              curl --noproxy '*' --silent --fail --max-time 3 --cacert "$HOME/.config/metadata-review/tls.crt" "https://$ip:8708/healthz"; then
-              echo
-              printf 'verified_review_url=https://%s:8708/\n' "$ip"
-              REVIEW_IP="$ip" "$HOME/.local/share/metadata-review/current/python/bin/python" - <<'PY'
-          import json
-          import os
-          import ssl
-          import urllib.error
-          import urllib.request
-          from http.cookiejar import CookieJar
-          from pathlib import Path
-
-          config = Path.home() / ".config/metadata-review"
-          root = "https://" + os.environ["REVIEW_IP"] + ":8708"
-          context = ssl.create_default_context(cafile=str(config / "tls.crt"))
-          client = urllib.request.build_opener(
-              urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context),
-              urllib.request.HTTPCookieProcessor(CookieJar()),
-          )
-
-          def api(path, data=None):
-              body = json.dumps(data).encode() if data is not None else None
-              headers = {"Content-Type": "application/json"} if body is not None else {}
-              with client.open(urllib.request.Request(root + "/api/v1/" + path, body, headers), timeout=30) as response:
-                  return json.load(response)
-
-          info = api("login", {"username": "review-admin", "password": (config / "initial-review-password").read_text().strip()})
-          print("authenticated_role=" + info["role"])
-          page = api("queues/review")
-          print("review_page_rows=" + str(len(page["rows"])))
-          live = embedded = False
-          for row in page["rows"][:6]:
-              media = str(row["media_id"])
-              book = api("books/" + media)
-              live |= bool((book.get("original") or {}).get("live"))
-              try:
-                  result = api("books/" + media + "/embedded")
-              except urllib.error.HTTPError:
-                  continue
-              embedded |= bool(result and result.get("payload"))
-              if live and embedded:
-                  break
-          print("live_calibre_verified=" + str(live))
-          print("embedded_ebook_verified=" + str(embedded))
-          PY
-              exit 0
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              db_user="$(docker exec "$container" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+              docker exec "$container" psql -qXAt -U "$db_user" -d metadata_test -c "SELECT 'review_schema',to_regnamespace('metadata_review') IS NOT NULL; SELECT datname,state,coalesce(wait_event_type,'running'),count(*) FROM pg_stat_activity WHERE datname LIKE 'metadata_review_restore_%' OR application_name='pg_dump' GROUP BY 1,2,3;"
+              docker exec "$container" psql -qXAt -U "$db_user" -d metadata_test -c "SELECT 'restore_progress',p.command,p.type,p.bytes_processed,p.tuples_processed FROM pg_stat_progress_copy p JOIN pg_database d ON d.oid=p.datid WHERE d.datname LIKE 'metadata_review_restore_%';"
+              df -h /mnt/user/database-backup/metadata_test | awk 'NR==2 {print "backup_free=" $4}'
             fi
-            sleep 5
-          done
-          exit 1
+          done < <(docker ps --format '{{.ID}}')
+          REMOTE
