@@ -1,0 +1,37 @@
+name: Inspect guarded backup progress without changing state
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/check-guarded-backup-progress.yml]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
+    timeout-minutes: 3
+    steps:
+      - name: Check test database service and live backup progress
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-dev
+          config="$HOME/.config/metadata-queue"
+          set -a
+          source "$config/worker.env"
+          set +a
+          "$HOME/.local/share/metadata-queue/python/bin/python" - <<'PY'
+          import os
+          import psycopg
+
+          with psycopg.connect(os.environ["METADATA_QUEUE_DSN"], connect_timeout=5) as db:
+              print("Test database available:", db.execute("SELECT current_database()").fetchone()[0])
+              print("pg_dump sessions:", db.execute(
+                  "SELECT count(*) FROM pg_stat_activity WHERE application_name='pg_dump' AND datname=current_database()"
+              ).fetchone()[0])
+              try:
+                  print("Copy progress:", db.execute(
+                      "SELECT command,sum(bytes_processed),sum(tuples_processed) FROM pg_stat_progress_copy GROUP BY command"
+                  ).fetchall())
+              except psycopg.Error as exc:
+                  print("Copy progress unavailable:", exc.sqlstate)
+          PY
