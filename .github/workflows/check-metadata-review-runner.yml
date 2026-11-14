@@ -7,14 +7,14 @@ permissions:
   contents: read
 jobs:
   listener:
-    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
     timeout-minutes: 2
     steps:
       - name: Check runner listener and summarize connection state
         shell: bash
         run: |
           set -euo pipefail
-          test "$(hostname -s)" = chatgpt-dev
+          test "$(hostname -s)" = chatgpt-build-02
           ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'bash -s' <<'REMOTE'
           set -eu
           for dir in /mnt/user/database-backup/metadata_test/*-metadata-review-v1; do
