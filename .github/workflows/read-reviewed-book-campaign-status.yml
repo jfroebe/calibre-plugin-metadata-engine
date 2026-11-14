@@ -49,7 +49,7 @@ jobs:
           SELECT 'saved',p->>'source',p->>'identity',count(*)
           FROM metadata_queue.historical_diagnostics d
           CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(evidence->'supported')='array' THEN evidence->'supported' ELSE '[]' END) p
-          WHERE campaign_id='72b07fe2-86a0-4a69-aa2d-3cc22362f923' GROUP BY 2,3 ORDER BY 2,3;
+          GROUP BY 2,3 ORDER BY 2,3;
           SELECT 'historical',count(*) FROM metadata_queue.historical_diagnostics GROUP BY campaign_id;
           COMMIT;
           SQL
@@ -269,15 +269,15 @@ jobs:
                           tuple(sorted(normalize(a).split())) for a in authors
                       } == {tuple(sorted(normalize(a).split())) for a in original.get('authors', [])}
                       def base_title(s):
-                      s = re.sub(r'^(.*),\s*(The|A|An)$',r'\2 \1',s,flags=re.I)
-                      s = re.sub(r'\s+\([^()]+\s(?:book\s*|#)\d+(?:\.\d+)?\)$','',s,flags=re.I)
-                      return normalize(s.partition(':')[0])
-                  if isinstance(title,str) and same_authors and base_title(title) == base_title(original['title']):
-                      target, found = edition_ids(original), edition_ids(row)
-                      kind = 'exact' if edition_match(original,row) else 'conflict' if {k for k,_ in target}&{k for k,_ in found} else 'missing'
-                      labels.add('trial_' + kind + ('_cover' if row.get('cover_url') else ''))
-                      labels.add('trial_' + kind)
-                  status = 'verified' if identity(original, row) else (
+                          s = re.sub(r'^(.*),\s*(The|A|An)$',r'\2 \1',s,flags=re.I)
+                          s = re.sub(r'\s+\([^()]+\s(?:book\s*|#)\d+(?:\.\d+)?\)$','',s,flags=re.I)
+                          return normalize(s.partition(':')[0])
+                      if isinstance(title,str) and same_authors and base_title(title) == base_title(original['title']):
+                          target, found = edition_ids(original), edition_ids(row)
+                          kind = 'exact' if edition_match(original,row) else 'conflict' if {k for k,_ in target}&{k for k,_ in found} else 'missing'
+                          labels.add('trial_' + kind + ('_cover' if row.get('cover_url') else ''))
+                          labels.add('trial_' + kind)
+                      status = 'verified' if identity(original, row) else (
                           'edition_id' if same_title and same_authors else
                           'title' if edition_match(original, row) and same_authors else
                           'author' if edition_match(original, row) and same_title else 'other'
