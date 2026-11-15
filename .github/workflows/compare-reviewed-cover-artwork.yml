@@ -1,0 +1,115 @@
+name: Compare reviewed cover artwork
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/compare-reviewed-cover-artwork.yml]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 5
+    steps:
+      - name: Compare cover pixels on the local test runner
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          {
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+          SELECT o.width,o.height,n.width,n.height,
+                 replace(encode(o.bytes,'base64'),chr(10),''),
+                 replace(encode(n.bytes,'base64'),chr(10),'')
+          FROM metadata_queue.jobs j
+          JOIN metadata_queue.job_attempts a ON a.job_id=j.id AND a.attempt_number=j.attempt_count
+          LEFT JOIN LATERAL (
+              SELECT v.id,v.provenance FROM metadata_queue.metadata_versions v
+              WHERE v.job_attempt_id=a.id ORDER BY v.id DESC LIMIT 1
+          ) v ON true
+          LEFT JOIN LATERAL (
+              SELECT art.width,art.height,art.bytes FROM metadata_queue.metadata_versions original
+              JOIN metadata_queue.artifacts art ON art.metadata_version_id=original.id
+              WHERE original.media_id=j.media_id AND original.source_name='calibre-original'
+                AND art.kind='cover_front' AND art.width IS NOT NULL AND art.height IS NOT NULL
+              ORDER BY original.id DESC,art.width::bigint*art.height DESC LIMIT 1
+          ) o ON true
+          LEFT JOIN LATERAL (
+              SELECT art.width,art.height,art.bytes FROM metadata_queue.artifacts art
+              WHERE art.media_id=j.media_id AND art.kind='cover_front'
+                AND (art.metadata_version_id=v.id OR art.sha256=v.provenance->>'cover_sha256')
+              ORDER BY (art.metadata_version_id=v.id) DESC NULLS LAST,art.id DESC LIMIT 1
+          ) n ON true
+          WHERE j.campaign_id='77b57645-3a26-4ab8-ae79-404acaac979c'
+            AND j.failure_class='cover_smaller_than_calibre'
+          ORDER BY j.id;
+          COMMIT;
+          SQL
+          REMOTE
+          } | "$HOME/.local/share/metadata-queue/python/bin/python" /dev/fd/3 3<<'PYTHON'
+          import base64
+          import io
+          import math
+          import sys
+          from collections import Counter
+          from PIL import Image, ImageChops, ImageOps, ImageStat
+
+          size = (72, 108)
+
+          def decode(encoded):
+              with Image.open(io.BytesIO(base64.b64decode(encoded, validate=True))) as raw:
+                  rgba = ImageOps.exif_transpose(raw).convert("RGBA")
+                  canvas = Image.new("RGBA", rgba.size, "white")
+                  return Image.alpha_composite(canvas, rgba).convert("RGB")
+
+          def normalized(image):
+              yield image.resize(size, Image.Resampling.LANCZOS)
+              for fraction in (.015, .035, .065):
+                  for x, y in ((0,0),(-1,0),(1,0),(0,-1),(0,1)):
+                      w, h = image.size
+                      dx, dy = w*fraction, h*fraction
+                      box = (dx*(1+x),dy*(1+y),w-dx*(1-x),h-dy*(1-y))
+                      yield image.crop(box).resize(size, Image.Resampling.LANCZOS)
+
+          def compare(left, right):
+              color = sum(ImageStat.Stat(ImageChops.difference(left, right)).mean) / 765
+              x, y = list(left.convert("L").getdata()), list(right.convert("L").getdata())
+              mx, my = sum(x)/len(x), sum(y)/len(y)
+              norm = math.sqrt(sum((p-mx)**2 for p in x)*sum((q-my)**2 for q in y))
+              corr = sum((p-mx)*(q-my) for p,q in zip(x,y))/norm if norm else 0
+              return color, corr
+
+          totals = Counter()
+          missing = 0
+          compared = 0
+          for line in sys.stdin:
+              ow, oh, nw, nh, original, downloaded = line.rstrip("\n").split("|")
+              if not original or not downloaded:
+                  missing += 1
+                  continue
+              a, b = decode(original), decode(downloaded)
+              va, vb = list(normalized(a)), list(normalized(b))
+              scores = [compare(x, vb[0]) for x in va] + [compare(va[0], y) for y in vb[1:]]
+              error, corr = min(scores, key=lambda s: s[0] + .24*(1-s[1]))
+              if error <= .075 and corr >= .94:
+                  label = "same"
+              elif error >= .125 and corr <= .82:
+                  label = "different"
+              else:
+                  label = "uncertain"
+              compared += 1
+              totals[label] += 1
+              ow, oh, nw, nh = map(int, (ow, oh, nw, nh))
+              print(f"pair|{compared}|{label}|{error:.4f}|{corr:.4f}|{nw/ow:.3f}|{nh/oh:.3f}")
+          print(f"totals|{compared}|{missing}|{totals['same']}|{totals['different']}|{totals['uncertain']}")
+          PYTHON
