@@ -53,6 +53,21 @@ jobs:
           WHERE created_at>=timestamptz '2026-11-15 02:53:00+00' GROUP BY decision;
           SELECT 'feedback_result',campaign_id,cohort,policy,state,failure_class,books
           FROM metadata_review.feedback_campaign_results ORDER BY campaign_id,cohort,state;
+          SELECT 'review_reason',coalesce(q.campaign_id,j.campaign_id),coalesce(q.detail,j.failure_class,'unrecorded'),count(*),
+                 count(*) FILTER (WHERE v.id IS NOT NULL),count(*) FILTER (WHERE v.cover IS NOT NULL)
+          FROM metadata_review.review_queue_history q LEFT JOIN metadata_queue.jobs j ON j.id=q.job_id
+          LEFT JOIN LATERAL (
+              SELECT v.id,v.provenance->>'cover_sha256' AS cover
+              FROM metadata_queue.job_attempts a JOIN metadata_queue.metadata_versions v ON v.job_attempt_id=a.id
+              WHERE a.job_id=j.id ORDER BY a.attempt_number DESC,v.id DESC LIMIT 1
+          ) v ON true
+          WHERE q.exited_at IS NULL AND q.queue='review' GROUP BY 2,3 ORDER BY 2,4 DESC,3;
+          SELECT 'review_since_feedback_deploy',count(*) FROM metadata_review.review_queue_history
+          WHERE queue='review' AND exited_at IS NULL AND entered_at>=timestamptz '2026-11-15 02:58:00+00';
+          SELECT 'recent_attempt',j.campaign_id,a.outcome,a.failure_class,count(*)
+          FROM metadata_queue.job_attempts a JOIN metadata_queue.jobs j ON j.id=a.job_id
+          WHERE a.started_at>=timestamptz '2026-11-15 02:58:00+00'
+          GROUP BY 2,3,4 ORDER BY 2,5 DESC;
           COMMIT;
           SQL
           REMOTE
