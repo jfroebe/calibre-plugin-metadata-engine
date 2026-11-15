@@ -1,0 +1,895 @@
+name: Prepare review-guided metadata retry
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/prepare-review-guided-retry.yml]
+permissions:
+  contents: read
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {host: chatgpt-build-02, role: docker-build}
+          - {host: chatgpt-dev, role: calibre-controller}
+    runs-on: [self-hosted, linux, x64, '${{ matrix.role }}', '${{ matrix.host }}']
+    timeout-minutes: 4
+    steps:
+      - name: Install verified retry and edition reconciliation code
+        env:
+          EXPECTED_HOST: ${{ matrix.host }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(hostname -s)" = "$EXPECTED_HOST"
+          base="$HOME/.local/share/metadata-queue"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          systemctl --user is-active --quiet metadata-queue-worker.service
+          stage="$(mktemp -d "$base/review-retry.XXXXXX")"
+          trap 'rm -rf -- "$stage"' EXIT
+          cat > "$stage/metadata_queue_provider.py" <<'PYTHON'
+          """Query allowed book providers with exact-edition validation and cached evidence."""
+          
+          import hashlib
+          import json
+          import re
+          import unicodedata
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import parse_qs, quote, urlencode, urlsplit
+          from urllib.request import urlopen
+          
+          PROVIDER = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+          TEMPORARY = {408, 425, 429, 500, 502, 503, 504}
+          SERIES_SUFFIX = re.compile(r"\s+\([^()]+\s(?:book\s*|#)\d+(?:\.\d+)?\)$", re.I)
+          EDITION_SOURCES = {"goodreads", "google_books"}
+          CACHE_REVISION = 2
+          
+          
+          def normalize(value):
+              """Normalize catalog text for conservative identity comparisons."""
+              return " ".join(
+                  re.findall(r"[^\W_]+", unicodedata.normalize("NFKC", value).casefold())
+              )
+          
+          
+          def edition_ids(row):
+              """Normalize supported ISBN and Kindle identifier schemes."""
+              identifiers = row.get("identifiers")
+              known = list(identifiers.items()) if isinstance(identifiers, dict) else []
+              known.extend((name, row[name]) for name in ("isbn", "asin") if row.get(name))
+              result = set()
+              for name, value in known:
+                  name = name.casefold().replace("_", "-")
+                  value = re.sub(r"[\s-]", "", str(value)).upper()
+                  if name in {"isbn", "isbn10", "isbn13", "isbn-10", "isbn-13"}:
+                      if re.fullmatch(r"\d{9}[\dX]", value):
+                          if (
+                              sum(
+                                  (10 - i) * (10 if digit == "X" else int(digit))
+                                  for i, digit in enumerate(value)
+                              )
+                              % 11
+                          ):
+                              continue
+                          stem = "978" + value[:9]
+                          value = stem + str(
+                              -sum((1 + 2 * (i % 2)) * int(n) for i, n in enumerate(stem)) % 10
+                          )
+                      if (
+                          re.fullmatch(r"\d{13}", value)
+                          and not sum((1 + 2 * (i % 2)) * int(n) for i, n in enumerate(value))
+                          % 10
+                      ):
+                          result.add(("isbn", value))
+                  elif name in {"asin", "mobi-asin", "amazon"} and re.fullmatch(
+                      r"[A-Z0-9]{10}", value
+                  ):
+                      result.add(("asin", value))
+              return result
+          
+          
+          def review_identifiers(requests):
+              """Extract exact catalog IDs without making requests to submitted URLs."""
+              found = {}
+              for request in requests:
+                  review = request.get("review", {})
+                  for entry in review.get("urls", []):
+                      try:
+                          url = urlsplit(entry.get("normalized", ""))
+                          if url.scheme not in {"http", "https"} or url.username or url.port:
+                              continue
+                          host = (url.hostname or "").removeprefix("www.")
+                      except (TypeError, ValueError):
+                          continue
+                      kind = value = None
+                      if host in {"amazon.com", "amazon.co.uk", "amazon.ca", "amazon.com.au"}:
+                          match = re.search(
+                              r"/(?:dp|gp/product)/([A-Z0-9]{10})(?:/|$)", url.path, re.I
+                          )
+                          if match:
+                              kind, value = "asin", match[1].upper()
+                      elif host == "goodreads.com":
+                          match = re.match(r"/book/show/([0-9]{1,16})(?:[./-]|$)", url.path)
+                          if match:
+                              kind, value = "goodreads", match[1]
+                      elif host == "books.google.com":
+                          ids = parse_qs(url.query).get("id", [])
+                          if len(ids) == 1 and re.fullmatch(r"[A-Za-z0-9_-]{6,32}", ids[0]):
+                              kind, value = "google_books", ids[0]
+                      elif host == "openlibrary.org":
+                          match = re.match(r"/books/(OL[0-9]{1,16}M)(?:/|$)", url.path)
+                          if match:
+                              kind, value = "open_library", match[1]
+                      if kind:
+                          found.setdefault(kind, set()).add(value)
+              # Conflicting submitted IDs within the same source need human resolution.
+              return {
+                  kind: next(iter(values)) for kind, values in found.items() if len(values) == 1
+              }
+          
+          
+          def edition_match(original, row, provider=None, hints=None):
+              """Require corroborating edition identifiers and reject explicit conflicts."""
+              target, found = edition_ids(original), edition_ids(row)
+              for kind in {name for name, _ in target} & {name for name, _ in found}:
+                  if not {value for name, value in target if name == kind} & {
+                      value for name, value in found if name == kind
+                  }:
+                      return False
+              if target & found:
+                  return True
+              hints = hints or {}
+              reported = row.get("source_id")
+              if (
+                  provider
+                  and hints.get(provider)
+                  and reported
+                  and hints[provider] == str(reported)
+              ):
+                  return True
+              if hints.get("asin") and ("asin", hints["asin"]) in found:
+                  return True
+              if provider not in EDITION_SOURCES:
+                  return False
+              saved = (original.get("identifiers") or {}).get(f"metadata_engine_{provider}")
+              return bool(saved and reported and str(saved) == str(reported))
+          
+          
+          def main_title(title):
+              """Read a catalog title without its subtitle or trailing series label."""
+              title = re.sub(r"^(.*),\s*(The|A|An)$", r"\2 \1", title, flags=re.I)
+              return SERIES_SUFFIX.sub("", title).partition(":")[0].strip()
+          
+          
+          def identity(original, row, provider=None, hints=None):
+              """Require edition evidence, work-title agreement, and matching authors."""
+              return edition_match(original, row, provider, hints) and work_identity(
+                  original, row
+              )
+          
+          
+          def work_identity(original, row, *, allow_short_title=True):
+              """Check title and authors separately from edition identity."""
+              title = row.get("title")
+              if not isinstance(title, str) or not normalize(main_title(title)):
+                  return False
+              for expected in [original["title"], *original.get("alternate_titles", [])]:
+                  if normalize(title) == normalize(expected):
+                      break
+                  # A shared edition ID can corroborate a shortened catalog title. Two
+                  # different subtitles or numbered series labels still require review.
+                  if (
+                      allow_short_title
+                      and normalize(main_title(title)) == normalize(main_title(expected))
+                      and (
+                          normalize(title) == normalize(main_title(title))
+                          or normalize(expected) == normalize(main_title(expected))
+                      )
+                  ):
+                      break
+              else:
+                  return False
+              authors = row.get("authors")
+              if not isinstance(authors, list) or not all(
+                  isinstance(name, str) for name in authors
+              ):
+                  return False
+              original_authors = {
+                  tuple(sorted(normalize(a).split())) for a in original.get("authors", [])
+              } - {(), ("unknown",)}
+              return bool(original_authors) and original_authors == {
+                  tuple(sorted(normalize(a).split())) for a in authors
+              }
+          
+          
+          def fetch(endpoint, provider, original, timeout, *, opener=urlopen, hints=None):
+              """Fetch one bounded response and classify provider failures."""
+              if not PROVIDER.fullmatch(provider):
+                  raise ValueError("Invalid provider identifier")
+              title = original["title"]
+              params = {
+                  "query": main_title(title) or title,
+                  "limit": 10,
+                  "metadata_type": "books",
+              }
+              if original.get("authors"):
+                  params["author"] = ", ".join(original["authors"])
+              for kind, value in sorted(edition_ids(original)):
+                  if kind == "asin" and provider == "goodreads":
+                      continue
+                  params.setdefault(kind, value)
+              if provider != "goodreads" and (hints or {}).get("asin"):
+                  params.setdefault("asin", hints["asin"])
+              url = f"{endpoint.rstrip('/')}/plugins/{quote(provider)}/search?{urlencode(params)}"
+              try:
+                  with opener(url, timeout=timeout) as response:
+                      data = response.read(2_000_001)
+                  if len(data) > 2_000_000:
+                      return "invalid_response", []
+                  payload = json.loads(data)
+                  if not isinstance(payload, dict) or not isinstance(
+                      payload.get("results"), list
+                  ):
+                      return "invalid_response", []
+                  return "ok", [row for row in payload["results"] if isinstance(row, dict)]
+              except HTTPError as exc:
+                  return ("transient" if exc.code in TEMPORARY else "provider_rejected"), []
+              except (URLError, TimeoutError, ConnectionError):
+                  return "transient", []
+              except (ValueError, UnicodeError):
+                  return "invalid_response", []
+          
+          
+          def lookup(
+              endpoint,
+              original,
+              providers,
+              timeout,
+              cache,
+              reserve,
+              *,
+              opener=urlopen,
+              review_requests=(),
+          ):
+              """Collect source-attributed alternatives without merging ambiguous records."""
+              attempts, candidates, work_sources = {}, [], set()
+              hints = review_identifiers(review_requests)
+              for provider in providers:
+                  fingerprint = hashlib.sha256(
+                      json.dumps(
+                          [CACHE_REVISION, endpoint, provider, original, hints]
+                          if hints
+                          else [CACHE_REVISION, endpoint, provider, original],
+                          sort_keys=True,
+                      ).encode()
+                  ).hexdigest()
+                  cached = cache.get(provider, fingerprint)
+                  if cached is not None:
+                      rows = cached
+                      status = "cached"
+                  elif reserve(provider):
+                      status, rows = fetch(
+                          endpoint, provider, original, timeout, opener=opener, hints=hints
+                      )
+                      if status == "ok":
+                          cache.put(provider, fingerprint, rows)
+                  else:
+                      status, rows = "rate_limited", []
+                  attempts[provider] = status
+                  for row in rows:
+                      if identity(original, row, provider, hints):
+                          candidates.append({"provider": provider, "payload": row})
+                      elif work_identity(original, row, allow_short_title=False):
+                          work_sources.add(provider)
+              return {
+                  "attempts": attempts,
+                  "candidates": candidates,
+                  "work_sources": work_sources,
+              }
+          
+          
+          class LeaseProviders:
+              """Use a worker's PostgreSQL lease for shared provider access and caching."""
+          
+              def __init__(self, connection, runner, job_id, token):
+                  """Bind every provider operation to one current lease."""
+                  self.connection = connection
+                  self.lease = (runner, job_id, token)
+          
+              def reserve(self, provider):
+                  """Reserve a provider slot after checking campaign and lease authorization."""
+                  return self.connection.execute(
+                      "SELECT metadata_queue.reserve_provider(%s,%s,%s,%s)",
+                      (*self.lease, provider),
+                  ).fetchone()[0]
+          
+              def get(self, provider, fingerprint):
+                  """Read a cache entry within the same lease authorization."""
+                  return self.connection.execute(
+                      "SELECT metadata_queue.read_provider_cache(%s,%s,%s,%s,%s)",
+                      (*self.lease, provider, fingerprint),
+                  ).fetchone()[0]
+          
+              def put(self, provider, fingerprint, rows):
+                  """Persist a successful provider response while the lease is valid."""
+                  from psycopg.types.json import Jsonb
+          
+                  self.connection.execute(
+                      "SELECT metadata_queue.write_provider_cache(%s,%s,%s,%s,%s,%s)",
+                      (*self.lease, provider, fingerprint, Jsonb(rows)),
+                  )
+          PYTHON
+          cat > "$stage/metadata_queue_quality.py" <<'PYTHON'
+          """Score stored book evidence and block protected-field regressions."""
+          
+          import re
+          
+          if __package__:
+              from .metadata_queue_provider import edition_ids, edition_match, work_identity
+          else:
+              from metadata_queue_provider import edition_ids, edition_match, work_identity
+          
+          
+          def assess(payload, cover=None):
+              """Return deterministic completeness scores totaling at most 100."""
+              description = re.sub(r"<[^>]+>", " ", payload.get("description") or "")
+              return {
+                  "title": 8 if payload.get("title") else 0,
+                  "authors": 10 if payload.get("authors") else 0,
+                  "identifiers": 12 if payload.get("identifiers") or edition_ids(payload) else 0,
+                  "series": 10 if payload.get("series") else 0,
+                  "volume": 5 if series(payload)[1] is not None else 0,
+                  "description": min(15, len(description.split()) // 8),
+                  "publication": sum(
+                      3
+                      for left, right in (
+                          ("publishers", "publisher"),
+                          ("pubdate", "published_year"),
+                          ("languages", "language"),
+                      )
+                      if payload.get(left) or payload.get(right)
+                  ),
+                  "tags": min(
+                      10,
+                      2
+                      * len(
+                          {
+                              tag.casefold()
+                              for key in ("tags", "genres")
+                              for tag in payload.get(key) or []
+                              if tag.strip()
+                          }
+                      ),
+                  ),
+                  "warnings": 8 if payload.get("content_warnings") else 0,
+                  "cover": min(10, min(cover) // 100) if cover else 0,
+                  "provenance": 3 if payload.get("field_provenance") else 0,
+              }
+          
+          
+          def series(payload):
+              """Read both the Calibre baseline and provider series representations."""
+              name = payload.get("series")
+              if isinstance(name, list):
+                  name = next(iter(name), None)
+              if isinstance(name, dict):
+                  index = name.get("index", name.get("position", name.get("number")))
+                  return name.get("name") or name.get("title") or name.get("series"), index
+              return name, payload.get("series_index") if name else None
+          
+          
+          def combine_verified_metadata(best, candidates):
+              """Fill complementary fields from providers corroborating the same edition."""
+              merged = dict(best["payload"])
+              provenance = {key: [best["provider"]] for key, value in merged.items() if value}
+              for candidate in candidates:
+                  if candidate["provider"] == best["provider"]:
+                      continue
+                  donor = candidate["payload"]
+                  if (
+                      not edition_match(best["payload"], donor)
+                      or not edition_match(merged, donor)
+                      or not work_identity(merged, donor)
+                  ):
+                      continue
+                  source = candidate["provider"]
+                  for kind, value in sorted(edition_ids(donor)):
+                      if not any(key == kind for key, _ in edition_ids(merged)):
+                          merged[kind] = value
+                          provenance[kind] = [source]
+          
+                  for aliases in (
+                      ("description",),
+                      ("publisher", "publishers"),
+                      ("published_year", "pubdate"),
+                      ("language", "languages"),
+                      ("content_warnings",),
+                  ):
+                      if not any(merged.get(key) for key in aliases):
+                          for key in aliases:
+                              if donor.get(key):
+                                  merged[key] = donor[key]
+                                  provenance[key] = [source]
+          
+                  if not series(merged)[0] and series(donor)[0]:
+                      merged["series"] = donor["series"]
+                      provenance["series"] = [source]
+                      if donor.get("series_index") is not None:
+                          merged["series_index"] = donor["series_index"]
+                          provenance["series_index"] = [source]
+          
+                  for key in ("tags", "genres"):
+                      existing = merged.get(key) or []
+                      terms = dict.fromkeys(tag.casefold() for tag in existing)
+                      additions = []
+                      for tag in donor.get(key) or []:
+                          normalized = tag.casefold()
+                          if tag.strip() and normalized not in terms:
+                              terms[normalized] = None
+                              additions.append(tag)
+                      if additions:
+                          merged[key] = [*existing, *additions]
+                          sources = provenance.setdefault(key, [])
+                          if source not in sources:
+                              sources.append(source)
+              if any(
+                  source != best["provider"]
+                  for sources in provenance.values()
+                  for source in sources
+              ):
+                  merged["field_provenance"] = provenance
+              return merged
+          
+          
+          def replacement(
+              original,
+              candidate,
+              original_scores,
+              candidate_scores,
+              edition_verified,
+              *,
+              allow_equal=False,
+          ):
+              """Explain whether an edition-verified candidate protects the original."""
+              if not edition_verified:
+                  return False, "edition_unverified"
+              for field in ("authors", "identifiers", "series", "volume", "description", "cover"):
+                  if candidate_scores[field] < original_scores[field]:
+                      return False, f"protected_field_regression:{field}"
+              if original.get("authors") is not None and original["authors"] != candidate.get(
+                  "authors"
+              ):
+                  return False, "protected_field_changed:authors"
+              if series(original)[0] and series(original) != series(candidate):
+                  return False, "protected_field_changed:series"
+              for scheme, value in original.get("identifiers", {}).items():
+                  if (candidate.get("identifiers") or {}).get(scheme) == value:
+                      continue
+                  expected = edition_ids({"identifiers": {scheme: value}})
+                  if not expected or not expected <= edition_ids(candidate):
+                      return False, "protected_identifier_changed"
+              improvement = sum(candidate_scores.values()) - sum(original_scores.values())
+              if allow_equal and improvement == 0:
+                  return True, "equal_score_with_protected_fields_preserved"
+              if improvement <= 0:
+                  return False, "quality_not_higher"
+              return True, "higher_score_with_protected_fields_preserved"
+          PYTHON
+          cat > "$stage/metadata_queue_worker.py" <<'PYTHON'
+          """Poll PostgreSQL for authorized acceptance jobs."""
+          
+          import argparse
+          import base64
+          import logging
+          import os
+          import signal
+          from threading import Event
+          
+          import psycopg
+          
+          LOG = logging.getLogger(__name__)
+          
+          
+          def run_lookup(db, runner, job_id, token, endpoint, *, opener=None, cover_opener=None):
+              """Gather and store verified provider evidence under the current job lease."""
+              from metadata_queue_cover import TemporaryCoverError, allowed_cover, fetch_cover
+              from metadata_queue_provider import LeaseProviders, lookup
+              from metadata_queue_quality import assess, combine_verified_metadata, replacement
+              from psycopg.types.json import Jsonb
+          
+              lease = (runner, job_id, token)
+              if not endpoint:
+                  raise RuntimeError("No test engine configured for provider lookups")
+              inputs = db.execute(
+                  "SELECT metadata_queue.lookup_input(%s,%s,%s)", lease
+              ).fetchone()[0]
+              if inputs is None:
+                  # A pause can block provider access while still permitting a fenced finish.
+                  db.execute(
+                      "SELECT metadata_queue.finish(%s,%s,%s,'retry','input_unavailable')", lease
+                  )
+                  return
+              access = LeaseProviders(db, *lease)
+              options = {"opener": opener} if opener is not None else {}
+              evidence = lookup(
+                  endpoint,
+                  inputs["original"],
+                  inputs["providers"],
+                  5,
+                  access,
+                  access.reserve,
+                  review_requests=inputs.get("review_requests", ()),
+                  **options,
+              )
+              candidates = []
+              for result in evidence["candidates"]:
+                  payload = dict(result["payload"])
+                  if payload.get("source_id"):
+                      identifiers = payload.get("identifiers")
+                      payload["identifiers"] = {
+                          **(identifiers if isinstance(identifiers, dict) else {}),
+                          f"metadata_engine_{result['provider']}": str(payload["source_id"]),
+                      }
+                  try:
+                      scores = assess(payload)
+                  except (AttributeError, TypeError, ValueError):
+                      continue
+                  candidates.append(dict(result, payload=payload, field_scores=scores))
+              candidates.sort(key=lambda row: sum(row["field_scores"].values()), reverse=True)
+              best = candidates[0] if candidates else None
+              if best:
+                  original = inputs["original"]
+                  original_artwork = inputs["original_cover"]
+                  processed = any(
+                      name.startswith("metadata_engine_") and value
+                      for name, value in original.get("identifiers", {}).items()
+                  )
+                  artwork = None
+                  artwork_retry = False
+                  attempted = set()
+                  for candidate in candidates:
+                      provider = candidate["provider"]
+                      url = candidate["payload"].get("cover_url")
+                      if provider in attempted or not allowed_cover(url):
+                          continue
+                      attempted.add(provider)
+                      if not db.execute(
+                          "SELECT metadata_queue.reserve_artwork(%s,%s,%s,%s)",
+                          (*lease, provider),
+                      ).fetchone()[0]:
+                          artwork_retry = True
+                          continue
+                      try:
+                          downloaded = fetch_cover(url, 5, opener=cover_opener)
+                      except TemporaryCoverError:
+                          artwork_retry = True
+                          continue
+                      if not downloaded:
+                          continue
+                      if not artwork:
+                          best, artwork = candidate, downloaded
+                      if (
+                          not processed
+                          or not original_artwork
+                          or (downloaded["sha256"] == original_artwork["sha256"])
+                      ):
+                          best, artwork = candidate, downloaded
+                          break
+                  payload = combine_verified_metadata(best, candidates)
+                  cover_size = (artwork["width"], artwork["height"]) if artwork else None
+                  candidate_record = dict(
+                      source=best["provider"],
+                      payload=payload,
+                      field_scores=assess(payload, cover_size),
+                  )
+                  if artwork:
+                      candidate_record["cover"] = dict(
+                          artwork, bytes=base64.b64encode(artwork["bytes"]).decode("ascii")
+                      )
+                  original_size = (
+                      (original_artwork["width"], original_artwork["height"])
+                      if original_artwork
+                      else None
+                  )
+                  safe_artwork = artwork and (
+                      not original_artwork or artwork["sha256"] == original_artwork["sha256"]
+                  )
+                  if safe_artwork:
+                      original_scores = assess(original, original_size)
+                      recommend, reason = replacement(
+                          original,
+                          payload,
+                          original_scores,
+                          candidate_record["field_scores"],
+                          edition_verified=True,
+                      )
+                      comparable, _ = replacement(
+                          original,
+                          payload,
+                          original_scores,
+                          candidate_record["field_scores"],
+                          edition_verified=True,
+                          allow_equal=True,
+                      )
+                  else:
+                      recommend = False
+                      reason = "cover_missing" if not artwork else "cover_differs_from_calibre"
+                      comparable = False
+                  candidate_record["replacement_assessment"] = {
+                      "recommended": recommend,
+                      "reason": reason,
+                  }
+                  candidate = Jsonb(candidate_record)
+                  # A previously unmarked book can pass lookup acceptance with verified
+                  # metadata and artwork. A replacement remains a separate decision.
+                  if artwork and (not processed or comparable):
+                      outcome, reason = "passed", None
+                  elif artwork_retry:
+                      outcome, reason = "retry", "artwork_unavailable"
+                  elif not artwork and {"transient", "rate_limited"}.intersection(
+                      evidence["attempts"].values()
+                  ):
+                      outcome, reason = "retry", "provider_unavailable"
+                  else:
+                      outcome = "needs_review"
+              else:
+                  candidate = None
+                  temporary = {"transient", "rate_limited"}
+                  if temporary.intersection(evidence["attempts"].values()):
+                      outcome, reason = "retry", "provider_unavailable"
+                  elif evidence["work_sources"]:
+                      outcome, reason = "needs_review", "work_found_edition_unverified"
+                  else:
+                      outcome, reason = "needs_review", "no_verified_edition"
+              db.execute(
+                  "SELECT metadata_queue.finish_lookup(%s,%s,%s,%s,%s,%s,%s)",
+                  (*lease, outcome, reason, Jsonb(evidence["attempts"]), candidate),
+              )
+          
+          
+          def work(dsn, runner, stop, once):
+              """Heartbeat, recover expired leases and process synthetic work."""
+              while not stop.is_set():
+                  try:
+                      with psycopg.connect(dsn, autocommit=True, connect_timeout=5) as db:
+                          while not stop.is_set():
+                              allowed = db.execute(
+                                  "SELECT metadata_queue.heartbeat(%s)", (runner,)
+                              ).fetchone()[0]
+                              if allowed:
+                                  db.execute("SELECT metadata_queue.recover(%s)", (runner,))
+                                  # PostgreSQL decides which campaigns this worker may claim.
+                                  job = db.execute(
+                                      "SELECT * FROM metadata_queue.claim(%s)", (runner,)
+                                  ).fetchone()
+                                  if job is not None:
+                                      job_id, token, synthetic = job
+                                      if synthetic:
+                                          db.execute(
+                                              "SELECT metadata_queue.finish(%s,%s,%s,'passed')",
+                                              (runner, job_id, token),
+                                          )
+                                      else:
+                                          run_lookup(
+                                              db,
+                                              runner,
+                                              job_id,
+                                              token,
+                                              os.getenv("METADATA_QUEUE_TEST_ENGINE"),
+                                          )
+                              if once:
+                                  return
+                              stop.wait(3 if allowed else 10)
+                  except psycopg.OperationalError:
+                      if once:
+                          raise
+                      LOG.warning("PostgreSQL unavailable; will reconnect")
+                      stop.wait(15)
+          
+          
+          def main():
+              """Run the service without changing runner desired state on startup."""
+              parser = argparse.ArgumentParser(description=__doc__)
+              parser.add_argument("--runner", required=True)
+              parser.add_argument("--once", action="store_true")
+              args = parser.parse_args()
+              logging.basicConfig(level=logging.INFO)
+              stop = Event()
+              for signum in (signal.SIGTERM, signal.SIGINT):
+                  signal.signal(signum, lambda *_: stop.set())
+              work(os.environ["METADATA_QUEUE_DSN"], args.runner, stop, args.once)
+          
+          
+          if __name__ == "__main__":
+              main()
+          PYTHON
+          "$base/python/bin/python" -m compileall -q "$stage"
+          mkdir "$stage/previous"
+          for name in provider quality worker; do
+            cp "$base/metadata_queue_$name.py" "$stage/previous/"
+          done
+          for name in provider quality worker; do
+            mv -f "$stage/metadata_queue_$name.py" "$base/"
+          done
+          if ! systemctl --user try-restart metadata-queue-worker.service ||
+             ! systemctl --user is-active --quiet metadata-queue-worker.service; then
+            cp "$stage/previous/"*.py "$base/"
+            systemctl --user try-restart metadata-queue-worker.service
+            exit 1
+          fi
+  freeze:
+    needs: install
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 4
+    steps:
+      - name: Freeze review scope and leave campaign ready for approval
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          BEGIN;
+          -- Include frozen review evidence in the existing lease-scoped lookup input.
+          SET LOCAL search_path = metadata_queue, pg_catalog, pg_temp;
+          
+          CREATE OR REPLACE FUNCTION lookup_input(p_runner text,p_job bigint,p_token uuid)
+          RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+          SET search_path=pg_catalog,metadata_queue,pg_temp AS $$
+          DECLARE c campaigns; input jsonb;
+          BEGIN
+              SELECT * INTO c FROM campaigns WHERE id=(SELECT campaign_id FROM jobs WHERE id=p_job)
+                  FOR UPDATE;
+              IF NOT FOUND OR c.state<>'running' OR NOT approval_valid(c) THEN RETURN NULL; END IF;
+              PERFORM 1 FROM runners r JOIN worker_accounts w ON w.runner_id=r.id
+                WHERE r.id=p_runner AND w.login=session_user AND r.desired_state='running'
+                FOR SHARE OF r;
+              IF NOT FOUND THEN RETURN NULL; END IF;
+              SELECT jsonb_build_object('original',v.payload,'providers',c.config->'providers',
+                  'original_cover',(SELECT jsonb_build_object('width',width,'height',height,'sha256',sha256) FROM artifacts
+                      WHERE media_id=j.media_id AND kind='cover_front' AND metadata_version_id=v.id
+                        AND width IS NOT NULL AND height IS NOT NULL
+                      ORDER BY width::bigint*height DESC LIMIT 1)) ||
+                  CASE WHEN c.config ? 'review_request_ids' THEN jsonb_build_object(
+                      'review_requests', COALESCE((SELECT jsonb_agg(jsonb_build_object('review',w.details))
+                          FROM metadata_review.work_requests w
+                          WHERE w.media_id=j.media_id AND w.kind='retry' AND w.state='linked' AND w.job_id=j.id
+                            AND c.config->'review_request_ids' ? w.decision_id::text), '[]'::jsonb))
+                      ELSE '{}'::jsonb END
+                  INTO input
+                  FROM jobs j
+                  JOIN LATERAL (
+                      SELECT id,payload FROM metadata_versions
+                      WHERE media_id=j.media_id AND source_name='calibre-original'
+                      ORDER BY id DESC LIMIT 1
+                  ) v ON true
+                  WHERE j.id=p_job AND j.state='leased' AND j.leased_by=p_runner
+                    AND j.lease_token=p_token AND j.lease_until>clock_timestamp()
+                  FOR UPDATE OF j;
+              RETURN input;
+          END
+          $$;
+          
+          CREATE OR REPLACE FUNCTION metadata_review.project_job() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+          SET search_path=pg_catalog,metadata_review,metadata_queue,pg_temp AS $$
+          DECLARE destination text; previous_queue text; recent_runner text;
+          BEGIN
+              IF TG_OP='UPDATE' AND NEW.state IS NOT DISTINCT FROM OLD.state THEN RETURN NEW; END IF;
+              -- Keep the review request visible as deferred until an approved worker leases it.
+              IF NEW.state='pending' AND EXISTS (
+                  SELECT FROM campaigns c WHERE c.id=NEW.campaign_id AND c.config ? 'review_request_ids'
+              ) THEN RETURN NEW; END IF;
+              destination := CASE NEW.state WHEN 'needs_review' THEN 'review' WHEN 'failed' THEN 'failed'
+                  WHEN 'pending' THEN 'processing' WHEN 'leased' THEN 'processing' WHEN 'retry_wait' THEN 'retry'
+                  WHEN 'passed' THEN 'passed' END;
+              SELECT runner_id INTO recent_runner FROM job_attempts WHERE job_id=NEW.id ORDER BY attempt_number DESC LIMIT 1;
+              SELECT queue INTO previous_queue FROM review_queue_history WHERE media_id=NEW.media_id AND job_id=NEW.id
+                  AND queue IN ('review','failed','processing','retry') AND exited_at IS NULL;
+              UPDATE review_queue_history SET exited_at=NEW.updated_at WHERE media_id=NEW.media_id
+                  AND queue IN ('review','failed','processing','retry') AND exited_at IS NULL
+                  AND (queue IS DISTINCT FROM destination OR job_id IS DISTINCT FROM NEW.id);
+              IF destination IN ('processing','retry') AND EXISTS (
+                  SELECT FROM review_queue_history WHERE media_id=NEW.media_id AND queue IN ('manual','production') AND exited_at IS NULL
+              ) THEN RETURN NEW; END IF;
+              IF NEW.state='leased' AND EXISTS (
+                  SELECT FROM campaigns c JOIN campaign_members m ON m.campaign_id=c.id
+                  WHERE c.id=NEW.campaign_id AND m.media_id=NEW.media_id
+                    AND c.state='running' AND approval_valid(c)
+                    AND c.manifest_hash=campaign_hash(c.id)
+                    AND c.config_hash=encode(sha256(convert_to(c.config::text,'UTF8')),'hex')
+              ) THEN
+                  -- The normal worker claim has already checked approval, membership and budget.
+                  UPDATE work_requests SET state='linked',job_id=NEW.id
+                  WHERE media_id=NEW.media_id AND kind='retry' AND state='deferred'
+                    AND EXISTS (SELECT FROM campaigns c WHERE c.id=NEW.campaign_id
+                                AND (NOT c.config ? 'review_request_ids'
+                                     OR c.config->'review_request_ids' ? decision_id::text));
+              END IF;
+              IF destination IS NOT NULL THEN
+                  IF previous_queue=destination THEN
+                      UPDATE review_queue_history SET runner=COALESCE(NEW.leased_by,recent_runner),detail=NEW.failure_class
+                      WHERE media_id=NEW.media_id AND queue=destination AND exited_at IS NULL;
+                  ELSE
+                      IF destination='passed' THEN
+                          UPDATE review_queue_history SET exited_at=NEW.updated_at WHERE media_id=NEW.media_id
+                            AND queue='passed' AND exited_at IS NULL;
+                      END IF;
+                      PERFORM admit(NEW.media_id,destination,NEW.updated_at,NEW.id,NEW.failure_class,NEW.campaign_id,
+                          COALESCE(NEW.leased_by,recent_runner));
+                  END IF;
+              END IF;
+              IF NEW.state='passed' AND NEW.attempt_count>1 THEN
+                  UPDATE review_queue_history SET exited_at=NEW.updated_at WHERE media_id=NEW.media_id
+                      AND queue='retry_success' AND exited_at IS NULL;
+                  PERFORM admit(NEW.media_id,'retry_success',NEW.updated_at,NEW.id,NULL,NEW.campaign_id,recent_runner);
+              END IF;
+              IF NEW.state IN ('needs_review','passed','failed','blocked','cancelled') THEN
+                  UPDATE work_requests SET state='closed' WHERE job_id=NEW.id AND state='linked';
+              END IF;
+              RETURN NEW;
+          END
+          $$;
+          COMMIT;
+          -- Prepare one frozen campaign for the current review retry requests.
+          -- This script does not approve or start provider lookups.
+          BEGIN;
+          SET LOCAL search_path=metadata_queue,pg_catalog,pg_temp;
+          SELECT pg_advisory_xact_lock(89411835);
+          DO $prepare$
+          DECLARE
+              campaign constant uuid := 'd1760f03-3a74-4cc6-a715-c24c958e2957';
+              prior campaigns;
+              request_ids jsonb;
+              books jsonb;
+              settings jsonb;
+              evidence jsonb;
+              version_number bigint;
+          BEGIN
+              IF EXISTS (SELECT FROM campaigns WHERE id=campaign) THEN RETURN; END IF;
+              IF EXISTS (SELECT FROM campaigns WHERE state='running' AND NOT synthetic) THEN
+                  RAISE EXCEPTION 'An existing real-book campaign is running';
+              END IF;
+              SELECT * INTO STRICT prior FROM campaigns
+              WHERE id='fa59f794-1cec-46fc-97ef-8a641b262b86' AND state='completed';
+              IF (SELECT count(*) FROM runners WHERE id IN ('chatgpt-dev','chatgpt-build-02')
+                  AND observed_state='running' AND desired_state='running'
+                  AND heartbeat_at>clock_timestamp()-interval '30 seconds')<>2 THEN
+                  RAISE EXCEPTION 'Both local workers must be online';
+              END IF;
+              SELECT jsonb_agg(decision_id::text ORDER BY decision_id),
+                     jsonb_agg(DISTINCT media_id ORDER BY media_id)
+              INTO request_ids,books
+              FROM metadata_review.work_requests WHERE kind='retry' AND state='deferred';
+              IF jsonb_array_length(books) IS DISTINCT FROM 31 THEN
+                  RAISE EXCEPTION 'Retry queue changed from the reviewed 31-book scope';
+              END IF;
+              settings := prior.config || jsonb_build_object('max_jobs',31,'review_request_ids',request_ids);
+              INSERT INTO campaigns(id,config) VALUES(campaign,settings);
+              version_number := transition(campaign,0,gen_random_uuid(),'preparing',
+                  jsonb_build_object('reference','Manual review retry validation'));
+              INSERT INTO campaign_members(campaign_id,media_id)
+              SELECT campaign,value::bigint FROM jsonb_array_elements_text(books);
+              evidence := prior.readiness || jsonb_build_object(
+                  'reference','Verified inherited queue policy, fresh worker health and review retry regression tests',
+                  'manifest_hash',freeze_manifest(campaign,version_number),
+                  'config_hash',encode(sha256(convert_to(settings::text,'UTF8')),'hex'));
+              PERFORM transition(campaign,version_number,gen_random_uuid(),'ready',evidence);
+          END
+          $prepare$;
+          COMMIT;
+          SELECT c.id,c.state,count(m.media_id),c.config->'providers'
+          FROM metadata_queue.campaigns c JOIN metadata_queue.campaign_members m ON m.campaign_id=c.id
+          WHERE c.id='d1760f03-3a74-4cc6-a715-c24c958e2957' GROUP BY c.id;
+          SQL
+          REMOTE
