@@ -1,0 +1,175 @@
+name: Restart authorized 100-book campaign
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/restart-100-book-review-campaign.yml]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 2
+    steps:
+      - name: Preserve original results and start a fresh rerun
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          BEGIN;
+          -- Reuse the original review evidence and isolate cached responses for a campaign replay.
+          SET LOCAL search_path = metadata_queue, pg_catalog, pg_temp;
+          
+          CREATE OR REPLACE FUNCTION lookup_input(p_runner text,p_job bigint,p_token uuid)
+          RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+          SET search_path=pg_catalog,metadata_queue,pg_temp AS $$
+          DECLARE c campaigns; input jsonb;
+          BEGIN
+              SELECT * INTO c FROM campaigns WHERE id=(SELECT campaign_id FROM jobs WHERE id=p_job)
+                  FOR UPDATE;
+              IF NOT FOUND OR c.state<>'running' OR NOT approval_valid(c) THEN RETURN NULL; END IF;
+              PERFORM 1 FROM runners r JOIN worker_accounts w ON w.runner_id=r.id
+                WHERE r.id=p_runner AND w.login=session_user AND r.desired_state='running'
+                FOR SHARE OF r;
+              IF NOT FOUND THEN RETURN NULL; END IF;
+              SELECT jsonb_build_object('original',v.payload,'providers',c.config->'providers',
+                  'original_cover',(SELECT jsonb_build_object('width',width,'height',height,'sha256',sha256) FROM artifacts
+                      WHERE media_id=j.media_id AND kind='cover_front' AND metadata_version_id=v.id
+                        AND width IS NOT NULL AND height IS NOT NULL
+                      ORDER BY width::bigint*height DESC LIMIT 1)) ||
+                  CASE WHEN c.config ? 'review_request_ids' THEN jsonb_build_object(
+                      'review_requests', COALESCE((SELECT jsonb_agg(jsonb_build_object('review',w.details))
+                          FROM metadata_review.work_requests w
+                          WHERE w.media_id=j.media_id AND w.kind='retry' AND (
+                                (w.state='linked' AND w.job_id=j.id)
+                                OR (w.state='closed' AND EXISTS (
+                                    SELECT FROM jobs previous_job
+                                    WHERE previous_job.id=w.job_id
+                                      AND previous_job.media_id=j.media_id
+                                      AND previous_job.campaign_id::text=c.config->>'replay_from_campaign'
+                                ))
+                            )
+                            AND c.config->'review_request_ids' ? w.decision_id::text), '[]'::jsonb))
+                      ELSE '{}'::jsonb END
+                  INTO input
+                  FROM jobs j
+                  JOIN LATERAL (
+                      SELECT id,payload FROM metadata_versions
+                      WHERE media_id=j.media_id AND source_name='calibre-original'
+                      ORDER BY id DESC LIMIT 1
+                  ) v ON true
+                  WHERE j.id=p_job AND j.state='leased' AND j.leased_by=p_runner
+                    AND j.lease_token=p_token AND j.lease_until>clock_timestamp()
+                  FOR UPDATE OF j;
+              RETURN input;
+          END
+          $$;
+          
+          
+          CREATE OR REPLACE FUNCTION campaign_cache_key(p_job bigint,p_fingerprint text)
+          RETURNS text LANGUAGE sql STABLE
+          SET search_path=pg_catalog,metadata_queue,pg_temp AS $$
+              SELECT CASE WHEN c.config ? 'replay_from_campaign'
+                  THEN encode(sha256(convert_to(c.id::text || ':' || p_fingerprint,'UTF8')),'hex')
+                  ELSE p_fingerprint END
+              FROM jobs j JOIN campaigns c ON c.id=j.campaign_id
+              WHERE j.id=p_job
+          $$;
+          REVOKE ALL ON FUNCTION campaign_cache_key(bigint,text) FROM PUBLIC;
+          
+          CREATE OR REPLACE FUNCTION read_provider_cache(
+              p_runner text,p_job bigint,p_token uuid,p_provider text,p_fingerprint text
+          ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+          SET search_path=pg_catalog,metadata_queue,pg_temp AS $$
+          BEGIN
+              IF provider_lease(p_runner,p_job,p_token,p_provider) IS NULL THEN RETURN NULL; END IF;
+              RETURN (SELECT payload FROM provider_cache WHERE provider=p_provider
+                      AND fingerprint=campaign_cache_key(p_job,p_fingerprint) AND expires_at>clock_timestamp());
+          END
+          $$;
+          
+          CREATE OR REPLACE FUNCTION write_provider_cache(
+              p_runner text,p_job bigint,p_token uuid,p_provider text,p_fingerprint text,p_payload jsonb
+          ) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
+          SET search_path=pg_catalog,metadata_queue,pg_temp AS $$
+          BEGIN
+              IF provider_lease(p_runner,p_job,p_token,p_provider) IS NULL THEN RETURN false; END IF;
+              IF jsonb_typeof(p_payload) IS DISTINCT FROM 'array'
+                 OR pg_column_size(p_payload)>2000000 THEN RETURN false; END IF;
+              INSERT INTO provider_cache(provider,fingerprint,payload,expires_at)
+                VALUES(p_provider,campaign_cache_key(p_job,p_fingerprint),p_payload,clock_timestamp()+interval '1 day')
+                ON CONFLICT(provider,fingerprint) DO UPDATE
+                SET payload=EXCLUDED.payload,expires_at=EXCLUDED.expires_at;
+              RETURN true;
+          END
+          $$;
+          -- Replay the same reviewed workload after explicit authorization.
+          SET LOCAL search_path=metadata_queue,pg_catalog,pg_temp;
+          SELECT pg_advisory_xact_lock(89411835);
+          DO $replay$
+          DECLARE
+              origin constant uuid := 'd1760f03-3a74-4cc6-a715-c24c958e2957';
+              replay constant uuid := 'a5bc4bcd-291a-4f79-869b-71220de4ae64';
+              user_ref constant text := 'User requested a full restart of the 100-book campaign with the testing changes';
+              prior campaigns;
+              settings jsonb;
+              evidence jsonb;
+              v bigint;
+          BEGIN
+              SELECT * INTO STRICT prior FROM campaigns WHERE id=origin FOR UPDATE;
+              IF EXISTS (SELECT FROM campaigns WHERE id=replay AND state IN ('running','completed')) THEN
+                  RETURN;
+              END IF;
+              IF prior.synthetic OR prior.state NOT IN ('running','completed')
+                  OR NOT approval_valid(prior)
+                  OR prior.manifest_hash IS DISTINCT FROM campaign_hash(origin)
+                  OR prior.config_hash IS DISTINCT FROM encode(sha256(convert_to(prior.config::text,'UTF8')),'hex')
+                  OR (SELECT count(*) FROM campaign_members WHERE campaign_id=origin)<>100
+                  OR (SELECT count(*) FROM jobs WHERE campaign_id=origin AND state IN
+                      ('passed','failed','needs_review','blocked','cancelled'))<>100
+                  OR EXISTS (SELECT FROM campaigns WHERE state='running' AND NOT synthetic AND id<>origin)
+                  OR (SELECT count(DISTINCT w.media_id) FROM metadata_review.work_requests w
+                      JOIN jobs old ON old.id=w.job_id AND old.campaign_id=origin AND old.media_id=w.media_id
+                      WHERE w.kind='retry' AND w.state='closed'
+                        AND prior.config->'review_request_ids' ? w.decision_id::text)<>31
+              THEN RAISE EXCEPTION 'The source scope or its archived review requests changed'; END IF;
+              IF prior.state='running' THEN
+                  PERFORM transition(origin,prior.version,gen_random_uuid(),'completed',
+                      jsonb_build_object('reference','All original jobs reached a terminal state before replay'));
+              END IF;
+          
+              settings := prior.config || jsonb_build_object('replay_from_campaign',origin);
+              INSERT INTO campaigns(id,config) VALUES(replay,settings);
+              v := transition(replay,0,gen_random_uuid(),'preparing',jsonb_build_object('reference',user_ref));
+              INSERT INTO campaign_members(campaign_id,media_id)
+              SELECT replay,media_id FROM campaign_members WHERE campaign_id=origin;
+              IF freeze_manifest(replay,v) IS DISTINCT FROM prior.manifest_hash THEN
+                  RAISE EXCEPTION 'Replay membership differs from original';
+              END IF;
+              evidence := jsonb_build_object('reference',user_ref,'user_authorization',user_ref,
+                  'manifest_hash',prior.manifest_hash,'config_hash',encode(sha256(convert_to(settings::text,'UTF8')),'hex'));
+              v := transition(replay,v,gen_random_uuid(),'ready',prior.readiness || evidence);
+              v := transition(replay,v,gen_random_uuid(),'approved',evidence);
+              PERFORM transition(replay,v,gen_random_uuid(),'running',evidence);
+          END
+          $replay$;
+          COMMIT;
+          SQL
+          for check in $(seq 1 8); do
+            row="$(docker exec "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test -c "SELECT c.state,c.approval_revision,count(j.id),count(*) FILTER (WHERE j.attempt_count>0),count(*) FILTER (WHERE j.state='leased') FROM metadata_queue.campaigns c JOIN metadata_queue.jobs j ON j.campaign_id=c.id WHERE c.id='a5bc4bcd-291a-4f79-869b-71220de4ae64' GROUP BY c.id")"
+            printf 'replay_progress|%s\n' "$row"
+            IFS='|' read -r state approval total started leased <<< "$row"
+            if [ "$started" -gt 0 ] || [ "$state" != running ]; then break; fi
+            sleep 5
+          done
+          REMOTE
