@@ -1,0 +1,41 @@
+name: Check original 100-book campaign
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/check-current-100-book-campaign.yml]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 2
+    steps:
+      - name: Read aggregate retry readiness
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          BEGIN READ ONLY;
+          SELECT c.id,c.state,c.version,c.approval_revision,count(j.id),
+                 count(*) FILTER (WHERE j.state IN ('pending','leased','retry_wait'))
+          FROM metadata_queue.campaigns c LEFT JOIN metadata_queue.jobs j ON j.campaign_id=c.id
+          WHERE c.id='d1760f03-3a74-4cc6-a715-c24c958e2957' OR (c.state='running' AND NOT c.synthetic)
+          GROUP BY c.id;
+          SELECT state,count(*) FROM metadata_queue.jobs WHERE campaign_id='d1760f03-3a74-4cc6-a715-c24c958e2957' GROUP BY state;
+          SELECT w.state,count(*) FROM metadata_review.work_requests w
+          JOIN metadata_queue.campaigns c ON c.config->'review_request_ids' ? w.decision_id::text
+          WHERE c.id='d1760f03-3a74-4cc6-a715-c24c958e2957' GROUP BY w.state;
+          COMMIT;
+          SQL
+          REMOTE
