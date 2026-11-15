@@ -1,0 +1,77 @@
+name: Start approved 100-book review campaign
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/start-100-book-review-campaign.yml]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 4
+    steps:
+      - name: Record approval and start the frozen 100-book campaign
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          -- Expand the unstarted review retry campaign to include a 69-book holdout.
+          BEGIN;
+          SET LOCAL search_path=metadata_queue,pg_catalog,pg_temp;
+          SELECT pg_advisory_xact_lock(89411835);
+          DO $start$
+          DECLARE
+              target constant uuid := 'd1760f03-3a74-4cc6-a715-c24c958e2957';
+              c campaigns;
+              v bigint;
+              evidence jsonb;
+              authorization constant text := 'Approve and start campaign d1760f03-3a74-4cc6-a715-c24c958e2957';
+          BEGIN
+              SELECT * INTO STRICT c FROM campaigns WHERE id=target FOR UPDATE;
+              IF c.state IN ('running','completed') AND EXISTS (
+                  SELECT FROM campaign_approvals WHERE campaign_id=target AND revision=c.approval_revision AND reference=authorization
+              ) THEN RETURN; END IF;
+              IF c.state <> 'ready' OR c.synthetic
+                 OR c.config->>'max_jobs' IS DISTINCT FROM '100'
+                 OR jsonb_array_length(c.config->'holdout_media_ids') IS DISTINCT FROM 69
+                 OR (SELECT count(*) FROM campaign_members WHERE campaign_id=target)<>100
+                 OR (SELECT count(*) FROM jobs WHERE campaign_id=target AND state='pending' AND attempt_count=0)<>100
+                 OR (SELECT count(*) FROM campaign_members WHERE campaign_id=target
+                         AND c.config->'holdout_media_ids' @> to_jsonb(media_id))<>69
+                 OR (SELECT count(DISTINCT w.media_id) FROM metadata_review.work_requests w
+                         JOIN campaign_members m ON m.media_id=w.media_id AND m.campaign_id=target
+                         WHERE w.kind='retry' AND w.state='deferred'
+                           AND NOT (c.config->'holdout_media_ids' @> to_jsonb(w.media_id))
+                           AND c.config->'review_request_ids' ? w.decision_id::text)<>31
+                 OR NOT EXISTS (SELECT FROM manifest_revisions f WHERE f.campaign_id=target
+                         AND f.campaign_version=c.version-1 AND f.manifest_hash=c.manifest_hash
+                         AND f.config_hash=c.config_hash AND f.config=c.config)
+                 OR EXISTS (SELECT FROM campaigns WHERE state='running' AND NOT synthetic AND id<>target)
+              THEN RAISE EXCEPTION 'The reviewed 100-book campaign is no longer ready'; END IF;
+              evidence := jsonb_build_object('manifest_hash',c.manifest_hash,'config_hash',c.config_hash,
+                  'reference',authorization,'user_authorization',authorization);
+              v := transition(target,c.version,'d16d0f09-7889-4c49-b39a-069d3b20cb93','approved',evidence);
+              PERFORM transition(target,v,'2f8211f1-7e1e-409d-a8be-24f184db593d','running',evidence);
+          END
+          $start$;
+          COMMIT;
+          SQL
+          for check in $(seq 1 6); do
+            row="$(docker exec "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test -c "SELECT c.state,c.approval_revision,count(j.id),count(*) FILTER (WHERE j.attempt_count>0),count(*) FILTER (WHERE j.state='leased') FROM metadata_queue.campaigns c JOIN metadata_queue.jobs j ON j.campaign_id=c.id WHERE c.id='d1760f03-3a74-4cc6-a715-c24c958e2957' GROUP BY c.id")"
+            printf 'campaign_progress|%s\n' "$row"
+            IFS='|' read -r state approval total started leased <<< "$row"
+            if [ "$started" -gt 0 ] || [ "$state" != running ]; then break; fi
+            sleep 5
+          done
+          REMOTE
