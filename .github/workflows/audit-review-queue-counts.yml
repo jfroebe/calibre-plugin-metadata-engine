@@ -1,0 +1,55 @@
+name: Audit review queue counts
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/audit-review-queue-counts.yml]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 2
+    steps:
+      - name: Read aggregate dashboard and campaign counts
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+          SELECT 'as_of',statement_timestamp();
+          SELECT 'queue',q.queue,count(*),
+                 count(*) FILTER (WHERE coalesce(q.campaign_id,j.campaign_id)='a5bc4bcd-291a-4f79-869b-71220de4ae64')
+          FROM metadata_review.review_queue_history q LEFT JOIN metadata_queue.jobs j ON j.id=q.job_id
+          WHERE q.exited_at IS NULL GROUP BY q.queue ORDER BY q.queue;
+          SELECT 'jobs',CASE c.id WHEN 'a5bc4bcd-291a-4f79-869b-71220de4ae64' THEN 'rerun' ELSE 'original' END,c.state,j.state,count(*)
+          FROM metadata_queue.jobs j JOIN metadata_queue.campaigns c ON c.id=j.campaign_id
+          WHERE c.id IN ('a5bc4bcd-291a-4f79-869b-71220de4ae64','d1760f03-3a74-4cc6-a715-c24c958e2957')
+          GROUP BY 2,3,4 ORDER BY 2,3,4;
+          SELECT 'rerun_reason',CASE WHEN c.config->'holdout_media_ids' @> to_jsonb(j.media_id)
+                                      THEN 'unseen' ELSE 'review_guided' END,
+                 j.state,coalesce(j.failure_class,''),count(*),count(v.id),count(v.cover)
+          FROM metadata_queue.jobs j JOIN metadata_queue.campaigns c ON c.id=j.campaign_id
+          LEFT JOIN LATERAL (
+            SELECT v.id,v.provenance->>'cover_sha256' AS cover
+            FROM metadata_queue.job_attempts a JOIN metadata_queue.metadata_versions v ON v.job_attempt_id=a.id
+            WHERE a.job_id=j.id ORDER BY a.attempt_number DESC,v.id DESC LIMIT 1
+          ) v ON true
+          WHERE j.campaign_id='a5bc4bcd-291a-4f79-869b-71220de4ae64' GROUP BY 2,3,4 ORDER BY 2,3,5 DESC,4;
+          SELECT 'review_overlap',q2.queue,count(*) FROM metadata_review.review_queue_history q1
+          JOIN metadata_review.review_queue_history q2 ON q1.media_id=q2.media_id AND q1.queue<>q2.queue
+          WHERE q1.queue='review' AND q1.exited_at IS NULL AND q2.exited_at IS NULL GROUP BY q2.queue;
+          SELECT 'distinct_books',count(DISTINCT media_id) FROM metadata_review.review_queue_history WHERE exited_at IS NULL;
+          COMMIT;
+          SQL
+          REMOTE
