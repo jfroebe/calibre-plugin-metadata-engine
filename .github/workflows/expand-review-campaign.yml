@@ -1,0 +1,114 @@
+name: Expand review campaign to 100 books
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/expand-review-campaign.yml]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 4
+    steps:
+      - name: Expand and verify the frozen 100-book scope
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          -- Expand the unstarted review retry campaign to include a 69-book holdout.
+          BEGIN;
+          SET LOCAL search_path=metadata_queue,pg_catalog,pg_temp;
+          SELECT pg_advisory_xact_lock(89411835);
+          DO $expand$
+          DECLARE
+              target constant uuid := 'd1760f03-3a74-4cc6-a715-c24c958e2957';
+              current_campaign campaigns;
+              new_books jsonb;
+              settings jsonb;
+              evidence jsonb;
+              new_version bigint;
+              source_reference constant text := 'User set the campaign size to 100 books';
+          BEGIN
+              SELECT * INTO STRICT current_campaign FROM campaigns WHERE id=target FOR UPDATE;
+              IF current_campaign.state='ready' AND current_campaign.config->>'max_jobs'='100' THEN
+                  RETURN;
+              END IF;
+              IF current_campaign.state<>'ready' OR current_campaign.approval_revision IS NOT NULL
+                  OR (SELECT count(*) FROM campaign_members WHERE campaign_id=target)<>31
+                  OR EXISTS (SELECT FROM jobs WHERE campaign_id=target AND (state<>'pending' OR attempt_count<>0))
+                  OR EXISTS (SELECT FROM campaigns WHERE state='running' AND NOT synthetic) THEN
+                  RAISE EXCEPTION 'Expected the unapproved and unstarted 31-book review campaign';
+              END IF;
+              IF (SELECT count(*) FROM runners WHERE id IN ('chatgpt-dev','chatgpt-build-02')
+                  AND observed_state='running' AND desired_state='running'
+                  AND heartbeat_at>clock_timestamp()-interval '30 seconds')<>2 THEN
+                  RAISE EXCEPTION 'Both local workers must be online';
+              END IF;
+          
+              WITH eligible AS (
+                  SELECT d.id,
+                         EXISTS (SELECT FROM jsonb_object_keys(COALESCE(v.payload->'identifiers','{}')) k(name)
+                                 WHERE starts_with(k.name,'metadata_engine_')) AS previously_processed,
+                         COALESCE(v.payload->'identifiers','{}') ?| ARRAY['isbn','isbn10','isbn13','asin','mobi-asin','amazon']
+                         AS has_edition_id,
+                         sha256(convert_to(target::text || ':' || d.canonical_key,'UTF8')) AS seed_order
+                  FROM media d
+                  JOIN LATERAL (
+                      SELECT payload FROM metadata_versions WHERE media_id=d.id AND source_name='calibre-original'
+                      ORDER BY id DESC LIMIT 1
+                  ) v ON true
+                  WHERE d.media_type='book'
+                    AND NULLIF(btrim(v.payload->>'title'),'') IS NOT NULL
+                    AND jsonb_typeof(v.payload->'authors')='array'
+                    AND jsonb_array_length(v.payload->'authors')>0
+                    AND NOT EXISTS (SELECT FROM campaign_members m WHERE m.media_id=d.id)
+                    AND NOT EXISTS (SELECT FROM jobs j WHERE j.media_id=d.id)
+                    AND NOT EXISTS (SELECT FROM metadata_review.work_requests r WHERE r.media_id=d.id)
+              ), ranked AS (
+                  SELECT *,row_number() OVER (PARTITION BY previously_processed,has_edition_id
+                                              ORDER BY seed_order,id) AS bucket_position
+                  FROM eligible
+              )
+              SELECT jsonb_agg(id ORDER BY id) INTO new_books
+              FROM (SELECT id FROM ranked ORDER BY bucket_position,seed_order,id LIMIT 69) sample;
+              IF jsonb_array_length(new_books) IS DISTINCT FROM 69 THEN
+                  RAISE EXCEPTION 'Could not fill the 69-book unseen cohort';
+              END IF;
+          
+              new_version := transition(target,current_campaign.version,gen_random_uuid(),'preparing',
+                  jsonb_build_object('reference',source_reference));
+              INSERT INTO campaign_members(campaign_id,media_id)
+              SELECT target,value::bigint FROM jsonb_array_elements_text(new_books);
+              settings := current_campaign.config || jsonb_build_object(
+                  'max_jobs',100,'holdout_media_ids',new_books);
+              UPDATE campaigns SET config=settings WHERE id=target;
+              evidence := current_campaign.readiness || jsonb_build_object(
+                  'reference',source_reference,
+                  'manifest_hash',freeze_manifest(target,new_version),
+                  'config_hash',encode(sha256(convert_to(settings::text,'UTF8')),'hex'));
+              PERFORM transition(target,new_version,gen_random_uuid(),'ready',evidence);
+          END
+          $expand$;
+          COMMIT;
+          SELECT c.id,c.state,count(m.media_id) AS total,
+                 count(*) FILTER (WHERE c.config->'holdout_media_ids' @> to_jsonb(m.media_id)) AS unseen_books,
+                 count(*) FILTER (WHERE NOT (c.config->'holdout_media_ids' @> to_jsonb(m.media_id))) AS submitted_retries,
+                 c.config->>'concurrency' AS concurrency,c.config->>'max_attempts' AS max_attempts,
+                 count(*) FILTER (WHERE j.state='pending' AND j.attempt_count=0) AS unstarted_jobs
+          FROM metadata_queue.campaigns c
+          JOIN metadata_queue.campaign_members m ON m.campaign_id=c.id
+          JOIN metadata_queue.jobs j ON j.campaign_id=m.campaign_id AND j.media_id=m.media_id
+          WHERE c.id='d1760f03-3a74-4cc6-a715-c24c958e2957' GROUP BY c.id;
+          SQL
+          REMOTE
