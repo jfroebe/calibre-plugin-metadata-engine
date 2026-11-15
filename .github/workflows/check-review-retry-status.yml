@@ -1,0 +1,41 @@
+name: Check review retry status
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/check-review-retry-status.yml]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 2
+    steps:
+      - name: Read aggregate retry readiness
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          BEGIN READ ONLY;
+          SELECT 'retry_requests',state,count(*),count(DISTINCT media_id),
+            count(DISTINCT media_id) FILTER (WHERE jsonb_array_length(coalesce(details->'urls','[]'))>0)
+          FROM metadata_review.work_requests WHERE kind='retry' GROUP BY state ORDER BY state;
+          SELECT 'campaigns',state,count(*) FROM metadata_queue.campaigns WHERE NOT synthetic GROUP BY state ORDER BY state;
+          SELECT 'eligible_retry_books',count(DISTINCT w.media_id) FROM metadata_review.work_requests w
+            JOIN metadata_queue.jobs j ON j.media_id=w.media_id
+            JOIN metadata_queue.campaigns c ON c.id=j.campaign_id
+            WHERE w.kind='retry' AND w.state='deferred' AND c.state='running' AND metadata_queue.approval_valid(c)
+              AND j.state IN ('pending','retry_wait','leased');
+          COMMIT;
+          SQL
+          REMOTE
