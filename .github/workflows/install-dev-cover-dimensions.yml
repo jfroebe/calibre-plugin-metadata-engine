@@ -1,0 +1,122 @@
+name: Install cover dimensions rule on chatgpt-dev
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: ['.github/workflows/install-dev-cover-dimensions.yml']
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: [self-hosted, linux, x64, calibre-controller, chatgpt-dev]
+    timeout-minutes: 5
+    steps:
+      - name: Install and verify the revised worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(hostname -s)" = chatgpt-dev
+          base="$HOME/.local/share/metadata-queue"
+          target="$base/metadata_queue_worker.py"
+          expected="2761587c12b57cc4ee7a00774324de82e9eeb633"
+          deployed="$(git hash-object "$target")"
+          if [ "$deployed" = "$expected" ]; then
+            printf '%s\n' 'Cover rule already installed.'
+            exit 0
+          fi
+          test "$deployed" = 'acd962e315a50d3eb560165377c0caaaaf5d065d'
+          stage="$(mktemp -d "$base/.cover-rule.XXXXXX")"
+          trap 'rm -rf "$stage"' EXIT
+          cp -p "$target" "$stage/previous.py"
+          cp -p "$target" "$stage/worker.py"
+          patch --batch --forward "$stage/worker.py" <<'PATCH'
+          --- deployed
+          +++ revised
+          @@ -62,11 +62,17 @@
+               if best:
+                   original = inputs["original"]
+                   original_artwork = inputs["original_cover"]
+          +        original_size = (
+          +            (original_artwork["width"], original_artwork["height"])
+          +            if original_artwork
+          +            else None
+          +        )
+                   processed = any(
+                       name.startswith("metadata_engine_") and value
+                       for name, value in original.get("identifiers", {}).items()
+                   )
+                   artwork = None
+          +        cover_meets_minimum = False
+                   artwork_retry = False
+                   attempted = set()
+                   for candidate in candidates:
+          @@ -90,12 +96,12 @@
+                           continue
+                       if not artwork:
+                           best, artwork = candidate, downloaded
+          -            if (
+          -                not processed
+          -                or not original_artwork
+          -                or (downloaded["sha256"] == original_artwork["sha256"])
+          +            if original_size is None or (
+          +                downloaded["width"] >= original_size[0]
+          +                and downloaded["height"] >= original_size[1]
+                       ):
+                           best, artwork = candidate, downloaded
+          +                cover_meets_minimum = True
+                           break
+                   payload = combine_verified_metadata(best, candidates)
+                   cover_size = (artwork["width"], artwork["height"]) if artwork else None
+          @@ -108,15 +114,7 @@
+                       candidate_record["cover"] = dict(
+                           artwork, bytes=base64.b64encode(artwork["bytes"]).decode("ascii")
+                       )
+          -        original_size = (
+          -            (original_artwork["width"], original_artwork["height"])
+          -            if original_artwork
+          -            else None
+          -        )
+          -        safe_artwork = artwork and (
+          -            not original_artwork or artwork["sha256"] == original_artwork["sha256"]
+          -        )
+          -        if safe_artwork:
+          +        if cover_meets_minimum:
+                       original_scores = assess(original, original_size)
+                       recommend, reason = replacement(
+                           original,
+          @@ -135,7 +133,7 @@
+                       )
+                   else:
+                       recommend = False
+          -            reason = "cover_missing" if not artwork else "cover_differs_from_calibre"
+          +            reason = "cover_missing" if not artwork else "cover_smaller_than_calibre"
+                       comparable = False
+                   candidate_record["replacement_assessment"] = {
+                       "recommended": recommend,
+          @@ -144,9 +142,9 @@
+                   candidate = Jsonb(candidate_record)
+                   # A previously unmarked book can pass lookup acceptance with verified
+                   # metadata and artwork. A replacement remains a separate decision.
+          -        if artwork and (not processed or comparable):
+          +        if cover_meets_minimum and (not processed or comparable):
+                       outcome, reason = "passed", None
+          -        elif artwork_retry:
+          +        elif not cover_meets_minimum and artwork_retry:
+                       outcome, reason = "retry", "artwork_unavailable"
+                   elif not artwork and {"transient", "rate_limited"}.intersection(
+                       evidence["attempts"].values()
+          PATCH
+          test "$(git hash-object "$stage/worker.py")" = "$expected"
+          "$base/python/bin/python" -m py_compile "$stage/worker.py"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          service=metadata-queue-worker.service
+          test "$(systemctl --user show -p LoadState --value "$service")" = loaded
+          mv -Tf "$stage/worker.py" "$target"
+          if ! systemctl --user try-restart "$service"; then
+            mv -Tf "$stage/previous.py" "$target"
+            systemctl --user try-restart "$service"
+            exit 1
+          fi
+          test "$(git hash-object "$target")" = "$expected"
+          printf 'Cover rule installed on chatgpt-dev. Worker service state: %s\n' "$(systemctl --user is-active "$service" || true)"
