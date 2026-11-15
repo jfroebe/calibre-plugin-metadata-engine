@@ -1,0 +1,48 @@
+name: Trace Term One cover
+on:
+  push:
+    branches: [deploy/calibre-library-acceptance]
+    paths: [.github/workflows/check-term-one-cover.yml]
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: [self-hosted, linux, x64, docker-build, chatgpt-build-02]
+    timeout-minutes: 2
+    steps:
+      - name: Read aggregate retry readiness
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = chatgpt-build-02
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          set -euo pipefail
+          source=""
+          while read -r container; do
+            if docker port "$container" 5432/tcp 2>/dev/null | grep -q ':5432$'; then
+              test -z "$source"
+              source="$container"
+            fi
+          done < <(docker ps --format '{{.ID}}')
+          test -n "$source"
+          db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
+          docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
+          BEGIN READ ONLY;
+          WITH books AS (SELECT id FROM metadata_queue.media WHERE display_title ILIKE 'F%ck You%Term One%')
+          SELECT 'attempt',j.campaign_id,j.state,j.failure_class,a.attempt_number,a.outcome,a.provider_results,
+            v.source_name,v.provenance->'replacement_assessment',
+            CASE WHEN v.payload->>'cover_url' LIKE 'https://%' THEN split_part(v.payload->>'cover_url','/',3) END AS candidate_cover_host,
+            v.provenance->>'cover_sha256' IS NOT NULL AS stored_cover
+          FROM books b JOIN metadata_queue.jobs j ON j.media_id=b.id
+          LEFT JOIN metadata_queue.job_attempts a ON a.job_id=j.id
+          LEFT JOIN metadata_queue.metadata_versions v ON v.job_attempt_id=a.id
+          ORDER BY j.id,a.attempt_number;
+          WITH books AS (SELECT id FROM metadata_queue.media WHERE display_title ILIKE 'F%ck You%Term One%')
+          SELECT 'review',w.state,
+             lower(split_part(split_part(u->>'normalized','://',2),'/',1)) AS host,
+             CASE WHEN u->>'normalized' ~* '\.(jpe?g|png|webp)([?]|$)' THEN 'image' ELSE 'page' END
+          FROM books b JOIN metadata_review.work_requests w ON w.media_id=b.id
+          CROSS JOIN LATERAL jsonb_array_elements(coalesce(w.details->'urls','[]')) u
+          WHERE w.kind='retry';
+          COMMIT;
+          SQL
+          REMOTE
