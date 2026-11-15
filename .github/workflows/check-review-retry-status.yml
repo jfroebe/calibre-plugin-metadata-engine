@@ -1,4 +1,4 @@
-name: Check review retry status
+name: Analyze submitted retry evidence
 on:
   push:
     branches: [deploy/calibre-library-acceptance]
@@ -36,6 +36,57 @@ jobs:
             JOIN metadata_queue.campaigns c ON c.id=j.campaign_id
             WHERE w.kind='retry' AND w.state='deferred' AND c.state='running' AND metadata_queue.approval_valid(c)
               AND j.state IN ('pending','retry_wait','leased');
+          WITH refs AS (
+            SELECT w.media_id, lower(split_part(split_part(u->>'normalized','://',2),'/',1)) AS host,
+                   u->>'normalized' AS url
+            FROM metadata_review.work_requests w CROSS JOIN LATERAL jsonb_array_elements(coalesce(details->'urls','[]')) u
+            WHERE w.kind='retry' AND w.state='deferred'
+          ), kinds AS (
+            SELECT media_id,CASE
+              WHEN host ~ '(^|\.)amazon\.' AND url ~ '/(dp|gp/product)/[A-Za-z0-9]{10}' THEN 'amazon_edition'
+              WHEN host ~ '(^|\.)goodreads\.com
+          SQL
+          REMOTE
+ AND url ~ '/book/show/[0-9]+' THEN 'goodreads_edition'
+              WHEN host ~ '(^|\.)openlibrary\.org
+          SQL
+          REMOTE
+ AND url ~ '/books/OL[0-9]+M' THEN 'open_library_edition'
+              WHEN host ~ '(^|\.)google\.' AND url ~ '[?&]id=' THEN 'google_volume'
+              WHEN host ~ '(^|\.)hardcover\.app
+          SQL
+          REMOTE
+ THEN 'hardcover'
+              WHEN host ~ '(^|\.)barnesandnoble\.com
+          SQL
+          REMOTE
+ THEN 'barnes_and_noble'
+              WHEN host ~ '(^|\.)fantasticfiction\.com
+          SQL
+          REMOTE
+ THEN 'fantastic_fiction'
+              WHEN host ~ '(^|\.)bookbub\.com
+          SQL
+          REMOTE
+ THEN 'bookbub'
+              WHEN host ~ '(^|\.)kobo\.com
+          SQL
+          REMOTE
+ THEN 'kobo'
+              WHEN host ~ '(^|\.)apple\.com
+          SQL
+          REMOTE
+ THEN 'apple'
+              WHEN host ~ '(^|\.)google\.' THEN 'google_other'
+              ELSE 'other' END AS kind FROM refs)
+          SELECT 'reference_pattern',kind,count(*),count(DISTINCT media_id) FROM kinds GROUP BY kind ORDER BY count(*) DESC;
+          SELECT 'last_issue',coalesce(j.state,'no_job'),coalesce(j.failure_class,''),count(*)
+          FROM (SELECT DISTINCT media_id FROM metadata_review.work_requests WHERE kind='retry' AND state='deferred') w
+          LEFT JOIN LATERAL (SELECT state,failure_class FROM metadata_queue.jobs WHERE media_id=w.media_id ORDER BY id DESC LIMIT 1) j ON true
+          GROUP BY 2,3 ORDER BY 4 DESC;
+          SELECT 'flags',f.value,count(*) FROM metadata_review.work_requests w
+          CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(details->'flags','[]')) f
+          WHERE w.kind='retry' AND w.state='deferred' GROUP BY 2 ORDER BY 3 DESC;
           COMMIT;
           SQL
           REMOTE
