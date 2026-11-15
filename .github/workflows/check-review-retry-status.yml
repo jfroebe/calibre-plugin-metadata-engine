@@ -43,41 +43,17 @@ jobs:
             WHERE w.kind='retry' AND w.state='deferred'
           ), kinds AS (
             SELECT media_id,CASE
-              WHEN host ~ '(^|\.)amazon\.' AND url ~ '/(dp|gp/product)/[A-Za-z0-9]{10}' THEN 'amazon_edition'
-              WHEN host ~ '(^|\.)goodreads\.com
-          SQL
-          REMOTE
- AND url ~ '/book/show/[0-9]+' THEN 'goodreads_edition'
-              WHEN host ~ '(^|\.)openlibrary\.org
-          SQL
-          REMOTE
- AND url ~ '/books/OL[0-9]+M' THEN 'open_library_edition'
-              WHEN host ~ '(^|\.)google\.' AND url ~ '[?&]id=' THEN 'google_volume'
-              WHEN host ~ '(^|\.)hardcover\.app
-          SQL
-          REMOTE
- THEN 'hardcover'
-              WHEN host ~ '(^|\.)barnesandnoble\.com
-          SQL
-          REMOTE
- THEN 'barnes_and_noble'
-              WHEN host ~ '(^|\.)fantasticfiction\.com
-          SQL
-          REMOTE
- THEN 'fantastic_fiction'
-              WHEN host ~ '(^|\.)bookbub\.com
-          SQL
-          REMOTE
- THEN 'bookbub'
-              WHEN host ~ '(^|\.)kobo\.com
-          SQL
-          REMOTE
- THEN 'kobo'
-              WHEN host ~ '(^|\.)apple\.com
-          SQL
-          REMOTE
- THEN 'apple'
-              WHEN host ~ '(^|\.)google\.' THEN 'google_other'
+              WHEN host LIKE '%amazon.%' AND url ~ '/(dp|gp/product)/[A-Za-z0-9]{10}' THEN 'amazon_edition'
+              WHEN host LIKE '%goodreads.com' AND url ~ '/book/show/[0-9]+' THEN 'goodreads_edition'
+              WHEN host LIKE '%openlibrary.org' AND url ~ '/books/OL[0-9]+M' THEN 'open_library_edition'
+              WHEN host LIKE '%google.%' AND url ~ '[?&]id=' THEN 'google_volume'
+              WHEN host LIKE '%hardcover.app' THEN 'hardcover'
+              WHEN host LIKE '%barnesandnoble.com' THEN 'barnes_and_noble'
+              WHEN host LIKE '%fantasticfiction.com' THEN 'fantastic_fiction'
+              WHEN host LIKE '%bookbub.com' THEN 'bookbub'
+              WHEN host LIKE '%kobo.com' THEN 'kobo'
+              WHEN host LIKE '%apple.com' THEN 'apple'
+              WHEN host LIKE '%google.%' THEN 'google_other'
               ELSE 'other' END AS kind FROM refs)
           SELECT 'reference_pattern',kind,count(*),count(DISTINCT media_id) FROM kinds GROUP BY kind ORDER BY count(*) DESC;
           SELECT 'last_issue',coalesce(j.state,'no_job'),coalesce(j.failure_class,''),count(*)
