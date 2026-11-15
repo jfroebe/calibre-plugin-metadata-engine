@@ -36,11 +36,11 @@ jobs:
               c campaigns;
               v bigint;
               evidence jsonb;
-              authorization constant text := 'Approve and start campaign d1760f03-3a74-4cc6-a715-c24c958e2957';
+              user_ref constant text := 'Approve and start campaign d1760f03-3a74-4cc6-a715-c24c958e2957';
           BEGIN
               SELECT * INTO STRICT c FROM campaigns WHERE id=target FOR UPDATE;
               IF c.state IN ('running','completed') AND EXISTS (
-                  SELECT FROM campaign_approvals WHERE campaign_id=target AND revision=c.approval_revision AND reference=authorization
+                  SELECT FROM campaign_approvals WHERE campaign_id=target AND revision=c.approval_revision AND reference=user_ref
               ) THEN RETURN; END IF;
               IF c.state <> 'ready' OR c.synthetic
                  OR c.config->>'max_jobs' IS DISTINCT FROM '100'
@@ -60,7 +60,7 @@ jobs:
                  OR EXISTS (SELECT FROM campaigns WHERE state='running' AND NOT synthetic AND id<>target)
               THEN RAISE EXCEPTION 'The reviewed 100-book campaign is no longer ready'; END IF;
               evidence := jsonb_build_object('manifest_hash',c.manifest_hash,'config_hash',c.config_hash,
-                  'reference',authorization,'user_authorization',authorization);
+                  'reference',user_ref,'user_authorization',user_ref);
               v := transition(target,c.version,'d16d0f09-7889-4c49-b39a-069d3b20cb93','approved',evidence);
               PERFORM transition(target,v,'2f8211f1-7e1e-409d-a8be-24f184db593d','running',evidence);
           END
