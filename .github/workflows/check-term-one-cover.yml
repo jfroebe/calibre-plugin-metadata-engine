@@ -14,7 +14,64 @@ jobs:
         run: |
           set -euo pipefail
           test "$(hostname -s)" = chatgpt-build-02
-          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE'
+          umask 077
+          replay="$(mktemp)"
+          trap 'rm -f "$replay"' EXIT
+          cat > "$replay" <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          from collections import Counter
+          from urllib.parse import urlsplit
+
+          sys.path.insert(0, os.path.expanduser("~/.local/share/metadata-queue"))
+          from metadata_queue_provider import (CACHE_REVISION, edition_ids, edition_match, identity,
+                                               review_identifiers, work_identity)
+          from metadata_queue_cover import allowed_cover
+
+          catalog = {}
+          cache = {}
+          for line in sys.stdin:
+              key, value = json.loads(line)
+              if key == "cache":
+                  cache[value["fingerprint"]] = value["payload"]
+              else:
+                  catalog[key] = value
+          original = catalog["original"]
+          refs = [{"review": row} for row in catalog["references"]]
+          hints = review_identifiers(refs)
+          print("recognized_hint_kinds", sorted(hints))
+          for ref in refs:
+              for entry in ref["review"].get("urls", []):
+                  parsed = urlsplit(entry["normalized"])
+                  if parsed.hostname in {"www.goodreads.com", "goodreads.com"}:
+                      print("goodreads_link_shape", "catalog_book" if parsed.path.startswith("/book/show/") else
+                            "localized_book" if "/book/show/" in parsed.path else "other")
+          print("calibre_id_types", sorted({kind for kind, _ in edition_ids(original)}))
+          endpoint = os.environ["METADATA_QUEUE_TEST_ENGINE"]
+          for provider in ["goodreads", "open_library", "google_books"]:
+              parts = [CACHE_REVISION, endpoint, provider, original] + ([hints] if hints else [])
+              fingerprint = hashlib.sha256(json.dumps(parts,sort_keys=True).encode()).hexdigest()
+              if fingerprint not in cache:
+                  print(provider, "cache_key_not_found")
+                  continue
+              rows = cache[fingerprint]
+              counts = Counter()
+              for row in rows:
+                  counts["rows"] += 1
+                  counts["cover_urls"] += bool(row.get("cover_url"))
+                  counts["allowed_covers"] += allowed_cover(row.get("cover_url"))
+                  counts["work_match"] += work_identity(original, row)
+                  counts["edition_match"] += edition_match(original, row, provider, hints)
+                  counts["verified"] += identity(original, row, provider, hints)
+                  counts["shared_but_title_or_author_rejected"] += edition_match(original, row, provider, hints) and not work_identity(original, row)
+              print(provider, dict(counts))
+          PY
+          set -a
+          source "$HOME/.config/metadata-queue/worker.env"
+          set +a
+          ssh -o BatchMode=yes -o ConnectTimeout=5 root@192.168.0.59 'file=$(mktemp); trap "rm -f -- $file" EXIT; cat > "$file"; bash "$file" </dev/null' <<'REMOTE' | "$HOME/.local/share/metadata-queue/python/bin/python" "$replay"
           set -euo pipefail
           source=""
           while read -r container; do
@@ -27,22 +84,16 @@ jobs:
           db_user="$(docker exec "$source" sh -c 'printf "%s" "${POSTGRES_USER:-postgres}"')"
           docker exec -i "$source" psql -qXAt -v ON_ERROR_STOP=1 -U "$db_user" -d metadata_test <<'SQL'
           BEGIN READ ONLY;
-          WITH books AS (SELECT id FROM metadata_queue.media WHERE display_title ILIKE 'F%ck You%Term One%')
-          SELECT 'attempt',j.campaign_id,j.state,j.failure_class,a.attempt_number,a.outcome,a.provider_results,
-            v.source_name,v.provenance->'replacement_assessment',
-            CASE WHEN v.payload->>'cover_url' LIKE 'https://%' THEN split_part(v.payload->>'cover_url','/',3) END AS candidate_cover_host,
-            v.provenance->>'cover_sha256' IS NOT NULL AS stored_cover
-          FROM books b JOIN metadata_queue.jobs j ON j.media_id=b.id
-          LEFT JOIN metadata_queue.job_attempts a ON a.job_id=j.id
-          LEFT JOIN metadata_queue.metadata_versions v ON v.job_attempt_id=a.id
-          ORDER BY j.id,a.attempt_number;
-          WITH books AS (SELECT id FROM metadata_queue.media WHERE display_title ILIKE 'F%ck You%Term One%')
-          SELECT 'review',w.state,
-             lower(split_part(split_part(u->>'normalized','://',2),'/',1)) AS host,
-             CASE WHEN u->>'normalized' ~* '\.(jpe?g|png|webp)([?]|$)' THEN 'image' ELSE 'page' END
-          FROM books b JOIN metadata_review.work_requests w ON w.media_id=b.id
-          CROSS JOIN LATERAL jsonb_array_elements(coalesce(w.details->'urls','[]')) u
-          WHERE w.kind='retry';
+          WITH b AS (SELECT id FROM metadata_queue.media WHERE display_title ILIKE 'F%ck You%Term One%')
+          SELECT jsonb_build_array('original', v.payload) FROM b
+          JOIN LATERAL (SELECT payload FROM metadata_queue.metadata_versions
+            WHERE media_id=b.id AND source_name='calibre-original' ORDER BY id DESC LIMIT 1) v ON true;
+          SELECT jsonb_build_array('references',coalesce(jsonb_agg(w.details),'[]'))
+          FROM metadata_review.work_requests w
+          JOIN metadata_queue.media b ON b.id=w.media_id
+          WHERE b.display_title ILIKE 'F%ck You%Term One%' AND w.kind='retry';
+          SELECT jsonb_build_array('cache',jsonb_build_object('fingerprint',fingerprint,'payload',payload))
+          FROM metadata_queue.provider_cache;
           COMMIT;
           SQL
           REMOTE
